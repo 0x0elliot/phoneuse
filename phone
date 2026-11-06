@@ -88,7 +88,8 @@ def home(h):
 
 
 def back(h):
-    touch.swipe(h, 0.0, 0.5, 0.75, 0.5, duration=0.25)
+    # finger sliding in from the very left edge (touch.press settles the pointer first)
+    touch.swipe(h, 0.0, 0.5, 0.8, 0.5, duration=0.35)
 
 
 def switcher(h):

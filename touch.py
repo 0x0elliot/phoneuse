@@ -65,9 +65,14 @@ class Touch:
         self.hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
         self.pos = self.target = (fx, fy)
 
-    def press(self, fx, fy):
+    def press(self, fx, fy, settle=0.1):
+        """Touch down at (fx, fy). The pointer is moved there first and given `settle`
+        seconds: pressing in the same instant as a jump lets iOS start the touch on
+        the way, which turns an edge swipe into a drag of the content."""
         fx, fy = _clamp(fx), _clamp(fy)
-        self.hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
+        if self.pos is None or abs(self.pos[0] - fx) > 0.002 or abs(self.pos[1] - fy) > 0.002:
+            self.hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
+            time.sleep(settle)
         self.hid.cmd(f"a {fx:.5f} {fy:.5f} 1")
         self.pos = self.target = (fx, fy)
         self.down = True

@@ -21,7 +21,7 @@ points, which is plenty for scrolling and edge gestures.
 | Tap | `phone tap X Y` | press and release at the point |
 | Long press | `phone longpress X Y [S]` | hold 0.8 s by default; opens context menus |
 | Home | `phone home` | Cmd+H; works from any app |
-| Back | `phone back` | swipe right from the left edge |
+| Back | `phone back` | swipe right starting at the very left edge (x = 0), like a finger sliding in |
 | App switcher | `phone switcher` | slow swipe up from the bottom, then hold |
 | Control Center | `phone control-center` | slow (0.6 s) swipe down from the top-right corner |
 | Notification Center | `phone notifications` | slow swipe down from the top-left |
@@ -47,6 +47,9 @@ points, which is plenty for scrolling and edge gestures.
 - Button presses count only from the absolute pointer, not from the relative mouse.
 - While the button is held, iOS ignores absolute moves, so a drag is an absolute
   press, then relative motion, then release.
+- Move the pointer, wait about 0.1 s, then press. Pressing in the same instant as
+  a jump makes iOS start the touch on the way, so an edge swipe turns into a drag
+  of the page (this is what broke `back` at first).
 - iOS accelerates relative motion by report size and drops motion from reports
   that arrive less than about 8 ms apart, so drags send one report every 8 ms,
   sized from a measured table (`touch.DRAG_PTS`).
