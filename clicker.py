@@ -3,7 +3,9 @@
 your cursor while it is over the mirror, clicks tap, drags swipe.
 
 Positions go to the iPhone as absolute pointer reports (hidd 'a' command),
-which iOS places exactly, so there is no steering or calibration. Mouse buttons
+which iOS places exactly, so there is no steering or calibration. iOS ignores
+absolute moves while the button is held, so a drag presses with an absolute
+report and then moves with relative reports (hidd 'm'), like a real mouse. Mouse buttons
 are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
 keyboard keep working normally everywhere.
 
@@ -74,8 +76,8 @@ def main():
     hid = None
     window = None
     window_checked = 0.0
-    sent = None  # last (fx, fy, button) sent to the phone
-    pressed_here = False  # the current press started over the mirror
+    sent = None  # last (fx, fy) hovered, sent as absolute
+    drag = None  # while pressed: [last fx, last fy, leftover units x, leftover units y]
     while True:
         buttons.changed.wait(RATE)
         buttons.changed.clear()
@@ -85,34 +87,49 @@ def main():
                 window = next(((c["at"], c["size"]) for c in hypr("j/clients") if c["class"] == "uxplay"), None)
                 window_checked = now
             if window is None:
-                pressed_here = False
+                drag = None
                 continue
             cur = hypr("j/cursorpos")
             (x, y), (w, h) = window
             fx, fy = (cur["x"] - x) / w, (cur["y"] - y) / h
             inside = 0 <= fx <= 1 and 0 <= fy <= 1
-            if buttons.down and not pressed_here and inside and (sent is None or not sent[2]):
-                pressed_here = True
-            if not buttons.down:
-                pressed_here = False
-            if not inside and not pressed_here:
-                if sent and sent[2]:  # dragged off the mirror: let go
-                    hid.cmd(f"a {sent[0]:.5f} {sent[1]:.5f} 0")
-                    sent = (sent[0], sent[1], 0)
-                continue
-            fx, fy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
-            state = (round(fx, 4), round(fy, 4), 1 if pressed_here else 0)
-            if state != sent:
-                hid = hid or steer.Hid()
-                hid.cmd(f"a {state[0]:.5f} {state[1]:.5f} {state[2]}")
-                if sent and state[2] != sent[2]:
-                    log("tap down" if state[2] else "tap up", f"({state[0]:.3f}, {state[1]:.3f})")
-                sent = state
+            cfx, cfy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
+            hid = hid or steer.Hid()
+
+            if drag is None and buttons.down and inside:
+                # press: put the dot exactly here and touch down
+                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 0")
+                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 1")
+                drag = [cfx, cfy, 0.0, 0.0]
+                log("down", f"({cfx:.3f}, {cfy:.3f})")
+            elif drag is not None and buttons.down:
+                # held: follow the cursor with relative motion (absolute is ignored while pressed)
+                drag[2] += (cfx - drag[0]) / steer.GAIN_X
+                drag[3] += (cfy - drag[1]) / steer.GAIN_Y
+                drag[0], drag[1] = cfx, cfy
+                while abs(drag[2]) >= 1 or abs(drag[3]) >= 1:
+                    ux = int(max(-127, min(127, drag[2])))
+                    uy = int(max(-127, min(127, drag[3])))
+                    hid.cmd(f"m {ux} {uy} 0 1")
+                    drag[2] -= ux
+                    drag[3] -= uy
+            elif drag is not None:
+                # released: let go where the cursor is
+                hid.cmd("m 0 0 0 0")
+                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 0")
+                log("up", f"({cfx:.3f}, {cfy:.3f})")
+                drag = None
+                sent = (round(cfx, 4), round(cfy, 4))
+            elif inside:
+                # hover: the dot follows the cursor
+                state = (round(cfx, 4), round(cfy, 4))
+                if state != sent:
+                    hid.cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
+                    sent = state
         except Exception as e:
             log("error:", e)
-            hid, sent, pressed_here = None, None, False
+            hid, sent, drag = None, None, None
             time.sleep(1)
-
 
 if __name__ == "__main__":
     main()
