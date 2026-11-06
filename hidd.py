@@ -14,6 +14,8 @@ Commands on /run/iphone-hid.sock, one per line, reply "ok ..." or "err ...":
   corner            slam pointer to the top-left corner
   connect           page the paired iPhone once (it usually reconnects by itself)
   pair [SECONDS]    make the adapter discoverable/pairable (default 120 s)
+  m DX DY [W [BTN]] raw mouse report (live input)
+  k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
   status
 """
 import os
@@ -349,6 +351,17 @@ def run_command(line):
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as 'iphone-hid'"
+    if cmd == "m":  # raw mouse report: m DX DY [WHEEL [BUTTONS]], for live input
+        dx, dy = (max(-127, min(127, int(v))) for v in args[:2])
+        wheel = max(-127, min(127, int(args[2]))) if len(args) > 2 else 0
+        if len(args) > 3:
+            hid.buttons = int(args[3]) & 0x07
+        hid.mouse(dx, dy, wheel)
+        return "ok"
+    if cmd == "k":  # raw keyboard report: k MODS [CODE...], up to 6 held keys
+        codes = [int(c) & 0xFF for c in args[1:7]]
+        hid.send(1, [int(args[0]) & 0xFF, 0] + codes + [0] * (6 - len(codes)))
+        return "ok"
     if cmd == "move":
         hid.move(int(args[0]), int(args[1]))
     elif cmd == "corner":
@@ -412,6 +425,14 @@ def main():
     setup_dbus()
     threading.Thread(target=accept_loop, daemon=True).start()
     threading.Thread(target=command_server, daemon=True).start()
+
+    def connect_at_start():
+        time.sleep(2)
+        try:
+            log(connect_out())
+        except Exception as e:
+            log("startup connect:", e)
+    threading.Thread(target=connect_at_start, daemon=True).start()
     GLib.MainLoop().run()
 
 
