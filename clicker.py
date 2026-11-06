@@ -66,15 +66,25 @@ def hypr(cmd):
 
 
 class Buttons:
-    """Left-button state from every mouse, read-only; also wakes the loop on motion."""
+    """Mouse input from every mouse, read-only. Calls on_press/on_release the moment
+    the left button changes, and collects raw motion while `dragging` is set."""
 
-    def __init__(self):
+    def __init__(self, on_press=None, on_release=None):
         self.down = False
         self.changed = threading.Event()
+        self.on_press, self.on_release = on_press, on_release
+        self.dragging = False
+        self.dx = self.dy = 0
+        self.lock = threading.Lock()
         paths = sorted(glob.glob("/dev/input/by-id/*event-mouse"))
         self.fds = [os.open(p, os.O_RDONLY | os.O_NONBLOCK) for p in paths]
         log("watching", len(paths), "mice")
         threading.Thread(target=self._run, daemon=True).start()
+
+    def take_motion(self):
+        with self.lock:
+            dx, dy, self.dx, self.dy = self.dx, self.dy, 0, 0
+        return dx, dy
 
     def _run(self):
         while True:
@@ -88,25 +98,19 @@ class Buttons:
                     _, _, etype, code, value = EVENT.unpack_from(data, i)
                     if etype == EV_KEY and code == BTN_LEFT and value in (0, 1):
                         self.down = bool(value)
+                        try:
+                            (self.on_press if value else self.on_release)()
+                        except Exception as e:
+                            log("button error:", e)
                         self.changed.set()
                     elif etype == EV_REL:
+                        if self.dragging and code in (0, 1):  # REL_X, REL_Y
+                            with self.lock:
+                                if code == 0:
+                                    self.dx += value
+                                else:
+                                    self.dy += value
                         self.changed.set()
-
-
-picture_rect = steer.picture_rect
-
-
-def frame_window(client):
-    """Make the mirror window taller than the picture so the strips exist."""
-    (w, h) = client["size"]
-    if abs(w - MIRROR_W) > 2 or abs(h - MIRROR_H) > 2:
-        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{client['address']}' }}))")
-        log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
-
-
-def subprocess_eval(lua):
-    import subprocess
-    subprocess.run(["hyprctl", "eval", lua], capture_output=True)
 
 
 # Linux evdev key codes -> USB HID usage codes (keyboard page)
@@ -196,17 +200,22 @@ class KeyForwarder:
 
 
 def run(stop=None):
-    """Mirror-window mouse handling until `stop` (a threading.Event) is set."""
-    subprocess_eval(BEZEL_RULE)
-    buttons = Buttons()
-    hid = None
-    window = None
-    window_checked = 0.0
-    sent = None  # last (fx, fy) hovered, sent as absolute
-    finger = None  # touch.Touch while the button is held
-    last_send = 0.0
+    """Mirror-window mouse handling until `stop` (a threading.Event) is set.
 
+    Hover: the phone's pointer follows the cursor (absolute reports).
+    Press: touch down at the pointer immediately (absolute report, button 1).
+    Held: the mouse's own motion goes to the phone as relative reports, every
+    8 ms, exactly like a real Bluetooth mouse; iOS turns it into the drag.
+    Release: touch up.
+    """
+    subprocess_eval(BEZEL_RULE)
     shared = {"hid": None}  # (not "state": the hover code below uses that name)
+    win = {"rect": None, "pic": None}
+
+    def hid():
+        if shared["hid"] is None:
+            shared["hid"] = steer.Hid()
+        return shared["hid"]
 
     def mirror_focused():
         try:
@@ -214,82 +223,95 @@ def run(stop=None):
         except Exception:
             return False
 
-    def shared_hid():
-        if shared["hid"] is None:
-            shared["hid"] = steer.Hid()
-        return shared["hid"]
+    def cursor_fraction():
+        """(fx, fy, inside) for the cursor against the phone picture; the bezel counts as inside."""
+        if win["rect"] is None:
+            return None
+        cur = hypr("j/cursorpos")
+        (wx, wy), (ww, wh) = win["rect"]
+        x, y, w, h = win["pic"]
+        inside = (wx - FRAME <= cur["x"] <= wx + ww + FRAME) and (wy - FRAME <= cur["y"] <= wy + wh + FRAME)
+        fx = min(max((cur["x"] - x) / w, 0.0), 1.0)
+        fy = min(max((cur["y"] - y) / h, 0.0), 1.0)
+        return fx, fy, inside
 
-    KeyForwarder(shared_hid, mirror_focused)
+    def on_press():
+        c = cursor_fraction()
+        if not c or not c[2]:
+            return
+        fx, fy, _ = c
+        buttons.take_motion()
+        buttons.dragging = True
+        hid().cmd(f"a {fx:.5f} {fy:.5f} 1")  # touch down right where the pointer is
+        log("down", f"({fx:.3f}, {fy:.3f})")
 
-    def stepper():
-        # one relative report per 8 ms while dragging (see touch.py for why)
+    def on_release():
+        if not buttons.dragging:
+            return
+        buttons.dragging = False
+        dx, dy = buttons.take_motion()
+        if dx or dy:
+            hid().cmd(f"m {max(-127, min(127, dx))} {max(-127, min(127, dy))} 0 1")
+        c = cursor_fraction()
+        fx, fy = (c[0], c[1]) if c else (0.5, 0.5)
+        hid().cmd("m 0 0 0 0")
+        hid().cmd(f"a {fx:.5f} {fy:.5f} 0")  # touch up
+        log("up", f"({fx:.3f}, {fy:.3f})")
+
+    buttons = Buttons(on_press, on_release)
+    KeyForwarder(hid, mirror_focused)
+
+    def motion_sender():
+        # while held, pass raw mouse motion through, one report per 8 ms
+        # (iOS drops motion from reports that arrive faster than that)
         while stop is None or not stop.is_set():
-            f = finger
-            if f is not None and f.down:
+            time.sleep(touch.TICK)
+            if not buttons.dragging:
+                continue
+            dx, dy = buttons.take_motion()
+            while dx or dy:
+                ux, uy = max(-127, min(127, dx)), max(-127, min(127, dy))
                 try:
-                    f.step()
+                    hid().cmd(f"m {ux} {uy} 0 1")
                 except Exception as e:
                     log("drag error:", e)
-            time.sleep(touch.TICK)
-    threading.Thread(target=stepper, daemon=True).start()
+                    break
+                dx, dy = dx - ux, dy - uy
+    threading.Thread(target=motion_sender, daemon=True).start()
 
+    sent = None
+    window_checked = 0.0
+    last_send = 0.0
     while stop is None or not stop.is_set():
         buttons.changed.wait(IDLE_WAKE)
         buttons.changed.clear()
-        if finger is None and time.time() - last_send < MIN_GAP and not buttons.down:
-            time.sleep(MIN_GAP - (time.time() - last_send))
         try:
             now = time.time()
             if now - window_checked > 0.5:
                 client = next((c for c in hypr("j/clients") if c["class"] == "uxplay"), None)
-                window = (client["at"], client["size"]) if client else None
-                # keep the window at its framed size: snap back any resize (resizing
-                # the GL window has crashed uxplay; the rule's min/max only stops some)
-                if client and (abs(client["size"][0] - MIRROR_W) > 2 or abs(client["size"][1] - MIRROR_H) > 2):
-                    if finger is None:
-                        frame_window(client)
-                        continue
+                if client and (abs(client["size"][0] - MIRROR_W) > 2 or abs(client["size"][1] - MIRROR_H) > 2) \
+                        and not buttons.dragging:
+                    frame_window(client)
+                    continue
+                win["rect"] = (client["at"], client["size"]) if client else None
+                win["pic"] = picture_rect(client["at"], client["size"]) if client else None
                 window_checked = now
-            if window is None:
-                finger = None
+            if buttons.dragging or win["rect"] is None:
                 continue
-            cur = hypr("j/cursorpos")
-            (wx, wy), (ww, wh) = window
-            x, y, w, h = picture_rect((wx, wy), (ww, wh))
-            fx, fy = (cur["x"] - x) / w, (cur["y"] - y) / h
-            # the window and its bezel (the border around it) both count; on the bezel
-            # the position clamps to the nearest screen edge, so edge swipes start exactly there
-            inside = (wx - FRAME <= cur["x"] <= wx + ww + FRAME) and (wy - FRAME <= cur["y"] <= wy + wh + FRAME)
-            cfx, cfy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
-            hid = hid or steer.Hid()
-
-            if finger is None and buttons.down and inside:
-                finger = touch.Touch(hid)
-                finger.pos = sent  # usually already hovering here, so no settle wait
-                finger.press(cfx, cfy)  # exact touch-down
-                log("down", f"({cfx:.3f}, {cfy:.3f})")
-            elif finger is not None and buttons.down:
-                finger.target = (cfx, cfy)  # stepper drags toward it
-            elif finger is not None:
-                finger.target = (cfx, cfy)
-                t0 = time.time()
-                while finger.step() > 2 and time.time() - t0 < 0.15:
-                    time.sleep(touch.TICK)
-                f, finger = finger, None
-                f.release()
-                log("up", f"({cfx:.3f}, {cfy:.3f})")
-                sent = (round(cfx, 4), round(cfy, 4))
-            elif inside:
-                state = (round(cfx, 4), round(cfy, 4))
+            if now - last_send < MIN_GAP:
+                continue
+            c = cursor_fraction()
+            if c and c[2]:
+                state = (round(c[0], 4), round(c[1], 4))
                 if state != sent:
-                    hid.cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
+                    hid().cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
                     sent = state
-                    last_send = time.time()
+                    last_send = now
         except Exception as e:
             log("error:", e)
-            hid, sent, finger = None, None, None
+            shared["hid"] = None
+            sent = None
             time.sleep(1)
-
 
 if __name__ == "__main__":
     run()
