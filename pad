@@ -1,3 +1,0 @@
-#!/bin/sh
-# Mouse + keyboard for the iPhone: click the window to capture, Right Ctrl releases.
-exec "$(dirname "$(readlink -f "$0")")/.venv/bin/python" "$(dirname "$(readlink -f "$0")")/pad.py" "$@"
