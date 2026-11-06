@@ -268,7 +268,6 @@ def run(stop=None):
         buttons.dragging = False
         c = cursor_fraction()
         fx, fy = (c[0], c[1]) if c else (0.5, 0.5)
-        hid().cmd("m 0 0 0 0")
         hid().cmd(f"a {fx:.5f} {fy:.5f} 0")  # touch up
         log("up", f"({fx:.3f}, {fy:.3f})")
 
@@ -300,21 +299,24 @@ def run(stop=None):
             carry[1] += (cur["y"] - last["y"]) / h * touch.SCREEN_PT[1]
             last = cur
             dist = (carry[0] ** 2 + carry[1] ** 2) ** 0.5
-            if dist < 1.0:
-                continue
-            u = max(1.0, touch.units_for(dist))
-            ux, uy = round(u * carry[0] / dist), round(u * carry[1] / dist)
-            if ux == 0 and uy == 0:
-                continue
-            mag = (ux * ux + uy * uy) ** 0.5
-            moved = touch.points_for(mag)
+            ux = uy = 0
+            if dist >= 1.0:
+                u = max(1.0, touch.units_for(dist))
+                ux, uy = round(u * carry[0] / dist), round(u * carry[1] / dist)
+            # One report every tick, even with no motion: steady timing keeps iOS's
+            # acceleration predictable. The button stays 0 here: iOS holds the touch
+            # from the absolute press, and a button on these reports reads as a
+            # second press/release (double tap sounds).
             try:
-                hid().cmd(f"m {ux} {uy} 0 1")
+                hid().cmd(f"m {ux} {uy} 0 0")
             except Exception as e:
                 log("drag error:", e)
                 continue
-            carry[0] -= moved * ux / mag
-            carry[1] -= moved * uy / mag
+            if ux or uy:
+                mag = (ux * ux + uy * uy) ** 0.5
+                moved = touch.points_for(mag)
+                carry[0] -= moved * ux / mag
+                carry[1] -= moved * uy / mag
     threading.Thread(target=motion_sender, daemon=True).start()
 
     sent = None
