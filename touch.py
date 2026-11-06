@@ -51,6 +51,21 @@ def points_for(units):
     return p0 + (p1 - p0) * (units - u0) / (u1 - u0)
 
 
+def whole_units(px, py):
+    """Report (ux, uy) that moves at most (px, py) points: sizes round down, so the
+    touch never gets ahead of the requested position and has to come back (the
+    back-and-forth showed as a vibrating pointer during slow drags)."""
+    dist = (px * px + py * py) ** 0.5
+    if dist < DRAG_PTS[0][1]:  # less than one unit's worth so far: wait
+        return 0, 0
+    u = units_for(dist)
+    ux, uy = int(u * px / dist), int(u * py / dist)  # truncate toward zero
+    if ux == 0 and uy == 0:
+        ux = (1 if px > 0 else -1) if abs(px) >= abs(py) else 0
+        uy = (1 if py > 0 else -1) if abs(py) > abs(px) else 0
+    return ux, uy
+
+
 class Touch:
     """One finger. Positions are screen fractions (0..1)."""
 
@@ -87,8 +102,7 @@ class Touch:
         dist = (ex * ex + ey * ey) ** 0.5
         if dist < 1.0:
             return dist
-        u = max(1.0, units_for(dist))
-        ux, uy = round(u * ex / dist), round(u * ey / dist)
+        ux, uy = whole_units(ex, ey)
         if ux == 0 and uy == 0:
             return dist
         mag = (ux * ux + uy * uy) ** 0.5

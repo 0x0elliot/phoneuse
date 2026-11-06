@@ -303,11 +303,7 @@ def run(stop=None):
             carry[0] += (cur["x"] - last["x"]) / w * touch.SCREEN_PT[0]
             carry[1] += (cur["y"] - last["y"]) / h * touch.SCREEN_PT[1]
             last = cur
-            dist = (carry[0] ** 2 + carry[1] ** 2) ** 0.5
-            ux = uy = 0
-            if dist >= 1.0:
-                u = max(1.0, touch.units_for(dist))
-                ux, uy = round(u * carry[0] / dist), round(u * carry[1] / dist)
+            ux, uy = touch.whole_units(carry[0], carry[1])  # never more than the cursor moved
             # One report every tick, even with no motion: steady timing keeps iOS's
             # acceleration predictable. The button stays 0 here: iOS holds the touch
             # from the absolute press, and a button on these reports reads as a
