@@ -8,7 +8,8 @@ Setup and running:
 
 Agent commands (coordinates: fractions 0..1 of the screenshot, or iPhone points
 if any value is > 1; the screen is 402 x 874 pt):
-  phone screenshot [PATH]  PNG of the phone screen (waits out the ~0.5 s mirror lag)
+  phone screenshot [PATH]  PNG of the phone screen; parks the pointer at the left edge
+                           first and waits out the ~0.5 s mirror lag (--keep-pointer to skip)
   phone tap X Y            tap
   phone longpress X Y [S]  press and hold (default 0.8 s)
   phone swipe X0 Y0 X1 Y1 [S]   drag from one point to another over S seconds (default 0.3)
@@ -132,7 +133,14 @@ def type_text(h, text):
 
 # ---------- screen ----------
 
-def screenshot(path):
+def screenshot(path, park=True):
+    if park:
+        try:
+            # move the large orange pointer to the left edge so it doesn't cover text
+            steer.Hid().cmd("a 0.0 0.62 0")
+            acted()
+        except (OSError, RuntimeError):
+            pass
     try:
         wait = MIRROR_LAG - (time.time() - os.path.getmtime(LAST_ACTION))
         if wait > 0:
@@ -201,7 +209,9 @@ def main():
     if cmd == "status":
         return status()
     if cmd == "screenshot":
-        return screenshot(args[0] if args else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone.png"))
+        keep = "--keep-pointer" in args
+        paths = [x for x in args if x != "--keep-pointer"]
+        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone.png"), park=not keep)
     h = hid()
     if cmd == "tap":
         touch.tap(h, *point(*args[:2]))
