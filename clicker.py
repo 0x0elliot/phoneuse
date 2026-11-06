@@ -9,6 +9,12 @@ report and then moves with relative reports (hidd 'm'), like a real mouse. Mouse
 are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
 keyboard keep working normally everywhere.
 
+The mirror window gets a phone-style frame: a thick rounded border plus a
+window taller than the picture, so black strips sit above and below the
+screen inside the window. Pressing a strip starts the touch at that edge of
+the phone's screen (press the bottom strip and drag up = swipe home), and,
+being inside the window, never triggers Hyprland's resize-on-border.
+
 iPhone settings: AssistiveTouch on, Dwell Control off.
 """
 import glob
@@ -26,6 +32,13 @@ EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
 MIN_GAP = 1 / 250  # at most this many pointer reports per second
+PHONE_ASPECT = 1206 / 2622  # iPhone 17 Pro screen, width / height
+FRAME = 34  # border thickness (logical px)
+STRIP = 0.04  # extra window height above and below the picture, as a fraction of picture height
+BEZEL_RULE = (
+    'hl.window_rule({ name = "iphone-mirror-bezel", match = { class = "^uxplay$" }, '
+    f'border_size = {FRAME}, rounding = 62, border_color = "rgb(18181c) rgb(18181c)" }})'
+)
 DRAG_CHUNK = 3  # relative units per report while dragging (small steps keep iOS acceleration predictable)
 
 
@@ -75,7 +88,33 @@ class Buttons:
                         self.changed.set()
 
 
+def picture_rect(at, size):
+    """Where the phone picture sits inside the mirror window (centered, aspect-fit)."""
+    (x, y), (w, h) = at, size
+    if w / h < PHONE_ASPECT:  # window narrower than the phone: width-limited
+        pw, ph = w, w / PHONE_ASPECT
+    else:
+        pw, ph = h * PHONE_ASPECT, h
+    return x + (w - pw) / 2, y + (h - ph) / 2, pw, ph
+
+
+def frame_window(client):
+    """Make the mirror window taller than the picture so the strips exist."""
+    (w, h) = client["size"]
+    want_h = round(w / PHONE_ASPECT * (1 + 2 * STRIP))
+    if abs(h - want_h) > 2:
+        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {w}, y = {want_h}, window = 'address:{client['address']}' }}))")
+        log("framed mirror window", f"{w}x{want_h}")
+
+
+def subprocess_eval(lua):
+    import subprocess
+    subprocess.run(["hyprctl", "eval", lua], capture_output=True)
+
+
 def main():
+    subprocess_eval(BEZEL_RULE)
+    framed = set()
     buttons = Buttons()
     hid = None
     window = None
@@ -91,15 +130,22 @@ def main():
         try:
             now = time.time()
             if now - window_checked > 0.5:
-                window = next(((c["at"], c["size"]) for c in hypr("j/clients") if c["class"] == "uxplay"), None)
+                client = next((c for c in hypr("j/clients") if c["class"] == "uxplay"), None)
+                window = (client["at"], client["size"]) if client else None
+                if client and client["address"] not in framed:
+                    frame_window(client)
+                    framed.add(client["address"])
+                    continue
                 window_checked = now
             if window is None:
                 drag = None
                 continue
             cur = hypr("j/cursorpos")
-            (x, y), (w, h) = window
+            (wx, wy), (ww, wh) = window
+            x, y, w, h = picture_rect((wx, wy), (ww, wh))
             fx, fy = (cur["x"] - x) / w, (cur["y"] - y) / h
-            inside = 0 <= fx <= 1 and 0 <= fy <= 1
+            # anywhere in the window counts, including the strips around the picture
+            inside = wx <= cur["x"] <= wx + ww and wy <= cur["y"] <= wy + wh
             cfx, cfy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
             hid = hid or steer.Hid()
 
