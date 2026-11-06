@@ -2,10 +2,10 @@
 """Use the mirror window like the iPhone's screen: the phone's pointer follows
 your cursor while it is over the mirror, clicks tap, drags swipe.
 
-Positions go to the iPhone as absolute pointer reports (hidd 'a' command),
-which iOS places exactly, so there is no steering or calibration. iOS ignores
-absolute moves while the button is held, so a drag presses with an absolute
-report and then moves with relative reports (hidd 'm'), like a real mouse. Mouse buttons
+Everything goes to the iPhone as absolute pointer reports (hidd 'a' command),
+which iOS places exactly: hover, press, drag (absolute moves with the button
+held) and release. No relative reports, so no acceleration and no second
+pointer. Mouse buttons
 are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
 keyboard keep working normally everywhere.
 
@@ -220,9 +220,8 @@ def run(stop=None):
 
     Hover: the phone's pointer follows the cursor (absolute reports).
     Press: touch down at the pointer immediately (absolute report, button 1).
-    Held: every 8 ms the touch moves by exactly what the cursor moved over the
-    mirror (relative reports sized from the measured table); iOS turns it into
-    the drag. Nothing steers toward a target, so nothing drifts.
+    Held: every 8 ms the touch moves to exactly where the cursor is (absolute
+    reports with the button down). One pointer, no acceleration involved.
     Release: touch up.
     """
     subprocess_eval(BEZEL_RULE)
@@ -275,48 +274,28 @@ def run(stop=None):
     KeyForwarder(hid, mirror_focused)
 
     def motion_sender():
-        # While held: every 8 ms, move the phone's touch by exactly what the cursor
-        # moved over the mirror. Cursor deltas (not raw mouse counts, which are
-        # DPI-scaled) are converted to phone points, then to the report size that
-        # moves that far (touch.DRAG_PTS, measured; iOS accelerates by report size
-        # and drops reports sent faster than ~8 ms apart). Remainders carry over.
+        # While held: every 8 ms put the touch exactly where the cursor is, with an
+        # absolute report and the button down. (Measured 2026-11-06: iOS drags
+        # follow absolute moves while pressed; 12/12 page swipes.)
         last = None
-        carry = [0.0, 0.0]  # phone points still to move
         while stop is None or not stop.is_set():
             time.sleep(touch.TICK)
-            if not buttons.dragging or win["pic"] is None:
-                last, carry[:] = None, [0.0, 0.0]
+            if not buttons.dragging:
+                last = None
                 continue
             try:
-                cur = hypr("j/cursorpos")
+                c = cursor_fraction()
             except Exception:
                 continue
-            if last is None:
-                last = cur
+            if not c:
                 continue
-            x, y, w, h = win["pic"]
-            carry[0] += (cur["x"] - last["x"]) / w * touch.SCREEN_PT[0]
-            carry[1] += (cur["y"] - last["y"]) / h * touch.SCREEN_PT[1]
-            last = cur
-            dist = (carry[0] ** 2 + carry[1] ** 2) ** 0.5
-            ux = uy = 0
-            if dist >= 1.0:
-                u = max(1.0, touch.units_for(dist))
-                ux, uy = round(u * carry[0] / dist), round(u * carry[1] / dist)
-            # One report every tick, even with no motion: steady timing keeps iOS's
-            # acceleration predictable. The button stays 0 here: iOS holds the touch
-            # from the absolute press, and a button on these reports reads as a
-            # second press/release (double tap sounds).
-            try:
-                hid().cmd(f"m {ux} {uy} 0 0")
-            except Exception as e:
-                log("drag error:", e)
-                continue
-            if ux or uy:
-                mag = (ux * ux + uy * uy) ** 0.5
-                moved = touch.points_for(mag)
-                carry[0] -= moved * ux / mag
-                carry[1] -= moved * uy / mag
+            pos = (round(c[0], 4), round(c[1], 4))
+            if pos != last and buttons.dragging:
+                try:
+                    hid().cmd(f"a {pos[0]:.5f} {pos[1]:.5f} 1")
+                except Exception as e:
+                    log("drag error:", e)
+                last = pos
     threading.Thread(target=motion_sender, daemon=True).start()
 
     sent = None

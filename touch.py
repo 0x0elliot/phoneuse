@@ -125,19 +125,16 @@ def long_press(hid, fx, fy, hold=0.8):
 
 
 def swipe(hid, fx0, fy0, fx1, fy1, duration=0.3, hold_end=0.0):
-    """Finger down at (fx0, fy0), move to (fx1, fy1) over `duration`, lift."""
-    t = Touch(hid)
-    t.press(fx0, fy0)
-    time.sleep(0.02)
-    t0 = time.time()
-    while True:
-        k = min(1.0, (time.time() - t0) / max(duration, TICK))
-        t.target = (fx0 + (fx1 - fx0) * k, fy0 + (fy1 - fy0) * k)
-        left = t.step()
-        if k >= 1.0 and left < 1.0:
-            break
-        if k >= 1.0 and time.time() - t0 > duration + 1.0:
-            break
+    """Finger down at (fx0, fy0), move to (fx1, fy1) over `duration`, lift.
+    Absolute reports throughout: iOS follows absolute moves while pressed."""
+    fx0, fy0, fx1, fy1 = (_clamp(v) for v in (fx0, fy0, fx1, fy1))
+    hid.cmd(f"a {fx0:.5f} {fy0:.5f} 0")
+    time.sleep(0.1)
+    hid.cmd(f"a {fx0:.5f} {fy0:.5f} 1")
+    n = max(2, int(duration / TICK))
+    for i in range(1, n + 1):
+        k = i / n
+        hid.cmd(f"a {fx0 + (fx1 - fx0) * k:.5f} {fy0 + (fy1 - fy0) * k:.5f} 1")
         time.sleep(TICK)
     time.sleep(hold_end)
-    t.release()
+    hid.cmd(f"a {fx1:.5f} {fy1:.5f} 0")
