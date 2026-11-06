@@ -2,7 +2,8 @@
 """phone: see and operate an iPhone from this PC.
 
 Setup and running:
-  phone install            one-time: Bluetooth HID service (sudo), bluetoothd config
+  phone install            one-time: Bluetooth HID service (sudo), bluetoothd config,
+                           and the local vision models (setup-vision.sh)
   phone up                 mirror window + mouse control (click/drag on the mirror)
   phone status             Bluetooth link, mirror window, pointer
 
@@ -19,6 +20,12 @@ if any value is > 1; the screen is 402 x 874 pt):
   phone type TEXT          type text (US layout); use \\n for Enter
   phone key COMBO          e.g. enter, escape, cmd+h, cmd+space, shift+tab
   phone where              where the pointer is (needs Pointer Control colour Orange)
+
+Reading the screen without images (local models, a few hundred tokens instead of ~1300):
+  phone text [--json]      every line of text on screen with its centre (x, y)
+  phone find WHAT          where an element is, from a plain description
+                           ("clear search (X) button", "Settings app icon")
+  phone tap-on WHAT        find it and tap it; prints where it tapped
 
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off, Pointer
 Control colour Orange (large), Automatically Hide Pointer off.
@@ -159,6 +166,73 @@ def screenshot(path, park=True):
     print(f"{path} ({w}x{hgt} px = 402x874 pt; tap with fractions of this image or points)")
 
 
+# ---------- vision (OCR + grounding, see vision.py) ----------
+
+VISION_SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-vision.sock")
+
+
+def vision(req, timeout=90):
+    import json
+    import socket
+
+    def ask():
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(VISION_SOCK)
+        s.sendall((json.dumps(req) + "\n").encode())
+        reply = json.loads(s.makefile().readline())
+        s.close()
+        return reply
+
+    try:
+        return ask()
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass
+    py = os.path.join(HERE, ".venv-vision", "bin", "python")
+    if not os.path.exists(py):
+        die("Vision models aren't installed. Run: ~/iphone-hid/setup-vision.sh")
+    logf = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-vision.log"), "a")
+    subprocess.Popen([py, os.path.join(HERE, "vision.py")], stdout=logf, stderr=logf, start_new_session=True)
+    for _ in range(120):
+        time.sleep(0.5)
+        try:
+            return ask()
+        except (FileNotFoundError, ConnectionRefusedError):
+            continue
+    die("vision service didn't start; see $XDG_RUNTIME_DIR/iphone-vision.log")
+
+
+def fresh_screenshot():
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"iphone-vision-{os.getpid()}.png")
+    import contextlib, io
+    with contextlib.redirect_stdout(io.StringIO()):
+        screenshot(path)
+    return path
+
+
+def text_cmd(args):
+    import json
+    shot = fresh_screenshot()
+    r = vision({"op": "text", "image": shot})
+    os.unlink(shot)
+    if "error" in r:
+        die(r["error"])
+    if "--json" in args:
+        print(json.dumps(r["lines"]))
+        return
+    for ln in r["lines"]:
+        print(f"{ln['x']:.3f} {ln['y']:.3f}  {ln['text']}")
+
+
+def find(what):
+    shot = fresh_screenshot()
+    r = vision({"op": "find", "image": shot, "what": what})
+    os.unlink(shot)
+    if "error" in r:
+        die(f"not found: {what}")
+    return r["x"], r["y"]
+
+
 # ---------- up / install / status ----------
 
 def up():
@@ -203,11 +277,20 @@ def main():
         return
     cmd, args = a[0], a[1:]
     if cmd == "install":
-        os.execvp("sudo", ["sudo", os.path.join(HERE, "install.sh")])
+        subprocess.run(["sudo", os.path.join(HERE, "install.sh")], check=True)
+        if not os.path.exists(os.path.join(HERE, ".venv-vision")):
+            subprocess.run([os.path.join(HERE, "setup-vision.sh")], check=True)
+        return
     if cmd == "up":
         return up()
     if cmd == "status":
         return status()
+    if cmd == "text":
+        return text_cmd(args)
+    if cmd == "find":
+        x, y = find(" ".join(args))
+        print(f"{x:.3f} {y:.3f}")
+        return
     if cmd == "screenshot":
         keep = "--keep-pointer" in args
         paths = [x for x in args if x != "--keep-pointer"]
@@ -232,6 +315,10 @@ def main():
         type_text(h, " ".join(args))
     elif cmd == "key":
         key_combo(h, args[0])
+    elif cmd == "tap-on":
+        x, y = find(" ".join(args))
+        touch.tap(h, x, y)
+        print(f"tapped {x:.3f} {y:.3f}")
     elif cmd == "where":
         p = steer.find_orange(steer.grab_rgb())
         print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")
