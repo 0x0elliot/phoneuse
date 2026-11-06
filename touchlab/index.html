@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>airwisp touch lab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 15px -apple-system, sans-serif;
+               overscroll-behavior: none; touch-action: none; -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; }
+  #log { position: fixed; left: 10px; right: 10px; top: 60px; white-space: pre; font: 14px ui-monospace, monospace; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="log">touch lab: touch anywhere</div>
+<script>
+// Shows exactly which touch and pointer events iOS delivers, so HID input can be
+// compared with real fingers. Each gesture is summarized as one line:
+//   #n  starts S, moves M, ends E, cancels C  |  path P pt, net (dx,dy)  |  type
+const c = document.getElementById('c'), g = c.getContext('2d'), log = document.getElementById('log');
+function size() { c.width = innerWidth * devicePixelRatio; c.height = innerHeight * devicePixelRatio; g.scale(devicePixelRatio, devicePixelRatio); }
+size(); addEventListener('resize', size);
+let n = 0, cur = null, lines = [];
+const show = () => { log.textContent = lines.slice(-14).join('\n'); };
+function begin(x, y, kind) {
+  cur = { n: ++n, kind, starts: 1, moves: 0, ends: 0, cancels: 0, x0: x, y0: y, x, y, path: 0, t0: performance.now() };
+  g.strokeStyle = `hsl(${(n * 47) % 360} 90% 60%)`; g.lineWidth = 3; g.beginPath(); g.moveTo(x, y);
+  g.fillStyle = g.strokeStyle; g.fillRect(x - 4, y - 4, 8, 8);
+}
+function move(x, y) {
+  if (!cur) return;
+  cur.moves++; cur.path += Math.hypot(x - cur.x, y - cur.y); cur.x = x; cur.y = y;
+  g.lineTo(x, y); g.stroke();
+}
+function end(cancel) {
+  if (!cur) return;
+  cancel ? cur.cancels++ : cur.ends++;
+  const ms = Math.round(performance.now() - cur.t0);
+  lines.push(`#${cur.n} ${cur.kind} ${ms}ms moves ${cur.moves} path ${Math.round(cur.path)} net ${Math.round(cur.x - cur.x0)},${Math.round(cur.y - cur.y0)}${cancel ? ' CANCEL' : ''}`);
+  cur = null; show();
+}
+addEventListener('touchstart', e => { const t = e.changedTouches[0]; begin(t.clientX, t.clientY, 'touch'); e.preventDefault(); }, { passive: false });
+addEventListener('touchmove', e => { const t = e.changedTouches[0]; move(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
+addEventListener('touchend', () => end(false));
+addEventListener('touchcancel', () => end(true));
+// mouse-style events too, in case iOS delivers the pointer as a mouse
+addEventListener('mousedown', e => { if (!cur) begin(e.clientX, e.clientY, 'mouse'); });
+addEventListener('mousemove', e => { if (cur && cur.kind === 'mouse') move(e.clientX, e.clientY); });
+addEventListener('mouseup', () => { if (cur && cur.kind === 'mouse') end(false); });
+document.addEventListener('dblclick', e => e.preventDefault());
+</script>
+</body>
+</html>

@@ -3,8 +3,9 @@
 What iOS does with our HID reports (measured 2026-11-06, iPhone 17 Pro, iOS 26):
   * The absolute pointer (hidd 'a') lands exactly where asked, anywhere on screen.
   * Button presses count only from the absolute pointer.
-  * While the button is held, absolute moves are ignored; relative moves (hidd 'm')
-    drag. So a drag = absolute press, then relative motion, then release.
+  * While the button is held, an absolute move ends the touch after ~90 ms (reads
+    as a click); relative moves (hidd 'm', button 0) drag it. So a drag = absolute
+    press, relative motion, absolute release. Verified with touchlab/.
   * Relative motion is accelerated by report size and dropped when reports come
     faster than ~8 ms apart. One report per 8 ms, sized from DRAG_PTS below,
     moves the pointer a predictable distance.
@@ -15,7 +16,7 @@ import time
 
 SCREEN_PT = (402, 874)  # iPhone 17 Pro, points
 TICK = 0.008  # one relative report per tick
-RAMP = 0.95  # reports at the start of a motion get less acceleration; measured 4-9% short
+RAMP = 1.0  # no start-of-motion correction: touchlab shows requested distances land exactly
 
 # Points moved by one relative report of N units (8 ms pacing), measured.
 DRAG_PTS = [(1, 3.6), (2, 6.9), (3, 12.1), (4, 17.6), (5, 25.6), (6, 33.3), (8, 46.6),
@@ -92,7 +93,7 @@ class Touch:
             return dist
         mag = (ux * ux + uy * uy) ** 0.5
         moved = points_for(mag) * RAMP
-        self.hid.cmd(f"m {ux} {uy} 0 1")
+        self.hid.cmd(f"m {ux} {uy} 0 0")
         self.pos = (self.pos[0] + moved * ux / mag / SCREEN_PT[0],
                     self.pos[1] + moved * uy / mag / SCREEN_PT[1])
         return max(0.0, dist - moved)
@@ -100,7 +101,6 @@ class Touch:
     def release(self):
         if not self.down:
             return
-        self.hid.cmd("m 0 0 0 0")
         fx, fy = self.target or self.pos
         self.hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
         self.down = False
@@ -125,16 +125,19 @@ def long_press(hid, fx, fy, hold=0.8):
 
 
 def swipe(hid, fx0, fy0, fx1, fy1, duration=0.3, hold_end=0.0):
-    """Finger down at (fx0, fy0), move to (fx1, fy1) over `duration`, lift.
-    Absolute reports throughout: iOS follows absolute moves while pressed."""
-    fx0, fy0, fx1, fy1 = (_clamp(v) for v in (fx0, fy0, fx1, fy1))
-    hid.cmd(f"a {fx0:.5f} {fy0:.5f} 0")
-    time.sleep(0.1)
-    hid.cmd(f"a {fx0:.5f} {fy0:.5f} 1")
-    n = max(2, int(duration / TICK))
-    for i in range(1, n + 1):
-        k = i / n
-        hid.cmd(f"a {fx0 + (fx1 - fx0) * k:.5f} {fy0 + (fy1 - fy0) * k:.5f} 1")
+    """Finger down at (fx0, fy0), move to (fx1, fy1) over `duration`, lift."""
+    t = Touch(hid)
+    t.press(fx0, fy0)
+    time.sleep(0.02)
+    t0 = time.time()
+    while True:
+        k = min(1.0, (time.time() - t0) / max(duration, TICK))
+        t.target = (fx0 + (fx1 - fx0) * k, fy0 + (fy1 - fy0) * k)
+        left = t.step()
+        if k >= 1.0 and left < 1.0:
+            break
+        if k >= 1.0 and time.time() - t0 > duration + 1.0:
+            break
         time.sleep(TICK)
     time.sleep(hold_end)
-    hid.cmd(f"a {fx1:.5f} {fy1:.5f} 0")
+    t.release()
