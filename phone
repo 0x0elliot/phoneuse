@@ -247,7 +247,12 @@ def up():
         # uxplay can die (it crashed on a window resize); start it again so the
         # phone can reconnect without restarting `phone up`.
         while not stop.is_set():
-            procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            env = dict(os.environ)
+            out = subprocess.DEVNULL
+            if os.environ.get("PHONE_TRACE"):  # per-element GStreamer latency, for tuning
+                env.update(GST_TRACERS="latency(flags=pipeline+element)", GST_DEBUG="GST_TRACER:7")
+                out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-gst-trace.log"), "w")
+            procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=out, stderr=out, env=env)
             rc = procs["mirror"].wait()
             if stop.is_set():
                 break

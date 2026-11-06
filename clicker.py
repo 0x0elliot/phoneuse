@@ -9,11 +9,11 @@ report and then moves with relative reports (hidd 'm'), like a real mouse. Mouse
 are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
 keyboard keep working normally everywhere.
 
-The mirror window gets a phone-style frame: a thick rounded border plus a
-window taller than the picture, so black strips sit above and below the
-screen inside the window. Pressing a strip starts the touch at that edge of
-the phone's screen (press the bottom strip and drag up = swipe home), and,
-being inside the window, never triggers Hyprland's resize-on-border.
+The mirror window is exactly the phone screen's shape, with squircle corners
+and a thick dark border as the phone's bezel. Pressing on the bezel starts the
+touch at the nearest screen edge (press the bottom bezel and drag up = swipe
+home; left bezel and drag right = back). The window's size is locked
+(min_size = max_size, plus a snap-back), so the border can't resize it.
 
 iPhone settings: AssistiveTouch on, Dwell Control off.
 """
@@ -34,14 +34,15 @@ EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
 MIN_GAP = 1 / 250  # at most this many pointer reports per second
 PHONE_ASPECT = steer.PHONE_ASPECT
-FRAME = 34  # border thickness (logical px)
-STRIP = 0.04  # extra window height above and below the picture, as a fraction of picture height
+FRAME = 30  # bezel: Hyprland border thickness (logical px); presses on it start edge touches
+STRIP = 0.0  # no letterbox strips: the window is exactly the phone screen's shape
+CORNER = 70  # screen corner radius (logical px, ~56 pt on the phone); squircle via rounding_power
 MIRROR_W = 498  # logical px; height follows from the phone's aspect plus the strips
 MIRROR_H = round(MIRROR_W / PHONE_ASPECT * (1 + 2 * STRIP))
 # min_size = max_size locks the window: resizing the GL window crashed uxplay.
 BEZEL_RULE = (
     'hl.window_rule({ name = "iphone-mirror-bezel", match = { class = "^uxplay$" }, '
-    f'border_size = {FRAME}, rounding = 62, border_color = "rgb(18181c) rgb(18181c)", '
+    f'border_size = {FRAME}, rounding = {CORNER}, rounding_power = 3.0, border_color = "rgb(18181c) rgb(18181c)", '
     f'min_size = {{ {MIRROR_W}, {MIRROR_H} }}, max_size = {{ {MIRROR_W}, {MIRROR_H} }} }})'
 )
 
@@ -256,8 +257,9 @@ def run(stop=None):
             (wx, wy), (ww, wh) = window
             x, y, w, h = picture_rect((wx, wy), (ww, wh))
             fx, fy = (cur["x"] - x) / w, (cur["y"] - y) / h
-            # anywhere in the window counts, including the strips around the picture
-            inside = wx <= cur["x"] <= wx + ww and wy <= cur["y"] <= wy + wh
+            # the window and its bezel (the border around it) both count; on the bezel
+            # the position clamps to the nearest screen edge, so edge swipes start exactly there
+            inside = (wx - FRAME <= cur["x"] <= wx + ww + FRAME) and (wy - FRAME <= cur["y"] <= wy + wh + FRAME)
             cfx, cfy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
             hid = hid or steer.Hid()
 
