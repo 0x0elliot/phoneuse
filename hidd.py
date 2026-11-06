@@ -20,6 +20,7 @@ Commands on /run/iphone-hid.sock, one per line, reply "ok ..." or "err ...":
 """
 import os
 import socket
+import struct
 import threading
 import time
 
@@ -162,6 +163,52 @@ class HID:
 hid = HID()
 
 
+# ---------- link tuning ----------
+# The iPhone is the master of the link and may poll us only every ~50 ms, which
+# caps the pointer at ~20 updates/s (measured 2026-11-06: acks 51 ms apart).
+# A QoS Setup asking for 8 ms latency brings that to ~2 ms, as real mice do.
+HCIGETCONNINFO = 0x800448D5
+
+
+def acl_handle(addr):
+    import fcntl
+    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+    try:
+        s.bind((0,))
+        ba = bytes(int(x, 16) for x in reversed(addr.split(":")))
+        buf = bytearray(ba + bytes([1]) + bytes(24))  # hci_conn_info_req, type ACL
+        fcntl.ioctl(s.fileno(), HCIGETCONNINFO, buf, True)
+        return struct.unpack_from("<H", buf, 8)[0]
+    finally:
+        s.close()
+
+
+def tune_link(addr):
+    try:
+        h = acl_handle(addr)
+        s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+        s.bind((0,))
+
+        def cmd(ogf, ocf, p):
+            s.send(bytes([1]) + struct.pack("<HB", (ogf << 10) | ocf, len(p)) + p)
+        cmd(0x02, 0x000D, struct.pack("<HH", h, 0x0001))  # link policy: role switch only, no sniff
+        time.sleep(0.02)
+        # QoS Setup: guaranteed, 800 B/s, latency 8000 us
+        cmd(0x02, 0x0007, struct.pack("<HBBIIII", h, 0, 0x02, 800, 0, 8000, 0xFFFFFFFF))
+        s.close()
+        return h
+    except OSError as e:
+        log("tune_link failed:", e)
+        return None
+
+
+def tune_loop():
+    while True:
+        time.sleep(20)
+        if hid.connected and hid.peer:
+            tune_link(hid.peer)
+
+
 # ---------- L2CAP ----------
 def handle_ctrl(sock):
     # Answer HID control-channel requests (SET_PROTOCOL, SET_IDLE, ...) with HANDSHAKE OK.
@@ -216,6 +263,7 @@ def accept_loop():
             hid.drop("replaced by new connection")
         hid.ctrl, hid.intr, hid.peer = c, i, addr[0]
         threading.Thread(target=handle_ctrl, args=(c,), daemon=True).start()
+        log("link tuned, handle", tune_link(addr[0]))
 
 
 def connect_out():
@@ -240,7 +288,7 @@ def connect_out():
             continue
         hid.ctrl, hid.intr = socks
         hid.peer = addr
-        log("connected out to", addr)
+        log("connected out to", addr, "- link tuned, handle", tune_link(addr))
         threading.Thread(target=handle_ctrl, args=(hid.ctrl,), daemon=True).start()
         return f"connected to {addr}"
     raise RuntimeError("; ".join(errors) or "no paired iPhone")
@@ -456,6 +504,7 @@ def main():
     setup_dbus()
     threading.Thread(target=accept_loop, daemon=True).start()
     threading.Thread(target=command_server, daemon=True).start()
+    threading.Thread(target=tune_loop, daemon=True).start()
 
     def connect_at_start():
         time.sleep(2)
