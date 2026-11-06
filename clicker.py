@@ -111,7 +111,6 @@ def subprocess_eval(lua):
 def run(stop=None):
     """Mirror-window mouse handling until `stop` (a threading.Event) is set."""
     subprocess_eval(BEZEL_RULE)
-    framed = set()
     buttons = Buttons()
     hid = None
     window = None
@@ -142,10 +141,12 @@ def run(stop=None):
             if now - window_checked > 0.5:
                 client = next((c for c in hypr("j/clients") if c["class"] == "uxplay"), None)
                 window = (client["at"], client["size"]) if client else None
-                if client and client["address"] not in framed:
-                    frame_window(client)
-                    framed.add(client["address"])
-                    continue
+                # keep the window at its framed size: snap back any resize (resizing
+                # the GL window has crashed uxplay; the rule's min/max only stops some)
+                if client and (abs(client["size"][0] - MIRROR_W) > 2 or abs(client["size"][1] - MIRROR_H) > 2):
+                    if finger is None:
+                        frame_window(client)
+                        continue
                 window_checked = now
             if window is None:
                 finger = None
