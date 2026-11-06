@@ -36,9 +36,13 @@ MIN_GAP = 1 / 250  # at most this many pointer reports per second
 PHONE_ASPECT = steer.PHONE_ASPECT
 FRAME = 34  # border thickness (logical px)
 STRIP = 0.04  # extra window height above and below the picture, as a fraction of picture height
+MIRROR_W = 498  # logical px; height follows from the phone's aspect plus the strips
+MIRROR_H = round(MIRROR_W / PHONE_ASPECT * (1 + 2 * STRIP))
+# min_size = max_size locks the window: resizing the GL window crashed uxplay.
 BEZEL_RULE = (
     'hl.window_rule({ name = "iphone-mirror-bezel", match = { class = "^uxplay$" }, '
-    f'border_size = {FRAME}, rounding = 62, border_color = "rgb(18181c) rgb(18181c)" }})'
+    f'border_size = {FRAME}, rounding = 62, border_color = "rgb(18181c) rgb(18181c)", '
+    f'min_size = {{ {MIRROR_W}, {MIRROR_H} }}, max_size = {{ {MIRROR_W}, {MIRROR_H} }} }})'
 )
 
 
@@ -94,10 +98,9 @@ picture_rect = steer.picture_rect
 def frame_window(client):
     """Make the mirror window taller than the picture so the strips exist."""
     (w, h) = client["size"]
-    want_h = round(w / PHONE_ASPECT * (1 + 2 * STRIP))
-    if abs(h - want_h) > 2:
-        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {w}, y = {want_h}, window = 'address:{client['address']}' }}))")
-        log("framed mirror window", f"{w}x{want_h}")
+    if abs(w - MIRROR_W) > 2 or abs(h - MIRROR_H) > 2:
+        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{client['address']}' }}))")
+        log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
 
 
 def subprocess_eval(lua):
