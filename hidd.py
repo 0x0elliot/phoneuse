@@ -31,6 +31,7 @@ from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOCK_PATH = "/run/iphone-hid.sock"
+DEVICE_NAME = os.environ.get("AIRWISP_NAME", "airwisp")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
 PROFILE_PATH = "/io/airwisp/hid/profile"
@@ -393,7 +394,8 @@ def setup_dbus():
     global bus
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
-    record = open(os.path.join(HERE, "sdp_record.xml")).read().replace("@REPORT_MAP@", REPORT_MAP.hex())
+    record = (open(os.path.join(HERE, "sdp_record.xml")).read()
+              .replace("@REPORT_MAP@", REPORT_MAP.hex()).replace("@NAME@", DEVICE_NAME))
     Profile(bus, PROFILE_PATH)
     pm = dbus.Interface(bus.get_object("org.bluez", "/org/bluez"), "org.bluez.ProfileManager1")
     pm.RegisterProfile(PROFILE_PATH, HID_UUID, {
@@ -405,7 +407,7 @@ def setup_dbus():
     am.RequestDefaultAgent(AGENT_PATH)
     a = adapter()
     a.Set("org.bluez.Adapter1", "Powered", True)
-    a.Set("org.bluez.Adapter1", "Alias", "iphone-hid")
+    a.Set("org.bluez.Adapter1", "Alias", DEVICE_NAME)
     log("profile + agent registered")
     # Always discoverable and pairable, so the iPhone can (re)pair any time.
     # The allow list keeps other devices off the HID channels.
@@ -424,7 +426,7 @@ def run_command(line):
     if cmd == "pair":
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
-        return f"ok discoverable for {secs}s as 'iphone-hid'"
+        return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
         x, y = (max(0, min(32767, round(float(v) * 32767))) for v in args[:2])
         btn = int(args[2]) & 0x07 if len(args) > 2 else 0

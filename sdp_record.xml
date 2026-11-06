@@ -22,7 +22,7 @@
       </sequence>
     </sequence>
   </attribute>
-  <attribute id="0x0100"><text value="iphone-hid" /></attribute>
+  <attribute id="0x0100"><text value="@NAME@" /></attribute>
   <attribute id="0x0101"><text value="Mouse and keyboard" /></attribute>
   <attribute id="0x0102"><text value="airwisp" /></attribute>
   <attribute id="0x0200"><uint16 value="0x0100" /></attribute>

@@ -113,6 +113,22 @@ class Buttons:
                         self.changed.set()
 
 
+picture_rect = steer.picture_rect
+
+
+def frame_window(client):
+    """Make the mirror window taller than the picture so the strips exist."""
+    (w, h) = client["size"]
+    if abs(w - MIRROR_W) > 2 or abs(h - MIRROR_H) > 2:
+        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{client['address']}' }}))")
+        log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
+
+
+def subprocess_eval(lua):
+    import subprocess
+    subprocess.run(["hyprctl", "eval", lua], capture_output=True)
+
+
 # Linux evdev key codes -> USB HID usage codes (keyboard page)
 _EV2HID = {}
 for i, k in enumerate([30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44]):

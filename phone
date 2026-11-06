@@ -49,7 +49,7 @@ MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
 # reordering", so a default H.264 decoder may hold a frame until the next one
 # pushes it out (measured: 200 ms median live). compliance=flexible releases them.
 DECODER = os.environ.get("PHONE_DECODER", "nvh264dec max-display-delay=0 compliance=flexible")
-MIRROR_ARGS = ["uxplay", "-p", "-n", "Linux", "-vd", DECODER,
+MIRROR_ARGS = ["uxplay", "-p", "-n", "airwisp", "-vd", DECODER,
                "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", "1206x2622@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
@@ -166,7 +166,7 @@ def screenshot(path, park=True):
     try:
         png = steer.grab_png()
     except RuntimeError:
-        die("No mirror window. Run `phone up` and start Screen Mirroring to 'Linux' on the iPhone.")
+        die("No mirror window. Run `phone up` and start Screen Mirroring to 'airwisp' on the iPhone.")
     with open(path, "wb") as f:
         f.write(png)
     from PIL import Image
@@ -248,7 +248,7 @@ def up():
     if subprocess.run(["systemctl", "is-active", "--quiet", "iphone-hid"]).returncode != 0:
         die("Bluetooth HID service isn't running. Run: phone install")
     import clicker
-    print("Starting the mirror (AirPlay receiver 'Linux'). On the iPhone: Control Center > Screen Mirroring > Linux.")
+    print("Starting the mirror (AirPlay receiver 'airwisp'). On the iPhone: Control Center > Screen Mirroring > airwisp.")
     stop = threading.Event()
     procs = {}
 
@@ -295,7 +295,7 @@ def status():
         at, size = steer.mirror_window()
         print("Mirror window:", at, size)
     except RuntimeError:
-        print("Mirror window: none (run `phone up`, then Screen Mirroring > Linux on the iPhone)")
+        print("Mirror window: none (run `phone up`, then Screen Mirroring > airwisp on the iPhone)")
 
 
 def main():
