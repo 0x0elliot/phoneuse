@@ -1,0 +1,235 @@
+#!/usr/bin/python
+"""phone: see and operate an iPhone from this PC.
+
+Setup and running:
+  phone install            one-time: Bluetooth HID service (sudo), bluetoothd config
+  phone up                 mirror window + mouse control (click/drag on the mirror)
+  phone status             Bluetooth link, mirror window, pointer
+
+Agent commands (coordinates: fractions 0..1 of the screenshot, or iPhone points
+if any value is > 1; the screen is 402 x 874 pt):
+  phone screenshot [PATH]  PNG of the phone screen (waits out the ~0.5 s mirror lag)
+  phone tap X Y            tap
+  phone longpress X Y [S]  press and hold (default 0.8 s)
+  phone swipe X0 Y0 X1 Y1 [S]   drag from one point to another over S seconds (default 0.3)
+  phone scroll up|down [N] scroll the content by N screen-halves (default 1)
+  phone home | back | switcher | control-center | notifications | dismiss
+  phone open APP           open an app by name (search, type, Enter)
+  phone type TEXT          type text (US layout); use \\n for Enter
+  phone key COMBO          e.g. enter, escape, cmd+h, cmd+space, shift+tab
+  phone where              where the pointer is (needs Pointer Control colour Orange)
+
+iPhone settings this relies on: AssistiveTouch on, Dwell Control off, Pointer
+Control colour Orange (large), Automatically Hide Pointer off.
+"""
+import os
+import subprocess
+import sys
+import threading
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import steer  # noqa: E402
+import touch  # noqa: E402
+
+PT = touch.SCREEN_PT
+LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-hid-last-action")
+MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
+MIRROR_ARGS = ["uxplay", "-p", "-n", "Linux", "-vd", "nvh264dec max-display-delay=0",
+               "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", "1206x2622@60", "-fps", "60"]
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def point(xs, ys):
+    """Parse a coordinate pair: fractions, or iPhone points if either is > 1."""
+    x, y = float(xs), float(ys)
+    if x > 1 or y > 1:
+        x, y = x / PT[0], y / PT[1]
+    if not (0 <= x <= 1 and 0 <= y <= 1):
+        die(f"coordinate out of range: {xs} {ys}")
+    return x, y
+
+
+def hid():
+    try:
+        h = steer.Hid()
+    except OSError:
+        die("Bluetooth HID service isn't running. Run: phone install")
+    st = h.cmd("status")
+    if "connected=True" not in st:
+        try:
+            h.cmd("connect")
+        except RuntimeError as e:
+            die(f"iPhone not connected over Bluetooth ({e}). On the phone: Settings > Bluetooth > iphone-hid.")
+    return h
+
+
+def acted():
+    open(LAST_ACTION, "w").close()
+
+
+def key_combo(h, combo):
+    parts = combo.lower().replace("-", "+").split("+")
+    mods = {"cmd": "gui", "command": "gui", "ctrl": "ctrl", "control": "ctrl", "alt": "alt",
+            "option": "alt", "opt": "alt", "shift": "shift", "gui": "gui"}
+    key = parts[-1]
+    h.cmd("key " + " ".join([key] + [mods[p] for p in parts[:-1]]))
+
+
+# ---------- gestures (recipes verified on iOS 26, see RECIPES.md) ----------
+
+def home(h):
+    h.cmd("key h gui")
+
+
+def back(h):
+    touch.swipe(h, 0.0, 0.5, 0.75, 0.5, duration=0.25)
+
+
+def switcher(h):
+    touch.swipe(h, 0.5, 1.0, 0.5, 0.62, duration=0.45, hold_end=0.6)
+
+
+def control_center(h):
+    touch.swipe(h, 0.88, 0.0, 0.88, 0.45, duration=0.6)
+
+
+def notifications(h):
+    touch.swipe(h, 0.15, 0.0, 0.15, 0.7, duration=0.6)
+
+
+def dismiss(h):
+    """Close Control Center, Notification Center, the switcher, or go home from an app."""
+    touch.swipe(h, 0.5, 1.0, 0.5, 0.15, duration=0.12)
+
+
+def scroll(h, direction, n=1.0):
+    d = 0.4 * n
+    y0, y1 = (0.3, 0.3 + d) if direction == "up" else (0.7, 0.7 - d)
+    touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
+
+
+def open_app(h, name):
+    h.cmd("key h gui"); time.sleep(0.8)
+    h.cmd("key space gui"); time.sleep(0.7)
+    h.cmd("type " + name); time.sleep(0.8)
+    h.cmd("key enter")
+
+
+def type_text(h, text):
+    for i, chunk in enumerate(text.replace("\\n", "\n").split("\n")):
+        if i:
+            h.cmd("key enter")
+        if chunk:
+            h.cmd("type " + chunk)
+
+
+# ---------- screen ----------
+
+def screenshot(path):
+    try:
+        wait = MIRROR_LAG - (time.time() - os.path.getmtime(LAST_ACTION))
+        if wait > 0:
+            time.sleep(wait)
+    except FileNotFoundError:
+        pass
+    try:
+        png = steer.grab_png()
+    except RuntimeError:
+        die("No mirror window. Run `phone up` and start Screen Mirroring to 'Linux' on the iPhone.")
+    with open(path, "wb") as f:
+        f.write(png)
+    from PIL import Image
+    import io
+    w, hgt = Image.open(io.BytesIO(png)).size
+    print(f"{path} ({w}x{hgt} px = 402x874 pt; tap with fractions of this image or points)")
+
+
+# ---------- up / install / status ----------
+
+def up():
+    if subprocess.run(["systemctl", "is-active", "--quiet", "iphone-hid"]).returncode != 0:
+        die("Bluetooth HID service isn't running. Run: phone install")
+    import clicker
+    print("Starting the mirror (AirPlay receiver 'Linux'). On the iPhone: Control Center > Screen Mirroring > Linux.")
+    mirror = subprocess.Popen(MIRROR_ARGS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stop = threading.Event()
+    try:
+        h = steer.Hid()
+        print("Bluetooth:", h.cmd("status").replace("ok ", ""))
+        print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
+        clicker.run(stop)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        mirror.terminate()
+        try:
+            mirror.wait(3)
+        except subprocess.TimeoutExpired:
+            mirror.kill()
+
+
+def status():
+    svc = subprocess.run(["systemctl", "is-active", "iphone-hid"], capture_output=True, text=True).stdout.strip()
+    print("HID service:", svc)
+    if svc == "active":
+        print("Bluetooth:", steer.Hid().cmd("status").replace("ok ", ""))
+    try:
+        at, size = steer.mirror_window()
+        print("Mirror window:", at, size)
+    except RuntimeError:
+        print("Mirror window: none (run `phone up`, then Screen Mirroring > Linux on the iPhone)")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return
+    cmd, args = a[0], a[1:]
+    if cmd == "install":
+        os.execvp("sudo", ["sudo", os.path.join(HERE, "install.sh")])
+    if cmd == "up":
+        return up()
+    if cmd == "status":
+        return status()
+    if cmd == "screenshot":
+        return screenshot(args[0] if args else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone.png"))
+    h = hid()
+    if cmd == "tap":
+        touch.tap(h, *point(*args[:2]))
+    elif cmd == "longpress":
+        touch.long_press(h, *point(*args[:2]), hold=float(args[2]) if len(args) > 2 else 0.8)
+    elif cmd == "swipe":
+        x0, y0 = point(*args[0:2]); x1, y1 = point(*args[2:4])
+        touch.swipe(h, x0, y0, x1, y1, duration=float(args[4]) if len(args) > 4 else 0.3)
+    elif cmd == "scroll":
+        scroll(h, args[0] if args else "down", float(args[1]) if len(args) > 1 else 1.0)
+    elif cmd in ("home", "back", "switcher", "dismiss", "notifications"):
+        globals()[cmd](h)
+    elif cmd == "control-center":
+        control_center(h)
+    elif cmd == "open":
+        open_app(h, " ".join(args))
+    elif cmd == "type":
+        type_text(h, " ".join(args))
+    elif cmd == "key":
+        key_combo(h, args[0])
+    elif cmd == "where":
+        p = steer.find_orange(steer.grab_rgb())
+        print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")
+        return
+    else:
+        die(f"unknown command: {cmd} (phone --help)")
+    acted()
+    print("ok")
+
+
+if __name__ == "__main__":
+    main()

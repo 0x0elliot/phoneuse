@@ -49,13 +49,16 @@ _find_hyprland()
 
 class Hid:
     def __init__(self):
+        import threading
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(SOCK_PATH)
         self.f = self.sock.makefile()
+        self.lock = threading.Lock()
 
     def cmd(self, line):
-        self.sock.sendall((line + "\n").encode())
-        reply = self.f.readline().strip()
+        with self.lock:
+            self.sock.sendall((line + "\n").encode())
+            reply = self.f.readline().strip()
         if not reply.startswith("ok"):
             raise RuntimeError(reply)
         return reply
@@ -71,10 +74,28 @@ def mirror_window():
     raise RuntimeError("mirror window not found")
 
 
+PHONE_ASPECT = 1206 / 2622  # iPhone 17 Pro screen, width / height
+
+
+def picture_rect(at, size):
+    """Where the phone picture sits inside the mirror window (centered, aspect-fit)."""
+    (x, y), (w, h) = at, size
+    if w / h < PHONE_ASPECT:
+        pw, ph = w, w / PHONE_ASPECT
+    else:
+        pw, ph = h * PHONE_ASPECT, h
+    return x + (w - pw) / 2, y + (h - ph) / 2, pw, ph
+
+
+def grab_png():
+    """PNG bytes of just the phone picture (not the frame strips)."""
+    x, y, w, h = picture_rect(*mirror_window())
+    return subprocess.check_output(["grim", "-g", f"{round(x)},{round(y)} {round(w)}x{round(h)}", "-"])
+
+
 def grab():
-    """Mirror window as a float32 grayscale array (physical pixels)."""
-    (x, y), (w, h) = mirror_window()
-    png = subprocess.check_output(["grim", "-g", f"{x},{y} {w}x{h}", "-"])
+    """Phone picture as a float32 grayscale array (physical pixels)."""
+    png = grab_png()
     return np.asarray(Image.open(io.BytesIO(png)).convert("L"), dtype=np.float32)
 
 
@@ -229,15 +250,21 @@ def _components(mask, cell=4):
     return out
 
 
-def find_orange(frame_rgb):
+def orange_mask(frame_rgb):
+    r, g, b = (frame_rgb[..., i].astype(np.int16) for i in range(3))
+    return (r > 200) & (g > 100) & (g < 185) & (b < 90) & (r - g > 60)
+
+
+def find_orange(frame_rgb, baseline_rgb=None):
     """Centre (fractions) of the orange Pointer Control ring, or None.
 
     Needs Pointer Control: Color = Orange, large size. The ring is the orange
     component that is big (about 22% of the screen width across) and hollow,
     unlike orange app icons, which are small and solid.
     """
-    r, g, b = (frame_rgb[..., i].astype(np.int16) for i in range(3))
-    mask = (r > 200) & (g > 100) & (g < 185) & (b < 90) & (r - g > 60)
+    mask = orange_mask(frame_rgb)
+    if baseline_rgb is not None:  # drop orange that was already there (icons etc.)
+        mask &= ~orange_mask(baseline_rgb)
     h, w = mask.shape
     best = None
     for n, xs, ys in _components(mask):
@@ -258,6 +285,4 @@ def find_orange(frame_rgb):
 
 
 def grab_rgb():
-    (x, y), (w, h) = mirror_window()
-    png = subprocess.check_output(["grim", "-g", f"{x},{y} {w}x{h}", "-"])
-    return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+    return np.asarray(Image.open(io.BytesIO(grab_png())).convert("RGB"))

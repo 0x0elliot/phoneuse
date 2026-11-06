@@ -27,19 +27,19 @@ import threading
 import time
 
 import steer  # also fixes a stale HYPRLAND_INSTANCE_SIGNATURE
+import touch
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
 MIN_GAP = 1 / 250  # at most this many pointer reports per second
-PHONE_ASPECT = 1206 / 2622  # iPhone 17 Pro screen, width / height
+PHONE_ASPECT = steer.PHONE_ASPECT
 FRAME = 34  # border thickness (logical px)
 STRIP = 0.04  # extra window height above and below the picture, as a fraction of picture height
 BEZEL_RULE = (
     'hl.window_rule({ name = "iphone-mirror-bezel", match = { class = "^uxplay$" }, '
     f'border_size = {FRAME}, rounding = 62, border_color = "rgb(18181c) rgb(18181c)" }})'
 )
-DRAG_CHUNK = 3  # relative units per report while dragging (small steps keep iOS acceleration predictable)
 
 
 def log(*a):
@@ -88,14 +88,7 @@ class Buttons:
                         self.changed.set()
 
 
-def picture_rect(at, size):
-    """Where the phone picture sits inside the mirror window (centered, aspect-fit)."""
-    (x, y), (w, h) = at, size
-    if w / h < PHONE_ASPECT:  # window narrower than the phone: width-limited
-        pw, ph = w, w / PHONE_ASPECT
-    else:
-        pw, ph = h * PHONE_ASPECT, h
-    return x + (w - pw) / 2, y + (h - ph) / 2, pw, ph
+picture_rect = steer.picture_rect
 
 
 def frame_window(client):
@@ -112,7 +105,8 @@ def subprocess_eval(lua):
     subprocess.run(["hyprctl", "eval", lua], capture_output=True)
 
 
-def main():
+def run(stop=None):
+    """Mirror-window mouse handling until `stop` (a threading.Event) is set."""
     subprocess_eval(BEZEL_RULE)
     framed = set()
     buttons = Buttons()
@@ -120,12 +114,25 @@ def main():
     window = None
     window_checked = 0.0
     sent = None  # last (fx, fy) hovered, sent as absolute
-    drag = None  # while pressed: [last fx, last fy, leftover units x, leftover units y]
+    finger = None  # touch.Touch while the button is held
     last_send = 0.0
-    while True:
+
+    def stepper():
+        # one relative report per 8 ms while dragging (see touch.py for why)
+        while stop is None or not stop.is_set():
+            f = finger
+            if f is not None and f.down:
+                try:
+                    f.step()
+                except Exception as e:
+                    log("drag error:", e)
+            time.sleep(touch.TICK)
+    threading.Thread(target=stepper, daemon=True).start()
+
+    while stop is None or not stop.is_set():
         buttons.changed.wait(IDLE_WAKE)
         buttons.changed.clear()
-        if time.time() - last_send < MIN_GAP and buttons.down == (drag is not None):
+        if finger is None and time.time() - last_send < MIN_GAP and not buttons.down:
             time.sleep(MIN_GAP - (time.time() - last_send))
         try:
             now = time.time()
@@ -138,7 +145,7 @@ def main():
                     continue
                 window_checked = now
             if window is None:
-                drag = None
+                finger = None
                 continue
             cur = hypr("j/cursorpos")
             (wx, wy), (ww, wh) = window
@@ -149,36 +156,22 @@ def main():
             cfx, cfy = min(max(fx, 0.0), 1.0), min(max(fy, 0.0), 1.0)
             hid = hid or steer.Hid()
 
-            if drag is None and buttons.down and inside:
-                # press: put the dot exactly here and touch down
-                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 0")
-                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 1")
-                drag = [cfx, cfy, 0.0, 0.0]
+            if finger is None and buttons.down and inside:
+                finger = touch.Touch(hid)
+                finger.press(cfx, cfy)  # exact touch-down
                 log("down", f"({cfx:.3f}, {cfy:.3f})")
-            elif drag is not None and buttons.down:
-                # held: follow the cursor with relative motion (absolute is ignored while pressed)
-                drag[2] += (cfx - drag[0]) / steer.GAIN_X
-                drag[3] += (cfy - drag[1]) / steer.GAIN_Y
-                drag[0], drag[1] = cfx, cfy
-                while abs(drag[2]) >= 1 or abs(drag[3]) >= 1:
-                    n = max(abs(drag[2]), abs(drag[3])) / DRAG_CHUNK
-                    ux = int(drag[2] / max(n, 1))
-                    uy = int(drag[3] / max(n, 1))
-                    if ux == 0 and uy == 0:
-                        ux, uy = int(drag[2]), int(drag[3])
-                    hid.cmd(f"m {ux} {uy} 0 1")
-                    drag[2] -= ux
-                    drag[3] -= uy
-                last_send = time.time()
-            elif drag is not None:
-                # released: let go where the cursor is
-                hid.cmd("m 0 0 0 0")
-                hid.cmd(f"a {cfx:.5f} {cfy:.5f} 0")
+            elif finger is not None and buttons.down:
+                finger.target = (cfx, cfy)  # stepper drags toward it
+            elif finger is not None:
+                finger.target = (cfx, cfy)
+                t0 = time.time()
+                while finger.step() > 2 and time.time() - t0 < 0.15:
+                    time.sleep(touch.TICK)
+                f, finger = finger, None
+                f.release()
                 log("up", f"({cfx:.3f}, {cfy:.3f})")
-                drag = None
                 sent = (round(cfx, 4), round(cfy, 4))
             elif inside:
-                # hover: the dot follows the cursor
                 state = (round(cfx, 4), round(cfy, 4))
                 if state != sent:
                     hid.cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
@@ -186,8 +179,9 @@ def main():
                     last_send = time.time()
         except Exception as e:
             log("error:", e)
-            hid, sent, drag = None, None, None
+            hid, sent, finger = None, None, None
             time.sleep(1)
 
+
 if __name__ == "__main__":
-    main()
+    run()
