@@ -247,7 +247,6 @@ def find(what):
 def up():
     if subprocess.run(["systemctl", "is-active", "--quiet", "iphone-hid"]).returncode != 0:
         die("Bluetooth HID service isn't running. Run: phone install")
-    import clicker
     print("Starting the mirror (AirPlay receiver 'airwisp'). On the iPhone: Control Center > Screen Mirroring > airwisp.")
     stop = threading.Event()
     procs = {}
@@ -272,11 +271,29 @@ def up():
         h = steer.Hid()
         print("Bluetooth:", h.cmd("status").replace("ok ", ""))
         print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
-        clicker.run(stop)
+        # The clicker runs as its own process and restarts by itself when its code
+        # changes, so edits don't drop the AirPlay connection.
+        watched = [os.path.join(HERE, f) for f in ("clicker.py", "touch.py", "steer.py")]
+        mtimes = lambda: [os.path.getmtime(f) for f in watched]
+        while not stop.is_set():
+            seen = mtimes()
+            procs["clicker"] = subprocess.Popen([sys.executable, os.path.join(HERE, "clicker.py")])
+            while procs["clicker"].poll() is None:
+                time.sleep(1)
+                if mtimes() != seen:
+                    print(time.strftime("%H:%M:%S"), "clicker code changed; reloading it (mirror stays up)", flush=True)
+                    procs["clicker"].terminate()
+                    procs["clicker"].wait(3)
+                    break
+            else:
+                print(time.strftime("%H:%M:%S"), "clicker exited; restarting it", flush=True)
+                time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
+        if procs.get("clicker") and procs["clicker"].poll() is None:
+            procs["clicker"].terminate()
         mirror = procs.get("mirror")
         if mirror and mirror.poll() is None:
             mirror.terminate()

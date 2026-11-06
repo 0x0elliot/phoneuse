@@ -220,8 +220,9 @@ def run(stop=None):
 
     Hover: the phone's pointer follows the cursor (absolute reports).
     Press: touch down at the pointer immediately (absolute report, button 1).
-    Held: the mouse's own motion goes to the phone as relative reports, every
-    8 ms, exactly like a real Bluetooth mouse; iOS turns it into the drag.
+    Held: every 8 ms the touch moves by exactly what the cursor moved over the
+    mirror (relative reports sized from the measured table); iOS turns it into
+    the drag. Nothing steers toward a target, so nothing drifts.
     Release: touch up.
     """
     subprocess_eval(BEZEL_RULE)
@@ -265,9 +266,6 @@ def run(stop=None):
         if not buttons.dragging:
             return
         buttons.dragging = False
-        dx, dy = buttons.take_motion()
-        if dx or dy:
-            hid().cmd(f"m {max(-127, min(127, dx))} {max(-127, min(127, dy))} 0 1")
         c = cursor_fraction()
         fx, fy = (c[0], c[1]) if c else (0.5, 0.5)
         hid().cmd("m 0 0 0 0")
@@ -278,21 +276,45 @@ def run(stop=None):
     KeyForwarder(hid, mirror_focused)
 
     def motion_sender():
-        # while held, pass raw mouse motion through, one report per 8 ms
-        # (iOS drops motion from reports that arrive faster than that)
+        # While held: every 8 ms, move the phone's touch by exactly what the cursor
+        # moved over the mirror. Cursor deltas (not raw mouse counts, which are
+        # DPI-scaled) are converted to phone points, then to the report size that
+        # moves that far (touch.DRAG_PTS, measured; iOS accelerates by report size
+        # and drops reports sent faster than ~8 ms apart). Remainders carry over.
+        last = None
+        carry = [0.0, 0.0]  # phone points still to move
         while stop is None or not stop.is_set():
             time.sleep(touch.TICK)
-            if not buttons.dragging:
+            if not buttons.dragging or win["pic"] is None:
+                last, carry[:] = None, [0.0, 0.0]
                 continue
-            dx, dy = buttons.take_motion()
-            while dx or dy:
-                ux, uy = max(-127, min(127, dx)), max(-127, min(127, dy))
-                try:
-                    hid().cmd(f"m {ux} {uy} 0 1")
-                except Exception as e:
-                    log("drag error:", e)
-                    break
-                dx, dy = dx - ux, dy - uy
+            try:
+                cur = hypr("j/cursorpos")
+            except Exception:
+                continue
+            if last is None:
+                last = cur
+                continue
+            x, y, w, h = win["pic"]
+            carry[0] += (cur["x"] - last["x"]) / w * touch.SCREEN_PT[0]
+            carry[1] += (cur["y"] - last["y"]) / h * touch.SCREEN_PT[1]
+            last = cur
+            dist = (carry[0] ** 2 + carry[1] ** 2) ** 0.5
+            if dist < 1.0:
+                continue
+            u = max(1.0, touch.units_for(dist))
+            ux, uy = round(u * carry[0] / dist), round(u * carry[1] / dist)
+            if ux == 0 and uy == 0:
+                continue
+            mag = (ux * ux + uy * uy) ** 0.5
+            moved = touch.points_for(mag)
+            try:
+                hid().cmd(f"m {ux} {uy} 0 1")
+            except Exception as e:
+                log("drag error:", e)
+                continue
+            carry[0] -= moved * ux / mag
+            carry[1] -= moved * uy / mag
     threading.Thread(target=motion_sender, daemon=True).start()
 
     sent = None
