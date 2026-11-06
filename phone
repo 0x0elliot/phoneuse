@@ -44,7 +44,12 @@ import touch  # noqa: E402
 PT = touch.SCREEN_PT
 LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-hid-last-action")
 MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
-MIRROR_ARGS = ["uxplay", "-p", "-n", "Linux", "-vd", "nvh264dec max-display-delay=0",
+# Decoder: frames must leave the decoder as soon as they're decoded. iOS only
+# sends a frame when the screen changes, and its streams don't declare "no
+# reordering", so a default H.264 decoder may hold a frame until the next one
+# pushes it out (measured: 200 ms median live). compliance=flexible releases them.
+DECODER = os.environ.get("PHONE_DECODER", "nvh264dec max-display-delay=0 compliance=flexible")
+MIRROR_ARGS = ["uxplay", "-p", "-n", "Linux", "-vd", DECODER,
                "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", "1206x2622@60", "-fps", "60"]
 
 
