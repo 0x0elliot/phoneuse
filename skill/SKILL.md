@@ -25,7 +25,22 @@ input goes in as a Bluetooth mouse and keyboard. Everything an agent does is a
 
 ## The loop
 
-Take a screenshot, decide, act, then take another screenshot to check.
+Look, decide, act, look again. Look with text first; it costs a few hundred
+tokens, where a screenshot image costs about 1,300.
+
+```bash
+phone text                         # every text line on screen: "x y  text"
+phone tap-on "Wi-Fi"               # find an element by description and tap it
+phone find "clear search (X) button"   # just the position, to tap or swipe yourself
+```
+
+`phone text` and `phone find` run local models (PP-OCRv6 OCR and the GoClick
+grounding model) through a service that starts on first use (first call takes
+a few seconds). `find` and `tap-on` take plain descriptions, including icons
+without text ("Settings app icon", "back button", "share button").
+
+Take a real screenshot when text isn't enough: pictures, icon-only screens,
+checking a layout, or when `find` lands somewhere surprising.
 
 ```bash
 phone screenshot $SCRATCH/s1.png   # then look at the image with the Read tool
