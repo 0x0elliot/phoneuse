@@ -203,3 +203,61 @@ if __name__ == "__main__":
         print(tap(h, *args))
     elif sys.argv[1] == "swipe":
         swipe(h, *args)
+
+
+def _components(mask, cell=4):
+    """Connected components of a boolean mask on a coarse grid: (cells, xs, ys) each."""
+    h, w = mask.shape
+    g = mask[: h // cell * cell, : w // cell * cell].reshape(h // cell, cell, w // cell, cell).any(axis=(1, 3))
+    lab = np.zeros(g.shape, np.int32)
+    out = []
+    for y0, x0 in zip(*np.nonzero(g)):
+        if lab[y0, x0]:
+            continue
+        lab[y0, x0] = len(out) + 1
+        stack, pts = [(y0, x0)], []
+        while stack:
+            cy, cx = stack.pop()
+            pts.append((cy, cx))
+            for ny in (cy - 1, cy, cy + 1):
+                for nx in (cx - 1, cx, cx + 1):
+                    if 0 <= ny < g.shape[0] and 0 <= nx < g.shape[1] and g[ny, nx] and not lab[ny, nx]:
+                        lab[ny, nx] = lab[y0, x0]
+                        stack.append((ny, nx))
+        ys, xs = (np.array(v) for v in zip(*pts))
+        out.append((len(pts), (xs + 0.5) * cell, (ys + 0.5) * cell))
+    return out
+
+
+def find_orange(frame_rgb):
+    """Centre (fractions) of the orange Pointer Control ring, or None.
+
+    Needs Pointer Control: Color = Orange, large size. The ring is the orange
+    component that is big (about 22% of the screen width across) and hollow,
+    unlike orange app icons, which are small and solid.
+    """
+    r, g, b = (frame_rgb[..., i].astype(np.int16) for i in range(3))
+    mask = (r > 200) & (g > 100) & (g < 185) & (b < 90) & (r - g > 60)
+    h, w = mask.shape
+    best = None
+    for n, xs, ys in _components(mask):
+        bw, bh = np.ptp(xs) + 4, np.ptp(ys) + 4
+        size = max(bw, bh) / w
+        fill = n * 16 / (bw * bh)
+        if 0.12 < size < 0.35 and fill < 0.5 and (best is None or n > best[0]):
+            # a ring cut off by a screen edge: centre from the full-size side
+            cx = (xs.min() + xs.max()) / 2
+            cy = (ys.min() + ys.max()) / 2
+            d = max(bw, bh)
+            if bw < d * 0.9:
+                cx = xs.max() - d / 2 if xs.min() <= 4 else xs.min() + d / 2
+            if bh < d * 0.9:
+                cy = ys.max() - d / 2 if ys.min() <= 4 else ys.min() + d / 2
+            best = (n, cx / w, cy / h)
+    return best[1:] if best else None
+
+
+def grab_rgb():
+    (x, y), (w, h) = mirror_window()
+    png = subprocess.check_output(["grim", "-g", f"{x},{y} {w}x{h}", "-"])
+    return np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
