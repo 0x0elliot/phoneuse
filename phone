@@ -331,6 +331,11 @@ def main():
         key_combo(h, args[0])
     elif cmd == "tap-on":
         x, y = find(" ".join(args))
+        # find always answers, even when the element isn't there; it then tends to
+        # point at the status bar. Never tap there: the Dynamic Island in its middle
+        # opens the Stop Mirroring popup.
+        if y < 0.06:
+            die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{' '.join(args)}' is probably not on screen")
         touch.tap(h, x, y)
         print(f"tapped {x:.3f} {y:.3f}")
     elif cmd == "where":

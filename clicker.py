@@ -108,6 +108,92 @@ def subprocess_eval(lua):
     subprocess.run(["hyprctl", "eval", lua], capture_output=True)
 
 
+# Linux evdev key codes -> USB HID usage codes (keyboard page)
+_EV2HID = {}
+for i, k in enumerate([30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44]):
+    _EV2HID[k] = 4 + i  # a..z
+for i, k in enumerate([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]):
+    _EV2HID[k] = 30 + i  # 1..9, 0
+_EV2HID.update({28: 40, 1: 41, 14: 42, 15: 43, 57: 44, 12: 45, 13: 46, 26: 47, 27: 48, 43: 49,
+                39: 51, 40: 52, 41: 53, 51: 54, 52: 55, 53: 56, 58: 57,
+                59: 58, 60: 59, 61: 60, 62: 61, 63: 62, 64: 63, 65: 64, 66: 65, 67: 66, 68: 67, 87: 68, 88: 69,
+                110: 73, 102: 74, 104: 75, 111: 76, 107: 77, 109: 78,
+                106: 79, 105: 80, 108: 81, 103: 82, 96: 88})
+_EVMOD = {29: 0x01, 42: 0x02, 56: 0x04, 125: 0x08, 97: 0x10, 54: 0x20, 100: 0x40, 126: 0x80}
+
+
+def keyboard_paths():
+    """keyd's virtual keyboard if present (keyd grabs the physical ones), else real keyboards."""
+    devs, name, handlers = [], None, ""
+    for line in open("/proc/bus/input/devices"):
+        if line.startswith("N: Name="):
+            name = line.split("=", 1)[1].strip().strip('"')
+        elif line.startswith("H: Handlers="):
+            handlers = line
+        elif line.startswith("B: EV=") and "kbd" in handlers and "leds" in handlers:
+            ev = next((h for h in handlers.split() if h.startswith("event")), None)
+            if ev:
+                devs.append((name, "/dev/input/" + ev))
+    keyd = [p for n, p in devs if n == "keyd virtual keyboard"]
+    return keyd or [p for n, p in devs if "keyd" not in n]
+
+
+class KeyForwarder:
+    """Types on the iPhone while the mirror window has focus. Read-only: keys still
+    reach the PC as usual (the mirror window ignores them)."""
+
+    def __init__(self, hid_getter, focused):
+        self.hid_getter = hid_getter
+        self.focused = focused
+        self.mods = 0
+        self.held = []
+        self.sending = False
+        paths = keyboard_paths()
+        self.fds = [os.open(p, os.O_RDONLY | os.O_NONBLOCK) for p in paths]
+        log("typing to the phone from", len(paths), "keyboard(s) while the mirror is focused")
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _send(self):
+        hid = self.hid_getter()
+        if hid:
+            hid.cmd("k %d %s" % (self.mods, " ".join(str(c) for c in self.held[-6:])))
+
+    def _run(self):
+        while True:
+            ready, _, _ = select.select(self.fds, [], [])
+            for fd in ready:
+                try:
+                    data = os.read(fd, EVENT.size * 64)
+                except BlockingIOError:
+                    continue
+                for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                    _, _, etype, code, value = EVENT.unpack_from(data, i)
+                    if etype != EV_KEY or value == 2:  # ignore autorepeat; the phone repeats itself
+                        continue
+                    try:
+                        self._key(code, value == 1)
+                    except Exception as e:
+                        log("key error:", e)
+
+    def _key(self, code, down):
+        if code in _EVMOD:
+            self.mods = self.mods | _EVMOD[code] if down else self.mods & ~_EVMOD[code]
+        elif code in _EV2HID:
+            u = _EV2HID[code]
+            if down and u not in self.held:
+                self.held.append(u)
+            elif not down and u in self.held:
+                self.held.remove(u)
+        else:
+            return
+        if self.focused():
+            self.sending = True
+            self._send()
+        elif self.sending:  # focus left the mirror: let go of everything on the phone
+            self.mods, self.held, self.sending = 0, [], False
+            self._send()
+
+
 def run(stop=None):
     """Mirror-window mouse handling until `stop` (a threading.Event) is set."""
     subprocess_eval(BEZEL_RULE)
@@ -118,6 +204,21 @@ def run(stop=None):
     sent = None  # last (fx, fy) hovered, sent as absolute
     finger = None  # touch.Touch while the button is held
     last_send = 0.0
+
+    state = {"hid": None}
+
+    def mirror_focused():
+        try:
+            return hypr("j/activewindow").get("class") == "uxplay"
+        except Exception:
+            return False
+
+    def shared_hid():
+        if state["hid"] is None:
+            state["hid"] = steer.Hid()
+        return state["hid"]
+
+    KeyForwarder(shared_hid, mirror_focused)
 
     def stepper():
         # one relative report per 8 ms while dragging (see touch.py for why)

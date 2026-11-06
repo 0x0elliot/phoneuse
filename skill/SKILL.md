@@ -39,6 +39,10 @@ grounding model) through a service that starts on first use (first call takes
 a few seconds). `find` and `tap-on` take plain descriptions, including icons
 without text ("Settings app icon", "back button", "share button").
 
+`find` always returns a position, even when the element isn't on screen, so
+confirm with `phone text` (or a screenshot) when it matters. `tap-on` refuses
+targets in the status bar, where such misses tend to land.
+
 Take a real screenshot when text isn't enough: pictures, icon-only screens,
 checking a layout, or when `find` lands somewhere surprising.
 
