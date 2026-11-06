@@ -158,6 +158,7 @@ def run(stop=None):
 
             if finger is None and buttons.down and inside:
                 finger = touch.Touch(hid)
+                finger.pos = sent  # usually already hovering here, so no settle wait
                 finger.press(cfx, cfy)  # exact touch-down
                 log("down", f"({cfx:.3f}, {cfy:.3f})")
             elif finger is not None and buttons.down:
