@@ -13,7 +13,7 @@ Commands on /run/iphone-hid.sock, one per line, reply "ok ..." or "err ...":
   type TEXT         US-layout text
   corner            slam pointer to the top-left corner
   connect           page the paired iPhone once (it usually reconnects by itself)
-  pair [SECONDS]    make the adapter discoverable/pairable (default 120 s)
+  pair [SECONDS]    discoverable/pairable for SECONDS (0 = always, the startup default)
   m DX DY [W [BTN]] raw mouse report (live input)
   k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
   status
@@ -39,6 +39,10 @@ AGENT_PATH = "/io/airwisp/hid/agent"
 REPORT_MAP = bytes.fromhex(
     "05010906a1018501050719e029e71500250175019508810295017508810395067508150025650507190029658100c0"
     +"05010902a10185020901a1000509190129031500250195037501810295017505810305010930093109381581257f750895038106c0c0"
+    # Report 3: absolute pointer (buttons, X and Y 0..32767). Experimental: tests
+    # whether iOS will place the AssistiveTouch pointer at exact coordinates.
+    + "05010902a10185030901a1000509190129031500250195037501810295017505810305010930093115002"
+    "6ff7f751095028102c0c0"
 )
 
 
@@ -201,6 +205,10 @@ def accept_loop():
     log("listening on PSM 17/19")
     while True:
         c, addr = sc.accept()
+        if not allowed(addr[0]):
+            log("rejected HID connection from", addr[0], "(not in", ALLOW_FILE + ")")
+            c.close()
+            continue
         log("control from", addr[0])
         i, _ = si.accept()
         log("interrupt from", addr[0])
@@ -279,7 +287,10 @@ class Agent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
-        pass
+        addr = str(device).rsplit("dev_", 1)[-1].replace("_", ":")
+        if not allowed(addr):
+            log("rejected service", uuid, "for", addr)
+            raise dbus.exceptions.DBusException("not allowed", name="org.bluez.Error.Rejected")
 
     @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
@@ -310,6 +321,18 @@ class Agent(dbus.service.Object):
         pass
 
 
+ALLOW_FILE = os.path.join(HERE, "allowed")
+
+
+def allowed(addr):
+    """Only listed devices may use the HID channels. An empty or missing list allows all."""
+    try:
+        allow = {l.split("#")[0].strip().upper() for l in open(ALLOW_FILE)} - {""}
+    except FileNotFoundError:
+        return True
+    return not allow or addr.upper() in allow
+
+
 def open_pairing(seconds):
     a = adapter()
     a.Set("org.bluez.Adapter1", "PairableTimeout", dbus.UInt32(seconds))
@@ -336,6 +359,9 @@ def setup_dbus():
     a.Set("org.bluez.Adapter1", "Powered", True)
     a.Set("org.bluez.Adapter1", "Alias", "iphone-hid")
     log("profile + agent registered")
+    # Always discoverable and pairable, so the iPhone can (re)pair any time.
+    # The allow list keeps other devices off the HID channels.
+    open_pairing(0)
 
 
 # ---------- command socket ----------
@@ -351,6 +377,11 @@ def run_command(line):
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as 'iphone-hid'"
+    if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
+        x, y = (max(0, min(32767, round(float(v) * 32767))) for v in args[:2])
+        btn = int(args[2]) & 0x07 if len(args) > 2 else 0
+        hid.send(3, [btn, x & 0xFF, x >> 8, y & 0xFF, y >> 8])
+        return "ok"
     if cmd == "m":  # raw mouse report: m DX DY [WHEEL [BUTTONS]], for live input
         dx, dy = (max(-127, min(127, int(v))) for v in args[:2])
         wheel = max(-127, min(127, int(args[2]))) if len(args) > 2 else 0
