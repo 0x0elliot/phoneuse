@@ -205,7 +205,7 @@ def run(stop=None):
     finger = None  # touch.Touch while the button is held
     last_send = 0.0
 
-    state = {"hid": None}
+    shared = {"hid": None}  # (not "state": the hover code below uses that name)
 
     def mirror_focused():
         try:
@@ -214,9 +214,9 @@ def run(stop=None):
             return False
 
     def shared_hid():
-        if state["hid"] is None:
-            state["hid"] = steer.Hid()
-        return state["hid"]
+        if shared["hid"] is None:
+            shared["hid"] = steer.Hid()
+        return shared["hid"]
 
     KeyForwarder(shared_hid, mirror_focused)
 
