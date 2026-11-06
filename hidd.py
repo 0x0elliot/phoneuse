@@ -12,6 +12,7 @@ Commands on /run/iphone-hid.sock, one per line, reply "ok ..." or "err ...":
   key NAME [MOD..]  e.g. "key h gui" (Cmd+H = home), "key enter", "key tab shift"
   type TEXT         US-layout text
   corner            slam pointer to the top-left corner
+  connect           page the paired iPhone once (it usually reconnects by itself)
   pair [SECONDS]    make the adapter discoverable/pairable (default 120 s)
   status
 """
@@ -207,34 +208,32 @@ def accept_loop():
         threading.Thread(target=handle_ctrl, args=(c,), daemon=True).start()
 
 
-def reconnect_loop():
-    # After pairing, the device side reconnects (ReconnectInitiate). Try paired iPhones every 5 s.
-    while True:
-        time.sleep(5)
-        if hid.connected:
+def connect_out():
+    # Page each paired iPhone once. No background loop: constant paging keeps the
+    # radio busy and makes it miss the iPhone's own connection attempts.
+    if hid.connected:
+        return "already connected"
+    errors = []
+    for addr in paired_devices():
+        socks = []
+        try:
+            for psm in (PSM_CTRL, PSM_INTR):
+                s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+                socks.append(s)
+                s.settimeout(8)
+                s.connect((addr, psm))
+                s.settimeout(None)
+        except OSError as e:
+            for s in socks:
+                s.close()
+            errors.append(f"{addr}: {e}")
             continue
-        for addr in paired_devices():
-            socks = []
-            try:
-                for psm in (PSM_CTRL, PSM_INTR):
-                    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
-                    socks.append(s)
-                    s.settimeout(4)
-                    s.connect((addr, psm))
-                    s.settimeout(None)
-            except OSError:
-                for s in socks:
-                    s.close()
-                continue
-            if hid.connected:
-                for s in socks:
-                    s.close()
-                break
-            hid.ctrl, hid.intr = socks
-            hid.peer = addr
-            log("reconnected to", addr)
-            threading.Thread(target=handle_ctrl, args=(hid.ctrl,), daemon=True).start()
-            break
+        hid.ctrl, hid.intr = socks
+        hid.peer = addr
+        log("connected out to", addr)
+        threading.Thread(target=handle_ctrl, args=(hid.ctrl,), daemon=True).start()
+        return f"connected to {addr}"
+    raise RuntimeError("; ".join(errors) or "no paired iPhone")
 
 
 # ---------- D-Bus: profile, agent, adapter ----------
@@ -344,6 +343,8 @@ def run_command(line):
     args = rest.split()
     if cmd == "status":
         return f"ok connected={hid.connected} peer={hid.peer} paired={paired_devices()}"
+    if cmd == "connect":
+        return "ok " + connect_out()
     if cmd == "pair":
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
@@ -410,7 +411,6 @@ def command_server():
 def main():
     setup_dbus()
     threading.Thread(target=accept_loop, daemon=True).start()
-    threading.Thread(target=reconnect_loop, daemon=True).start()
     threading.Thread(target=command_server, daemon=True).start()
     GLib.MainLoop().run()
 
