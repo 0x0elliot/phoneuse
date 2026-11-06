@@ -23,8 +23,10 @@ import time
 import steer  # also fixes a stale HYPRLAND_INSTANCE_SIGNATURE
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
-EV_KEY, BTN_LEFT = 0x01, 0x110
-RATE = 1 / 60  # pointer updates per second while over the mirror
+EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
+IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
+MIN_GAP = 1 / 250  # at most this many pointer reports per second
+DRAG_CHUNK = 3  # relative units per report while dragging (small steps keep iOS acceleration predictable)
 
 
 def log(*a):
@@ -46,7 +48,7 @@ def hypr(cmd):
 
 
 class Buttons:
-    """Left-button state from every mouse, read-only."""
+    """Left-button state from every mouse, read-only; also wakes the loop on motion."""
 
     def __init__(self):
         self.down = False
@@ -69,6 +71,8 @@ class Buttons:
                     if etype == EV_KEY and code == BTN_LEFT and value in (0, 1):
                         self.down = bool(value)
                         self.changed.set()
+                    elif etype == EV_REL:
+                        self.changed.set()
 
 
 def main():
@@ -78,9 +82,12 @@ def main():
     window_checked = 0.0
     sent = None  # last (fx, fy) hovered, sent as absolute
     drag = None  # while pressed: [last fx, last fy, leftover units x, leftover units y]
+    last_send = 0.0
     while True:
-        buttons.changed.wait(RATE)
+        buttons.changed.wait(IDLE_WAKE)
         buttons.changed.clear()
+        if time.time() - last_send < MIN_GAP and buttons.down == (drag is not None):
+            time.sleep(MIN_GAP - (time.time() - last_send))
         try:
             now = time.time()
             if now - window_checked > 0.5:
@@ -108,11 +115,15 @@ def main():
                 drag[3] += (cfy - drag[1]) / steer.GAIN_Y
                 drag[0], drag[1] = cfx, cfy
                 while abs(drag[2]) >= 1 or abs(drag[3]) >= 1:
-                    ux = int(max(-127, min(127, drag[2])))
-                    uy = int(max(-127, min(127, drag[3])))
+                    n = max(abs(drag[2]), abs(drag[3])) / DRAG_CHUNK
+                    ux = int(drag[2] / max(n, 1))
+                    uy = int(drag[3] / max(n, 1))
+                    if ux == 0 and uy == 0:
+                        ux, uy = int(drag[2]), int(drag[3])
                     hid.cmd(f"m {ux} {uy} 0 1")
                     drag[2] -= ux
                     drag[3] -= uy
+                last_send = time.time()
             elif drag is not None:
                 # released: let go where the cursor is
                 hid.cmd("m 0 0 0 0")
@@ -126,6 +137,7 @@ def main():
                 if state != sent:
                     hid.cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
                     sent = state
+                    last_send = time.time()
         except Exception as e:
             log("error:", e)
             hid, sent, drag = None, None, None
