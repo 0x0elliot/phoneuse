@@ -18,14 +18,30 @@ SOCK_PATH = "/run/iphone-hid.sock"
 
 
 def _find_hyprland():
-    # Shells in an older tmux server lack the current Hyprland signature; use the
-    # newest instance that has a live socket.
+    # tmux servers started before a Hyprland restart keep a stale signature, so
+    # hyprctl fails (exit 4). Use the saved one only if its socket answers;
+    # otherwise the newest instance whose socket does.
     import glob, os
-    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    run = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+
+    def alive(sock):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(sock)
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
+
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if sig and alive(os.path.join(run, "hypr", sig, ".socket.sock")):
         return
-    socks = glob.glob(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid()), "hypr", "*", ".socket.sock"))
-    if socks:
-        os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = os.path.basename(os.path.dirname(max(socks, key=os.path.getmtime)))
+    socks = sorted(glob.glob(os.path.join(run, "hypr", "*", ".socket.sock")), key=os.path.getmtime, reverse=True)
+    for sock in socks:
+        if alive(sock):
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = os.path.basename(os.path.dirname(sock))
+            return
 
 
 _find_hyprland()
