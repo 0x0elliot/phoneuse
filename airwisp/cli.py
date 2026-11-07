@@ -2,30 +2,32 @@
 """airwisp: see and operate an iPhone from a Linux PC.
 
 Setup and running:
-  airwisp install            one-time: Bluetooth HID service (sudo), bluetoothd config,
-                           and the local vision models (setup-vision.sh)
-  airwisp up                 mirror window + mouse control (click/drag on the mirror)
-  airwisp status             Bluetooth link, mirror window, pointer
+  airwisp install              one-time: Bluetooth HID service (sudo), bluetoothd
+                               config, and the local vision models
+  airwisp up                   mirror window + mouse control (click/drag on the mirror)
+  airwisp status               Bluetooth link and mirror window
 
-Agent commands (coordinates: fractions 0..1 of the screenshot, or iPhone points
-if any value is > 1; the screen is 402 x 874 pt):
-  airwisp screenshot [PATH]  PNG of the phone screen; parks the pointer at the left edge
-                           first and waits out the ~0.5 s mirror lag (--keep-pointer to skip)
-  airwisp tap X Y            tap
-  airwisp longpress X Y [S]  press and hold (default 0.8 s)
-  airwisp swipe X0 Y0 X1 Y1 [S]   drag from one point to another over S seconds (default 0.3)
-  airwisp scroll up|down [N] scroll the content by N screen-halves (default 1)
+Agent commands. Coordinates are fractions (0..1) of the screenshot, or phone
+points if any value is > 1 (screen_points in ~/.config/airwisp/config.toml):
+  airwisp screenshot [PATH]    PNG of the phone screen; parks the pointer at the left
+                               edge first and waits for the mirror to catch up
+                               (--keep-pointer to leave the pointer where it is)
+  airwisp tap X Y              tap
+  airwisp longpress X Y [S]    press and hold (default 0.8 s)
+  airwisp swipe X0 Y0 X1 Y1 [S]  drag from one point to another over S seconds
+  airwisp scroll up|down [N]   scroll the content by N half-screens (default 1)
   airwisp home | back | switcher | control-center | notifications | dismiss
-  airwisp open APP           open an app by name (search, type, Enter)
-  airwisp type TEXT          type text (US layout); use \\n for Enter
-  airwisp key COMBO          e.g. enter, escape, cmd+h, cmd+space, shift+tab
-  airwisp where              where the pointer is (needs Pointer Control colour Orange)
+  airwisp open APP             open an app by name (search, type, Enter)
+  airwisp type TEXT            type text (US layout); \\n presses Enter
+  airwisp key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
+  airwisp where                where the pointer is (Pointer Control colour Orange)
 
-Reading the screen without images (local models, a few hundred tokens instead of ~1300):
-  airwisp text [--json]      every line of text on screen with its centre (x, y)
-  airwisp find WHAT          where an element is, from a plain description
-                           ("clear search (X) button", "Settings app icon")
-  airwisp tap-on WHAT        find it and tap it; prints where it tapped
+Reading the screen without images (local models; a few hundred tokens instead
+of ~1,300 for a screenshot):
+  airwisp text [--json]        every line of text on screen with its centre (x, y)
+  airwisp find WHAT            where an element is, from a plain description
+                               ("clear search (X) button", "Settings app icon")
+  airwisp tap-on WHAT          find it and tap it; prints where it tapped
 
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off, Pointer
 Control colour Orange (large), Automatically Hide Pointer off.
@@ -326,7 +328,11 @@ def main():
     if cmd == "install":
         subprocess.run(["sudo", os.path.join(ROOT, "scripts", "install.sh")], check=True)
         if not os.path.exists(os.path.join(ROOT, ".venv-vision")):
-            subprocess.run([os.path.join(ROOT, "scripts", "setup-vision.sh")], check=True)
+            import shutil
+            if shutil.which("uv"):
+                subprocess.run([os.path.join(ROOT, "scripts", "setup-vision.sh")], check=True)
+            else:
+                print("skipping the screen-reading models (airwisp text/find): install uv, then run scripts/setup-vision.sh")
         return
     if cmd == "up":
         return up()
