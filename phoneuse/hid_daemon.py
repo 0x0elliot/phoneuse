@@ -12,7 +12,7 @@ Commands on /run/phoneuse-hid.sock, one per line, reply "ok ..." or "err ...":
   key NAME [MOD..]  e.g. "key h gui" (Cmd+H = home), "key enter", "key tab shift"
   type TEXT         US-layout text
   corner            slam pointer to the top-left corner
-  connect           page the paired iPhone once (it usually reconnects by itself)
+  connect           page the paired iPhone now (the daemon also reconnects by itself)
   pair [SECONDS]    discoverable/pairable for SECONDS (0 = always, the startup default)
   m DX DY [W [BTN]] raw mouse report (live input)
   k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
@@ -92,7 +92,8 @@ class HID:
     def send(self, report_id, payload):
         with self.lock:
             if not self.intr:
-                raise RuntimeError("no iPhone connected")
+                reconnect_now.set()
+                raise RuntimeError("no iPhone connected, reconnecting")
             try:
                 self.intr.send(bytes([0xA1, report_id]) + bytes(payload))
             except OSError as e:
@@ -107,6 +108,7 @@ class HID:
             except OSError:
                 pass
         self.ctrl = self.intr = None
+        reconnect_now.set()
 
     # mouse
     def mouse(self, dx=0, dy=0, wheel=0):
@@ -267,32 +269,71 @@ def accept_loop():
         log("link tuned, handle", tune_link(addr[0]))
 
 
+connect_lock = threading.Lock()
+reconnect_now = threading.Event()
+
+
 def connect_out():
-    # Page each paired iPhone once. No background loop: constant paging keeps the
-    # radio busy and makes it miss the iPhone's own connection attempts.
-    if hid.connected:
-        return "already connected"
-    errors = []
-    for addr in paired_devices():
-        socks = []
-        try:
-            for psm in (PSM_CTRL, PSM_INTR):
-                s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
-                socks.append(s)
-                s.settimeout(8)
-                s.connect((addr, psm))
-                s.settimeout(None)
-        except OSError as e:
-            for s in socks:
-                s.close()
-            errors.append(f"{addr}: {e}")
+    """Page each paired iPhone once and open the HID channels."""
+    with connect_lock:
+        if hid.connected:
+            return "already connected"
+        errors = []
+        for addr in paired_devices():
+            socks = []
+            try:
+                for psm in (PSM_CTRL, PSM_INTR):
+                    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+                    socks.append(s)
+                    s.settimeout(8)
+                    s.connect((addr, psm))
+                    s.settimeout(None)
+            except OSError as e:
+                for s in socks:
+                    s.close()
+                errors.append(f"{addr}: {e}")
+                continue
+            if hid.connected:  # the iPhone connected in by itself meanwhile
+                for s in socks:
+                    s.close()
+                return "already connected"
+            hid.ctrl, hid.intr = socks
+            hid.peer = addr
+            log("connected out to", addr, "- link tuned, handle", tune_link(addr))
+            threading.Thread(target=handle_ctrl, args=(hid.ctrl,), daemon=True).start()
+            return f"connected to {addr}"
+        raise RuntimeError("; ".join(errors) or "no paired iPhone")
+
+
+def reconnect_loop():
+    # While disconnected, page the iPhone with a growing pause between tries
+    # (5 s up to 30 s). Paging without pauses keeps the radio busy and makes it
+    # miss the iPhone's own connection attempts. A disconnect, a command sent
+    # while disconnected, or the iPhone coming into range (BlueZ sees it
+    # connect) cuts the pause short.
+    pause = 0
+    while True:
+        reconnect_now.wait(30 if hid.connected else pause)
+        woke = reconnect_now.is_set()
+        reconnect_now.clear()
+        if hid.connected:
+            pause = 0
             continue
-        hid.ctrl, hid.intr = socks
-        hid.peer = addr
-        log("connected out to", addr, "- link tuned, handle", tune_link(addr))
-        threading.Thread(target=handle_ctrl, args=(hid.ctrl,), daemon=True).start()
-        return f"connected to {addr}"
-    raise RuntimeError("; ".join(errors) or "no paired iPhone")
+        if woke:
+            time.sleep(3)  # give the iPhone a moment to reconnect by itself
+            if hid.connected:
+                continue
+        try:
+            log("reconnect:", connect_out())
+            pause = 0
+        except Exception as e:
+            pause = min(30, max(5, pause * 2))
+            log(f"reconnect failed ({e}); next try in {pause}s")
+
+
+def on_device_changed(iface, changed, invalidated, path=None):
+    if iface == "org.bluez.Device1" and changed.get("Connected") and not hid.connected:
+        reconnect_now.set()
 
 
 # ---------- D-Bus: profile, agent, adapter ----------
@@ -414,6 +455,8 @@ def setup_dbus():
     a = adapter()
     a.Set("org.bluez.Adapter1", "Powered", True)
     a.Set("org.bluez.Adapter1", "Alias", DEVICE_NAME)
+    bus.add_signal_receiver(on_device_changed, "PropertiesChanged",
+                            "org.freedesktop.DBus.Properties", "org.bluez", path_keyword="path")
     log("profile + agent registered")
     # Always discoverable and pairable, so the iPhone can (re)pair any time.
     # The allow list keeps other devices off the HID channels.
@@ -514,13 +557,8 @@ def main():
     threading.Thread(target=command_server, daemon=True).start()
     threading.Thread(target=tune_loop, daemon=True).start()
 
-    def connect_at_start():
-        time.sleep(2)
-        try:
-            log(connect_out())
-        except Exception as e:
-            log("startup connect:", e)
-    threading.Thread(target=connect_at_start, daemon=True).start()
+    threading.Thread(target=reconnect_loop, daemon=True).start()
+    reconnect_now.set()
     GLib.MainLoop().run()
 
 

@@ -92,6 +92,11 @@ measurement won, and several early guesses were wrong.
   at about 20 reports a second and makes the pointer crawl. The daemon asks for an
   8 ms poll interval with an HCI QoS Setup on every connection and every 20
   seconds, which brings acknowledgements to about 2 ms apart.
+- **The daemon reconnects by itself.** While the iPhone is disconnected, it pages
+  the phone with a pause between tries that grows from 5 to 30 seconds, because
+  paging nonstop keeps the radio busy and makes it miss the iPhone's own
+  connection attempts. A dropped link, a command sent while disconnected, or
+  BlueZ seeing the phone connect cuts the pause short.
 - **Some gestures are iOS's own.** Dragging along the page dots above the dock
   scrubs through home screen pages, with a click per page, and tapping the
   Dynamic Island opens a popup with a Stop Mirroring button. `docs/RECIPES.md`
