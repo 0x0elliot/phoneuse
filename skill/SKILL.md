@@ -5,20 +5,28 @@ description: See and operate the user's iPhone from this Linux PC with the `phon
 
 # Operating the iPhone with phoneuse
 
-The `phoneuse` command drives a real, unmodified iPhone. Its screen arrives as an AirPlay mirror window on this PC, and
-input goes in as a Bluetooth mouse and keyboard. Everything an agent does is a
-`phoneuse` subcommand; run `phoneuse --help` for the full list.
+The `phoneuse` command drives a real, unmodified iPhone. Its screen arrives over
+AirPlay as a mirror window on this PC and as a live page at
+http://localhost:8777, and input goes in as a Bluetooth mouse and keyboard.
+Everything an agent does is a `phoneuse` subcommand; run `phoneuse --help` for
+the full list.
 
 ## Before acting
 
-1. Run `phoneuse status`. You need `HID service: active`, `connected=True`, and a
-   line `Mirror window: [x, y] [w, h]` (not "none").
+1. Run `phoneuse status`. You need `HID service: active`, `connected=True`, and
+   `Mirror window: ... showing the phone`.
 2. No mirror window: check whether `phoneuse up` is running. If it isn't, start it
    somewhere the user can see it (a terminal or tmux window they use), not hidden in
-   the background. Then ask the user to start Screen Mirroring to "phoneuse" from the
-   iPhone's Control Center. You can't start mirroring from the PC.
-3. The mirror window must be visible and uncovered: screenshots capture that area
-   of the screen, so another window on top of it is what you'd see.
+   the background. "not mirroring" (or no window): ask the user to start Screen
+   Mirroring to "phoneuse" from the iPhone's Control Center. You can't start
+   mirroring from the PC, and every input command refuses until it runs.
+3. **Show the user the phone** before your first action, so they can watch what
+   you do: open http://localhost:8777 (`phoneuse view --print` prints the address).
+   If you have a browser of your own, such as a built-in browser pane, open it
+   there. Otherwise run `phoneuse view`, which opens it in the user's default
+   browser. Do this once per task; if the page is already open, leave it. The page
+   is for the user to watch: act through `phoneuse` commands, never by clicking in
+   the page.
 4. `connected=False`: run `phoneuse status` again after a few seconds (the daemon
    reconnects), then ask the user to tap "phoneuse" in the iPhone's Bluetooth settings.
 5. HID service not active: `phoneuse install` (needs sudo) sets it up.
@@ -53,7 +61,8 @@ phoneuse screenshot $SCRATCH/s2.png   # waits out the ~0.5 s mirror lag by itsel
 ```
 
 Write screenshots into your own scratch directory with a new name each time,
-so you never read a stale image. `phoneuse screenshot` moves the orange pointer to
+so you never read a stale image. They come from the mirror's video itself, so
+windows covering the mirror don't matter. `phoneuse screenshot` moves the orange pointer to
 the left edge first so it doesn't cover text (`--keep-pointer` to see where the
 pointer is). The grey AssistiveTouch button near the lower right stays on screen
 and can hide what is under it; scroll a little if you need that spot.
