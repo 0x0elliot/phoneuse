@@ -1,3 +1,6 @@
 .venv/
-__pycache__/
 .venv-vision/
+__pycache__/
+*.pyc
+allowed
+telemetry-sessions/

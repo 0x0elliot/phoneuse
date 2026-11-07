@@ -22,9 +22,10 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import steer  # noqa: E402  (also fixes a stale HYPRLAND_INSTANCE_SIGNATURE)
-from clicker import hypr, FRAME  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from airwisp import screen as steer  # noqa: E402
+from airwisp.screen import hypr  # noqa: E402
+from airwisp.mirror_input import FRAME  # noqa: E402
 
 EVENT = struct.Struct("llHHi")
 

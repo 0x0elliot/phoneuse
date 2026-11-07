@@ -4,7 +4,7 @@
 Run as root. bluetoothd must be started with --noplugin=input so this process
 can own the HID PSMs (17 control, 19 interrupt). See install.sh.
 
-Commands on /run/iphone-hid.sock, one per line, reply "ok ..." or "err ...":
+Commands on /run/airwisp-hid.sock, one per line, reply "ok ..." or "err ...":
   move DX DY        relative pointer move (split into small steps)
   click [left|right|middle]
   down [btn] / up   hold / release a button (for drags)
@@ -30,7 +30,7 @@ import dbus.service
 from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SOCK_PATH = "/run/iphone-hid.sock"
+from .config import HID_SOCKET as SOCK_PATH, ALLOWED_FILE as ALLOW_FILE
 DEVICE_NAME = os.environ.get("AIRWISP_NAME", "airwisp")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
@@ -370,16 +370,22 @@ class Agent(dbus.service.Object):
         pass
 
 
-ALLOW_FILE = os.path.join(HERE, "allowed")
 
 
 def allowed(addr):
-    """Only listed devices may use the HID channels. An empty or missing list allows all."""
+    """Only listed devices may use the HID channels. Trust on first use: while the
+    list is empty, the first device to connect is added to it."""
     try:
         allow = {l.split("#")[0].strip().upper() for l in open(ALLOW_FILE)} - {""}
     except FileNotFoundError:
+        allow = set()
+    if not allow:
+        os.makedirs(os.path.dirname(ALLOW_FILE), exist_ok=True)
+        with open(ALLOW_FILE, "a") as f:
+            f.write(f"{addr.upper()}  # first device to pair\n")
+        log("allow list was empty; trusting", addr)
         return True
-    return not allow or addr.upper() in allow
+    return addr.upper() in allow
 
 
 def open_pairing(seconds):

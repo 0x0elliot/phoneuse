@@ -13,8 +13,8 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import steer  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from airwisp import screen as steer  # noqa: E402
 
 
 def s8(v):

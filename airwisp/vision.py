@@ -1,6 +1,6 @@
 """Vision service for `phone`: keeps OCR and a GUI grounding model loaded.
 
-Runs in .venv-vision (its own deps). Listens on $XDG_RUNTIME_DIR/iphone-vision.sock;
+Runs in .venv-vision (its own deps; `python -m airwisp.vision`). Listens on $XDG_RUNTIME_DIR/iphone-vision.sock;
 one JSON request per connection, one JSON reply:
   {"op": "text", "image": PATH}            -> {"lines": [{"text", "x", "y", "w", "h", "conf"}]}
   {"op": "find", "image": PATH, "what": S} -> {"x", "y"}   (fractions of the image)
@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 
-SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-vision.sock")
+SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "airwisp-vision.sock")
 GROUNDER = "HongxinLi/GoClick-Large"
 
 

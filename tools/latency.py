@@ -11,13 +11,16 @@ PC side    = t_shown - t_net (decode + draw + compositor + grab).
 Keep the mouse off the mirror while it runs. Needs sudo for tcpdump.
 """
 import statistics as st
+import os
 import subprocess
 import sys
 import time
 
 import numpy as np
 
-import steer
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+from airwisp import screen as steer  # noqa: E402
+from airwisp.hidclient import Hid  # noqa: E402
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 12
 SPOTS = [(0.3, 0.62), (0.7, 0.62)]
@@ -40,7 +43,7 @@ def grab_patch(rect):
 
 
 def main():
-    hid = steer.Hid()
+    hid = Hid()
     tcpdump = subprocess.Popen(["sudo", "tcpdump", "-l", "-tt", "-n", "-i", "any", "tcp port 7100 and greater 300"],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     time.sleep(1.5)

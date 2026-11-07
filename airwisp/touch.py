@@ -14,7 +14,7 @@ import bisect
 import threading
 import time
 
-SCREEN_PT = (402, 874)  # iPhone 17 Pro, points
+from .config import SCREEN_PT  # the phone screen in points (config: screen_points)
 TICK = 0.008  # one relative report per tick
 RAMP = 1.0  # no start-of-motion correction: touchlab shows requested distances land exactly
 

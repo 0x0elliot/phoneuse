@@ -6,7 +6,7 @@ import sys
 if len(sys.argv) < 2:
     sys.exit(__doc__)
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect("/run/iphone-hid.sock")
+s.connect("/run/airwisp-hid.sock")
 s.sendall((" ".join(sys.argv[1:]) + "\n").encode())
 reply = s.makefile().readline().strip()
 print(reply)

@@ -1,0 +1,63 @@
+"""airwisp settings: defaults, overridden by ~/.config/airwisp/config.toml.
+
+Example config.toml:
+
+    name = "airwisp"                 # Bluetooth device and AirPlay receiver name
+    screen_points = [402, 874]       # your iPhone's screen in points (iPhone 17 Pro)
+    decoder = "auto"                 # GStreamer H.264 decoder; auto picks NVDEC if present
+    mirror_width = 498               # mirror window width in logical pixels
+"""
+import os
+import shutil
+import subprocess
+import tomllib
+
+DEFAULTS = {
+    "name": "airwisp",
+    "screen_points": [402, 874],
+    "decoder": "auto",
+    "mirror_width": 498,
+}
+
+# Runtime paths shared by the daemon (root) and the user-side tools.
+HID_SOCKET = "/run/airwisp-hid.sock"
+ALLOWED_FILE = "/etc/airwisp/allowed"
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+VISION_SOCKET = os.path.join(RUNTIME_DIR, "airwisp-vision.sock")
+
+
+def config_path():
+    base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(base, "airwisp", "config.toml")
+
+
+def load():
+    cfg = dict(DEFAULTS)
+    try:
+        with open(config_path(), "rb") as f:
+            cfg.update(tomllib.load(f))
+    except FileNotFoundError:
+        pass
+    return cfg
+
+
+CFG = load()
+NAME = CFG["name"]
+SCREEN_PT = tuple(CFG["screen_points"])
+PHONE_ASPECT = SCREEN_PT[0] / SCREEN_PT[1]
+
+
+def decoder():
+    """H.264 decoder for the mirror. Frames must leave the decoder as soon as they
+    are decoded: iOS only sends a frame when the screen changes and doesn't declare
+    'no reordering', so a default decoder holds each frame until the next arrives
+    (measured 200 ms). nvh264dec with compliance=flexible releases them in ~1 ms;
+    the software decoder releases them immediately."""
+    d = CFG["decoder"]
+    if d != "auto":
+        return d
+    if shutil.which("gst-inspect-1.0"):
+        r = subprocess.run(["gst-inspect-1.0", "nvh264dec"], capture_output=True)
+        if r.returncode == 0:
+            return "nvh264dec max-display-delay=0 compliance=flexible"
+    return "avdec_h264"

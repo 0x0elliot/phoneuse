@@ -1,31 +1,31 @@
 #!/usr/bin/python
-"""phone: see and operate an iPhone from this PC.
+"""airwisp: see and operate an iPhone from a Linux PC.
 
 Setup and running:
-  phone install            one-time: Bluetooth HID service (sudo), bluetoothd config,
+  airwisp install            one-time: Bluetooth HID service (sudo), bluetoothd config,
                            and the local vision models (setup-vision.sh)
-  phone up                 mirror window + mouse control (click/drag on the mirror)
-  phone status             Bluetooth link, mirror window, pointer
+  airwisp up                 mirror window + mouse control (click/drag on the mirror)
+  airwisp status             Bluetooth link, mirror window, pointer
 
 Agent commands (coordinates: fractions 0..1 of the screenshot, or iPhone points
 if any value is > 1; the screen is 402 x 874 pt):
-  phone screenshot [PATH]  PNG of the phone screen; parks the pointer at the left edge
+  airwisp screenshot [PATH]  PNG of the phone screen; parks the pointer at the left edge
                            first and waits out the ~0.5 s mirror lag (--keep-pointer to skip)
-  phone tap X Y            tap
-  phone longpress X Y [S]  press and hold (default 0.8 s)
-  phone swipe X0 Y0 X1 Y1 [S]   drag from one point to another over S seconds (default 0.3)
-  phone scroll up|down [N] scroll the content by N screen-halves (default 1)
-  phone home | back | switcher | control-center | notifications | dismiss
-  phone open APP           open an app by name (search, type, Enter)
-  phone type TEXT          type text (US layout); use \\n for Enter
-  phone key COMBO          e.g. enter, escape, cmd+h, cmd+space, shift+tab
-  phone where              where the pointer is (needs Pointer Control colour Orange)
+  airwisp tap X Y            tap
+  airwisp longpress X Y [S]  press and hold (default 0.8 s)
+  airwisp swipe X0 Y0 X1 Y1 [S]   drag from one point to another over S seconds (default 0.3)
+  airwisp scroll up|down [N] scroll the content by N screen-halves (default 1)
+  airwisp home | back | switcher | control-center | notifications | dismiss
+  airwisp open APP           open an app by name (search, type, Enter)
+  airwisp type TEXT          type text (US layout); use \\n for Enter
+  airwisp key COMBO          e.g. enter, escape, cmd+h, cmd+space, shift+tab
+  airwisp where              where the pointer is (needs Pointer Control colour Orange)
 
 Reading the screen without images (local models, a few hundred tokens instead of ~1300):
-  phone text [--json]      every line of text on screen with its centre (x, y)
-  phone find WHAT          where an element is, from a plain description
+  airwisp text [--json]      every line of text on screen with its centre (x, y)
+  airwisp find WHAT          where an element is, from a plain description
                            ("clear search (X) button", "Settings app icon")
-  phone tap-on WHAT        find it and tap it; prints where it tapped
+  airwisp tap-on WHAT        find it and tap it; prints where it tapped
 
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off, Pointer
 Control colour Orange (large), Automatically Hide Pointer off.
@@ -36,21 +36,23 @@ import sys
 import threading
 import time
 
-HERE = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, HERE)
-import steer  # noqa: E402
-import touch  # noqa: E402
+from . import screen, touch
+from .config import NAME, SCREEN_PT, VISION_SOCKET, RUNTIME_DIR, decoder
+from .hidclient import Hid
 
-PT = touch.SCREEN_PT
-LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-hid-last-action")
+PKG = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(PKG)  # the repository checkout
+
+PT = SCREEN_PT
+LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "airwisp-last-action")
 MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
 # Decoder: frames must leave the decoder as soon as they're decoded. iOS only
 # sends a frame when the screen changes, and its streams don't declare "no
 # reordering", so a default H.264 decoder may hold a frame until the next one
 # pushes it out (measured: 200 ms median live). compliance=flexible releases them.
-DECODER = os.environ.get("PHONE_DECODER", "nvh264dec max-display-delay=0 compliance=flexible")
-MIRROR_ARGS = ["uxplay", "-p", "-n", "airwisp", "-vd", DECODER,
-               "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", "1206x2622@60", "-fps", "60",
+DECODER = os.environ.get("AIRWISP_DECODER") or decoder()
+MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-vd", DECODER,
+               "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
                # plan for 0.1 s instead of 0.25 s
@@ -74,15 +76,15 @@ def point(xs, ys):
 
 def hid():
     try:
-        h = steer.Hid()
+        h = Hid()
     except OSError:
-        die("Bluetooth HID service isn't running. Run: phone install")
+        die("Bluetooth HID service isn't running. Run: airwisp install")
     st = h.cmd("status")
     if "connected=True" not in st:
         try:
             h.cmd("connect")
         except RuntimeError as e:
-            die(f"iPhone not connected over Bluetooth ({e}). On the phone: Settings > Bluetooth > iphone-hid.")
+            die(f"iPhone not connected over Bluetooth ({e}). On the phone: Settings > Bluetooth > {NAME}.")
     return h
 
 
@@ -153,7 +155,7 @@ def screenshot(path, park=True):
     if park:
         try:
             # move the large orange pointer to the left edge so it doesn't cover text
-            steer.Hid().cmd("a 0.0 0.62 0")
+            Hid().cmd("a 0.0 0.62 0")
             acted()
         except (OSError, RuntimeError):
             pass
@@ -164,9 +166,9 @@ def screenshot(path, park=True):
     except FileNotFoundError:
         pass
     try:
-        png = steer.grab_png()
+        png = screen.grab_png()
     except RuntimeError:
-        die("No mirror window. Run `phone up` and start Screen Mirroring to 'airwisp' on the iPhone.")
+        die(f"No mirror window. Run `airwisp up` and start Screen Mirroring to '{NAME}' on the iPhone.")
     with open(path, "wb") as f:
         f.write(png)
     from PIL import Image
@@ -177,7 +179,7 @@ def screenshot(path, park=True):
 
 # ---------- vision (OCR + grounding, see vision.py) ----------
 
-VISION_SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-vision.sock")
+VISION_SOCK = VISION_SOCKET
 
 
 def vision(req, timeout=90):
@@ -197,22 +199,22 @@ def vision(req, timeout=90):
         return ask()
     except (FileNotFoundError, ConnectionRefusedError):
         pass
-    py = os.path.join(HERE, ".venv-vision", "bin", "python")
+    py = os.path.join(ROOT, ".venv-vision", "bin", "python")
     if not os.path.exists(py):
-        die("Vision models aren't installed. Run: ~/iphone-hid/setup-vision.sh")
-    logf = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-vision.log"), "a")
-    subprocess.Popen([py, os.path.join(HERE, "vision.py")], stdout=logf, stderr=logf, start_new_session=True)
+        die(f"Vision models aren't installed. Run: {ROOT}/scripts/setup-vision.sh")
+    logf = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "airwisp-vision.log"), "a")
+    subprocess.Popen([py, "-m", "airwisp.vision"], cwd=ROOT, stdout=logf, stderr=logf, start_new_session=True)
     for _ in range(120):
         time.sleep(0.5)
         try:
             return ask()
         except (FileNotFoundError, ConnectionRefusedError):
             continue
-    die("vision service didn't start; see $XDG_RUNTIME_DIR/iphone-vision.log")
+    die("vision service didn't start; see $XDG_RUNTIME_DIR/airwisp-vision.log")
 
 
 def fresh_screenshot():
-    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"iphone-vision-{os.getpid()}.png")
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"airwisp-shot-{os.getpid()}.png")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         screenshot(path)
@@ -245,21 +247,21 @@ def find(what):
 # ---------- up / install / status ----------
 
 def up():
-    if subprocess.run(["systemctl", "is-active", "--quiet", "iphone-hid"]).returncode != 0:
-        die("Bluetooth HID service isn't running. Run: phone install")
-    print("Starting the mirror (AirPlay receiver 'airwisp'). On the iPhone: Control Center > Screen Mirroring > airwisp.")
+    if subprocess.run(["systemctl", "is-active", "--quiet", "airwisp-hid"]).returncode != 0:
+        die("Bluetooth HID service isn't running. Run: airwisp install")
+    print(f"Starting the mirror (AirPlay receiver '{NAME}'). On the iPhone: Control Center > Screen Mirroring > {NAME}.")
     stop = threading.Event()
     procs = {}
 
     def keep_mirror():
         # uxplay can die (it crashed on a window resize); start it again so the
-        # phone can reconnect without restarting `phone up`.
+        # phone can reconnect without restarting `airwisp up`.
         while not stop.is_set():
             env = dict(os.environ)
             out = subprocess.DEVNULL
-            if os.environ.get("PHONE_TRACE"):  # per-element GStreamer latency, for tuning
+            if os.environ.get("AIRWISP_TRACE"):  # per-element GStreamer latency, for tuning
                 env.update(GST_TRACERS="latency(flags=pipeline+element)", GST_DEBUG="GST_TRACER:7")
-                out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone-gst-trace.log"), "w")
+                out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "airwisp-gst-trace.log"), "w")
             procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=out, stderr=out, env=env)
             rc = procs["mirror"].wait()
             if stop.is_set():
@@ -268,16 +270,16 @@ def up():
             time.sleep(1)
     threading.Thread(target=keep_mirror, daemon=True).start()
     try:
-        h = steer.Hid()
+        h = Hid()
         print("Bluetooth:", h.cmd("status").replace("ok ", ""))
         print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
         # The clicker runs as its own process and restarts by itself when its code
         # changes, so edits don't drop the AirPlay connection.
-        watched = [os.path.join(HERE, f) for f in ("clicker.py", "touch.py", "steer.py")]
+        watched = [os.path.join(PKG, f) for f in ("mirror_input.py", "touch.py", "screen.py", "hidclient.py")]
         mtimes = lambda: [os.path.getmtime(f) for f in watched]
         while not stop.is_set():
             seen = mtimes()
-            procs["clicker"] = subprocess.Popen([sys.executable, os.path.join(HERE, "clicker.py")])
+            procs["clicker"] = subprocess.Popen([sys.executable, "-m", "airwisp.mirror_input"], cwd=ROOT)
             while procs["clicker"].poll() is None:
                 time.sleep(1)
                 if mtimes() != seen:
@@ -304,15 +306,15 @@ def up():
 
 
 def status():
-    svc = subprocess.run(["systemctl", "is-active", "iphone-hid"], capture_output=True, text=True).stdout.strip()
+    svc = subprocess.run(["systemctl", "is-active", "airwisp-hid"], capture_output=True, text=True).stdout.strip()
     print("HID service:", svc)
     if svc == "active":
-        print("Bluetooth:", steer.Hid().cmd("status").replace("ok ", ""))
+        print("Bluetooth:", Hid().cmd("status").replace("ok ", ""))
     try:
-        at, size = steer.mirror_window()
+        at, size = screen.mirror_window()
         print("Mirror window:", at, size)
     except RuntimeError:
-        print("Mirror window: none (run `phone up`, then Screen Mirroring > airwisp on the iPhone)")
+        print(f"Mirror window: none (run `airwisp up`, then Screen Mirroring > {NAME} on the iPhone)")
 
 
 def main():
@@ -322,9 +324,9 @@ def main():
         return
     cmd, args = a[0], a[1:]
     if cmd == "install":
-        subprocess.run(["sudo", os.path.join(HERE, "install.sh")], check=True)
-        if not os.path.exists(os.path.join(HERE, ".venv-vision")):
-            subprocess.run([os.path.join(HERE, "setup-vision.sh")], check=True)
+        subprocess.run(["sudo", os.path.join(ROOT, "scripts", "install.sh")], check=True)
+        if not os.path.exists(os.path.join(ROOT, ".venv-vision")):
+            subprocess.run([os.path.join(ROOT, "scripts", "setup-vision.sh")], check=True)
         return
     if cmd == "up":
         return up()
@@ -339,7 +341,7 @@ def main():
     if cmd == "screenshot":
         keep = "--keep-pointer" in args
         paths = [x for x in args if x != "--keep-pointer"]
-        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "iphone.png"), park=not keep)
+        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "airwisp.png"), park=not keep)
     h = hid()
     if cmd == "tap":
         touch.tap(h, *point(*args[:2]))
@@ -370,7 +372,7 @@ def main():
         touch.tap(h, x, y)
         print(f"tapped {x:.3f} {y:.3f}")
     elif cmd == "where":
-        p = steer.find_orange(steer.grab_rgb())
+        p = screen.find_orange(screen.grab_rgb())
         print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")
         return
     else:

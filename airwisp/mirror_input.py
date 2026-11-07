@@ -23,25 +23,27 @@ import os
 import select
 import socket
 import struct
+import subprocess
 import threading
 import time
 
-import steer  # also fixes a stale HYPRLAND_INSTANCE_SIGNATURE
-import touch
+from . import touch
+from .config import PHONE_ASPECT, CFG
+from .hidclient import Hid
+from .screen import hypr, picture_rect, MIRROR_CLASS
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
 MIN_GAP = 1 / 250  # at most this many pointer reports per second
-PHONE_ASPECT = steer.PHONE_ASPECT
 FRAME = 30  # bezel: Hyprland border thickness (logical px); presses on it start edge touches
 STRIP = 0.0  # no letterbox strips: the window is exactly the phone screen's shape
 CORNER = 70  # screen corner radius (logical px, ~56 pt on the phone); squircle via rounding_power
-MIRROR_W = 498  # logical px; height follows from the phone's aspect plus the strips
+MIRROR_W = CFG["mirror_width"]  # logical px; height follows from the phone's aspect
 MIRROR_H = round(MIRROR_W / PHONE_ASPECT * (1 + 2 * STRIP))
 # min_size = max_size locks the window: resizing the GL window crashed uxplay.
 BEZEL_RULE = (
-    'hl.window_rule({ name = "iphone-mirror-bezel", match = { class = "^uxplay$" }, '
+    'hl.window_rule({ name = "airwisp-mirror", match = { class = "^uxplay$" }, '
     f'border_size = {FRAME}, rounding = {CORNER}, rounding_power = 3.0, border_color = "rgb(18181c) rgb(18181c)", '
     f'min_size = {{ {MIRROR_W}, {MIRROR_H} }}, max_size = {{ {MIRROR_W}, {MIRROR_H} }} }})'
 )
@@ -49,20 +51,6 @@ BEZEL_RULE = (
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
-
-
-def hypr(cmd):
-    """One Hyprland IPC request ('j/cursorpos', 'j/clients', ...) as parsed JSON."""
-    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
-                        "hypr", os.environ["HYPRLAND_INSTANCE_SIGNATURE"], ".socket.sock")
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(path)
-    s.sendall(cmd.encode())
-    data = b""
-    while chunk := s.recv(65536):
-        data += chunk
-    s.close()
-    return json.loads(data)
 
 
 class Buttons:
@@ -113,20 +101,33 @@ class Buttons:
                         self.changed.set()
 
 
-picture_rect = steer.picture_rect
-
-
 def frame_window(client):
-    """Make the mirror window taller than the picture so the strips exist."""
-    (w, h) = client["size"]
-    if abs(w - MIRROR_W) > 2 or abs(h - MIRROR_H) > 2:
-        subprocess_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{client['address']}' }}))")
-        log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
+    """Resize the mirror window to the locked size."""
+    a = client["address"]
+    if not hypr_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{a}' }}))"):
+        subprocess.run(["hyprctl", "dispatch", "resizewindowpixel", f"exact {MIRROR_W} {MIRROR_H},address:{a}"],
+                       capture_output=True)
+    log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
 
 
-def subprocess_eval(lua):
-    import subprocess
-    subprocess.run(["hyprctl", "eval", lua], capture_output=True)
+def hypr_eval(lua):
+    """Run Lua in Hyprland (Lua-config builds). Returns False when unsupported."""
+    r = subprocess.run(["hyprctl", "eval", lua], capture_output=True, text=True)
+    return r.returncode == 0 and "unknown request" not in r.stdout and not r.stdout.startswith("error")
+
+
+def apply_frame_rule():
+    """Phone-like frame and locked size for the mirror window. Lua-config Hyprland
+    first (tested); classic hyprlang keywords as a fallback (untested)."""
+    if hypr_eval(BEZEL_RULE):
+        return
+    m = "class:^(uxplay)$"
+    subprocess.run(["hyprctl", "--batch", " ; ".join([
+        f"keyword windowrule bordersize {FRAME}, {m}",
+        f"keyword windowrule rounding {CORNER}, {m}",
+        f"keyword windowrule minsize {MIRROR_W} {MIRROR_H}, {m}",
+        f"keyword windowrule maxsize {MIRROR_W} {MIRROR_H}, {m}",
+    ])], capture_output=True)
 
 
 # Linux evdev key codes -> USB HID usage codes (keyboard page)
@@ -230,7 +231,7 @@ def run(stop=None):
     as a click), and relative-only presses are ignored.
     Release: touch up.
     """
-    subprocess_eval(BEZEL_RULE)
+    apply_frame_rule()
     shared = {"hid": None}  # (not "state": the hover code below uses that name)
     hover = {"pos": None}  # last absolute position sent while hovering = where the phone's pointer is
     touch_at = {"pos": None, "carry": [0.0, 0.0]}  # where the touch is during a drag
@@ -238,12 +239,12 @@ def run(stop=None):
 
     def hid():
         if shared["hid"] is None:
-            shared["hid"] = steer.Hid()
+            shared["hid"] = Hid()
         return shared["hid"]
 
     def mirror_focused():
         try:
-            return hypr("j/activewindow").get("class") == "uxplay"
+            return hypr("j/activewindow").get("class") == MIRROR_CLASS
         except Exception:
             return False
 
@@ -343,7 +344,7 @@ def run(stop=None):
         try:
             now = time.time()
             if now - window_checked > 0.5:
-                client = next((c for c in hypr("j/clients") if c["class"] == "uxplay"), None)
+                client = next((c for c in hypr("j/clients") if c["class"] == MIRROR_CLASS), None)
                 if client and (abs(client["size"][0] - MIRROR_W) > 2 or abs(client["size"][1] - MIRROR_H) > 2) \
                         and not buttons.dragging:
                     frame_window(client)
