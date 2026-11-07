@@ -143,14 +143,68 @@ def hid():
     return AgentHid(h)
 
 
+class DotPoster:
+    """Posts the agent's dot position to the browser mirror: the latest one only,
+    one post at a time and in order, from one shared thread, so an 8 ms drag
+    never waits on the page."""
+
+    def __init__(self):
+        self.url = f"http://127.0.0.1:{CFG['web_port']}/api/agent/cursor"
+        self.latest = None
+        self.event = threading.Event()
+        self.lock = threading.Lock()  # guards latest (quick)
+        self.posting = threading.Lock()  # one post at a time
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def show(self, dot):
+        with self.lock:
+            self.latest = dot
+        self.event.set()
+
+    def show_now(self, dot):
+        # Presses and releases post before returning: the process may end next.
+        with self.posting:
+            with self.lock:
+                self.latest = dot
+            self._post(dot)
+
+    def _run(self):
+        while True:
+            self.event.wait()
+            self.event.clear()
+            with self.posting:
+                with self.lock:
+                    dot = self.latest
+                self._post(dot)
+            time.sleep(1 / 60)
+
+    def _post(self, dot):
+        try:
+            x, y, down = dot
+            body = f'{{"x": {x}, "y": {y}, "down": {str(down).lower()}}}'.encode()
+            req = urllib.request.Request(self.url, data=body, method="POST", headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=0.3).close()
+        except (OSError, ValueError, TypeError):
+            pass  # the dot is a courtesy; never slow or fail the action
+
+
+_dots = None
+
+
 class AgentHid:
     """The Bluetooth link for agent actions: also shows where the agent points on
-    the browser mirror (a glowing dot), from the absolute pointer commands."""
+    the browser mirror (a glowing dot). Absolute pointer commands place the dot;
+    relative drag reports move it by the points they move the touch, so it
+    follows swipes and scrolls."""
 
     def __init__(self, h):
+        global _dots
         self.h = h
-        self.url = f"http://127.0.0.1:{CFG['web_port']}/api/agent/cursor"
         self.first_seq = None  # picture-change count just before the action's first command
+        self.dot = None  # (x, y, down) where the touch or pointer is
+        if _dots is None:
+            _dots = DotPoster()
+        self.dots = _dots
 
     def cmd(self, line):
         if self.first_seq is None and line != "status":
@@ -158,14 +212,22 @@ class AgentHid:
             # changes during a lookup must not count as this action's result.
             self.first_seq = frame_seq()
         r = self.h.cmd(line)
-        if line.startswith("a "):
-            try:
-                _, x, y, b = line.split()[:4]
-                body = f'{{"x": {float(x)}, "y": {float(y)}, "down": {str(b != "0").lower()}}}'.encode()
-                req = urllib.request.Request(self.url, data=body, method="POST", headers={"Content-Type": "application/json"})
-                urllib.request.urlopen(req, timeout=0.3).close()
-            except (OSError, ValueError):
-                pass  # the dot is a courtesy; never slow or fail the action
+        try:
+            parts = line.split()
+            if parts[0] == "a":
+                self.dot = (float(parts[1]), float(parts[2]), parts[3] != "0")
+                self.dots.show_now(self.dot)
+            elif parts[0] == "m" and self.dot:
+                ux, uy = int(parts[1]), int(parts[2])
+                mag = (ux * ux + uy * uy) ** 0.5
+                if mag:
+                    moved = touch.points_for(mag)
+                    x, y, down = self.dot
+                    self.dot = (min(max(x + moved * ux / mag / SCREEN_PT[0], 0.0), 1.0),
+                                min(max(y + moved * uy / mag / SCREEN_PT[1], 0.0), 1.0), down)
+                    self.dots.show(self.dot)
+        except (IndexError, ValueError):
+            pass
         return r
 
 
