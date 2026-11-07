@@ -36,7 +36,8 @@ points, which is plenty for scrolling and edge gestures.
 - Avoid tapping the top centre of the screen: it hits the Dynamic Island, which
   opens the Screen Mirroring popup with a Stop Mirroring button.
 - Cmd+H doesn't close Control Center or Notification Center; use `phoneuse dismiss`.
-- The mouse wheel and Cmd+Tab do nothing on iOS.
+- iOS ignores the mouse wheel and Cmd+Tab. Over the mirror window and in the
+  browser mirror, phoneuse turns the wheel into a drag instead (see pointer.py).
 - Fast swipes down from the top are ignored; the top-edge recipes are slow on purpose.
 - If the phone locks, the passcode screen appears. The agent must stop and ask the
   owner to unlock it. Never type a passcode.

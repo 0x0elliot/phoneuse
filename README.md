@@ -78,7 +78,7 @@ attached: without it the signal can be too weak to pair reliably.
 ## Using it
 
 Over the mirror window, the phone's pointer follows your cursor. Click to tap,
-drag to swipe, and press on the dark bezel to start a swipe from the very edge
+drag to swipe, scroll with the wheel or trackpad, and press on the dark bezel to start a swipe from the very edge
 of the screen (from the bottom bezel upward goes home). While the mirror window
 has focus, your keyboard types on the phone, and Super acts as Cmd.
 

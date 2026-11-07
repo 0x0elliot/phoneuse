@@ -12,6 +12,10 @@ button 1).
 Held: every 8 ms a relative report moves the touch by exactly what the pointer
 moved (sized from the measured table), button 0 on these reports.
 Release: absolute report, button 0, where the touch is.
+Scroll: iOS ignores the mouse wheel, so a wheel scroll becomes a drag: touch
+down where the pointer is, move the touch by the scrolled amount, and lift once
+the wheel has been still for a moment (the pause before lifting stops the
+content from flinging on).
 
 Verified on a touch-event test page (touchlab/): this delivers one touch whose
 path matches the request (175 -> 175 pt, flicks 144 -> 141 pt). An absolute
@@ -24,6 +28,7 @@ import time
 from . import touch
 
 MIN_GAP = 1 / 250  # at most this many hover reports per second
+SCROLL_IDLE = 0.15  # lift the scroll touch after the wheel is still this long (s)
 
 
 def clamp(v):
@@ -42,12 +47,10 @@ class Pointer:
         self.touch = None  # where the touch is during a drag
         self.carry = [0.0, 0.0]  # phone points still to move
         self.dragged_from = None  # pointer position the carry is measured from
+        self.scrolling = False  # the touch is a wheel scroll, not a held button
+        self.scrolled_at = 0.0
         self.stopped = False
         threading.Thread(target=self._tick, daemon=True).start()
-
-    def close(self):
-        self.release()
-        self.stopped = True
 
     def hover(self, fx, fy):
         with self.lock:
@@ -65,33 +68,65 @@ class Pointer:
             self.sent = pos
             self.last_send = time.time()
 
+    def scroll(self, dx_pt, dy_pt):
+        """Scroll by dragging the content dx_pt, dy_pt phone points (positive dy
+        moves the content down, like a finger dragging down)."""
+        with self.lock:
+            if self.pressed and not self.scrolling:
+                return  # a held button is already dragging
+            if not self.pressed:
+                if self.at is None:
+                    return
+                self._down()
+                self.carry = [0.0, 0.0]
+                self.scrolling = True
+            self.carry[0] += dx_pt
+            self.carry[1] += dy_pt
+            self.scrolled_at = time.time()
+
+    def _down(self):
+        # (lock held) Touch down exactly where the phone's pointer already is (the
+        # last hover report), not at the new position: a press that also changes
+        # the absolute position makes iOS end the touch after ~90 ms (drags die,
+        # clicks get flaky). Any gap is sent as ordinary drag motion.
+        fx, fy = self.at
+        px, py = self.sent or (clamp(fx), clamp(fy))
+        self.hid().cmd(f"a {px:.5f} {py:.5f} 1")
+        self.touch = [px, py]
+        self.carry = [(clamp(fx) - px) * touch.SCREEN_PT[0], (clamp(fy) - py) * touch.SCREEN_PT[1]]
+        self.dragged_from = (fx, fy)
+        self.pressed = True
+
+    def _up(self):
+        # (lock held) lift where the touch is, so the release carries no position change
+        self.pressed = self.scrolling = False
+        fx, fy = self.touch
+        self.hid().cmd(f"a {fx:.5f} {fy:.5f} 0")
+        self.sent = (round(fx, 4), round(fy, 4))
+
     def press(self, fx, fy):
         with self.lock:
+            if self.scrolling:
+                self._up()  # a click ends a wheel scroll first
             if self.pressed:
                 return
             self.at = (fx, fy)
-            # Touch down exactly where the phone's pointer already is (the last
-            # hover report), not at the new position: a press that also changes the
-            # absolute position makes iOS end the touch after ~90 ms (drags die,
-            # clicks get flaky). Any gap is sent as ordinary drag motion.
-            px, py = self.sent or (clamp(fx), clamp(fy))
-            self.hid().cmd(f"a {px:.5f} {py:.5f} 1")
-            self.touch = [px, py]
-            self.carry = [(clamp(fx) - px) * touch.SCREEN_PT[0], (clamp(fy) - py) * touch.SCREEN_PT[1]]
-            self.dragged_from = (fx, fy)
-            self.pressed = True
-            self.log("down", f"({px:.3f}, {py:.3f})")
+            self._down()
+            self.log("down", f"({self.touch[0]:.3f}, {self.touch[1]:.3f})")
 
     def release(self):
+        """The button went up (a wheel scroll lifts by itself)."""
         with self.lock:
-            if not self.pressed:
+            if not self.pressed or self.scrolling:
                 return
-            self.pressed = False
-            # lift where the touch is, so the release carries no position change
-            fx, fy = self.touch
-            self.hid().cmd(f"a {fx:.5f} {fy:.5f} 0")
-            self.sent = (round(fx, 4), round(fy, 4))
-            self.log("up", f"({fx:.3f}, {fy:.3f})")
+            self._up()
+            self.log("up", f"({self.touch[0]:.3f}, {self.touch[1]:.3f})")
+
+    def close(self):
+        with self.lock:
+            if self.pressed:
+                self._up()
+        self.stopped = True
 
     def _tick(self):
         # While pressed: every 8 ms, move the touch by exactly what the pointer
@@ -113,9 +148,13 @@ class Pointer:
                     fx, fy = self.at
                     lx, ly = self.dragged_from
                     self.dragged_from = (fx, fy)
-                    self.carry[0] += (fx - lx) * touch.SCREEN_PT[0]
-                    self.carry[1] += (fy - ly) * touch.SCREEN_PT[1]
+                    if not self.scrolling:  # a wheel scroll ignores the pointer's motion
+                        self.carry[0] += (fx - lx) * touch.SCREEN_PT[0]
+                        self.carry[1] += (fy - ly) * touch.SCREEN_PT[1]
                     ux, uy = touch.whole_units(*self.carry)  # never more than the pointer moved
+                    if self.scrolling and not (ux or uy) and time.time() - self.scrolled_at > SCROLL_IDLE:
+                        self._up()
+                        continue
                     self.hid().cmd(f"m {ux} {uy} 0 0")
                     if ux or uy:
                         mag = (ux * ux + uy * uy) ** 0.5

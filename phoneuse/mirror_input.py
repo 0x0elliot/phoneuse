@@ -1,6 +1,7 @@
 #!/usr/bin/python
 """Use the mirror window like the iPhone's screen: the phone's pointer follows
-your cursor while it is over the mirror, clicks tap, drags swipe, and the
+your cursor while it is over the mirror, clicks tap, drags swipe, the wheel
+scrolls (as a drag, since iOS ignores the wheel), and the
 keyboard types on the phone while the window has focus. The gestures themselves
 are in pointer.py, shared with the browser mirror.
 
@@ -29,7 +30,9 @@ from .screen import hypr, mirror_live, picture_rect, MIRROR_CLASS
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
+REL_HWHEEL, REL_WHEEL = 0x06, 0x08
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
+NOTCH_PT = 50  # phone points scrolled per wheel notch
 
 
 def log(*a):
@@ -37,12 +40,13 @@ def log(*a):
 
 
 class Mice:
-    """Left button and motion from every mouse, read-only. Calls on_press /
-    on_release the moment the button changes and sets `changed` on any event."""
+    """Left button, wheel and motion from every mouse, read-only. Calls on_press /
+    on_release the moment the button changes, on_wheel(dx, dy) in notches, and
+    sets `changed` on any event."""
 
-    def __init__(self, on_press, on_release):
+    def __init__(self, on_press, on_release, on_wheel):
         self.changed = threading.Event()
-        self.on_press, self.on_release = on_press, on_release
+        self.on_press, self.on_release, self.on_wheel = on_press, on_release, on_wheel
         paths = sorted(glob.glob("/dev/input/by-id/*event-mouse"))
         self.fds = [os.open(p, os.O_RDONLY | os.O_NONBLOCK) for p in paths]
         log("watching", len(paths), "mice")
@@ -63,6 +67,11 @@ class Mice:
                             (self.on_press if value else self.on_release)()
                         except Exception as e:
                             log("button error:", e)
+                    if etype == EV_REL and code in (REL_WHEEL, REL_HWHEEL):
+                        try:
+                            self.on_wheel(value if code == REL_HWHEEL else 0, value if code == REL_WHEEL else 0)
+                        except Exception as e:
+                            log("wheel error:", e)
                     if etype in (EV_KEY, EV_REL):
                         self.changed.set()
 
@@ -178,7 +187,15 @@ def run(stop=None):
         if c and c[2]:
             pointer.press(c[0], c[1])
 
-    mice = Mice(on_press, pointer.release)
+    def on_wheel(dx, dy):
+        # Wheel up scrolls up: the content moves down, as under a finger dragging
+        # down. Tilting right scrolls right: the content moves left.
+        c = cursor()
+        if c and c[2]:
+            pointer.hover(c[0], c[1])
+            pointer.scroll(-dx * NOTCH_PT, dy * NOTCH_PT)
+
+    mice = Mice(on_press, pointer.release, on_wheel)
     KeyForwarder(Keys(hid), mirror_focused)
 
     window_checked = 0.0
