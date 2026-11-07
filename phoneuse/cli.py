@@ -74,7 +74,16 @@ def point(xs, ys):
     return x, y
 
 
+def need_mirror():
+    """Stop unless the mirror shows the phone: acting or reading blind is unsafe."""
+    if not screen.mirror_live():
+        die("The mirror isn't showing the phone, so nothing was done. Start Screen Mirroring "
+            f"to {NAME} on the iPhone (Control Center > Screen Mirroring), then check `phoneuse status`.")
+
+
 def hid():
+    """The Bluetooth link, for commands that act on the phone."""
+    need_mirror()
     try:
         h = Hid()
     except OSError:
@@ -152,6 +161,7 @@ def type_text(h, text):
 # ---------- screen ----------
 
 def screenshot(path, park=True):
+    need_mirror()
     if park:
         try:
             # move the pointer to the left edge so it doesn't cover text
@@ -325,7 +335,8 @@ def status():
         print("Bluetooth:", Hid().cmd("status").replace("ok ", ""))
     try:
         at, size = screen.mirror_window()
-        print("Mirror window:", at, size)
+        live = "showing the phone" if screen.mirror_live() else "not mirroring (input to the phone is off)"
+        print("Mirror window:", at, size, live)
     except RuntimeError:
         print(f"Mirror window: none (run `phoneuse up`, then Screen Mirroring > {NAME} on the iPhone)")
 

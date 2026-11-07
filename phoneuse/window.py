@@ -76,9 +76,26 @@ class Phone(Gtk.Widget):
         p.connect("invalidate-size", self.on_frame)
 
     def on_frame(self, *_):
-        if self.waiting and self.paintable.get_intrinsic_width() > 0:
-            self.waiting = False
+        if self.waiting and self.paintable.get_intrinsic_width() > 0 and screen.airplay_mirroring():
+            self.set_waiting(False)
         self.queue_draw()
+
+    def set_waiting(self, waiting):
+        """Waiting = not showing the phone (no stream yet, or mirroring ended).
+        The title tells mirror_input and the CLI not to send input meanwhile."""
+        self.waiting = waiting
+        root = self.get_root()
+        if root:
+            root.set_title(screen.TITLE_WAITING if waiting else screen.TITLE_LIVE)
+        self.queue_draw()
+
+    def check_mirroring(self):
+        # The picture freezes on its last frame when mirroring ends; go back to
+        # waiting. A later stream needs a fresh keyframe, which iOS sends when
+        # mirroring starts, so the next frame after that shows it.
+        if not self.waiting and not screen.airplay_mirroring():
+            self.set_waiting(True)
+        return True
 
     def do_snapshot(self, snap):
         w, h = self.get_width(), self.get_height()
@@ -120,7 +137,7 @@ class Mirror(Gtk.Application):
         self.phone = None
 
     def do_activate(self):
-        win = Gtk.ApplicationWindow(application=self, title=f"{NAME} mirror")
+        win = Gtk.ApplicationWindow(application=self, title=screen.TITLE_WAITING)
         win.set_decorated(False)
         w, h = screen.window_size(CFG["mirror_width"])
         win.set_default_size(w, h)
@@ -128,6 +145,7 @@ class Mirror(Gtk.Application):
         win.set_child(self.phone)
         self.start()
         win.present()
+        GLib.timeout_add(500, self.phone.check_mirroring)
 
     def start(self):
         self.pipe = Gst.parse_launch(pipeline_desc(self.dec))
@@ -143,8 +161,7 @@ class Mirror(Gtk.Application):
         print("mirror window: stream error:", err.message, file=sys.stderr, flush=True)
         # Start over and wait for the next stream (UxPlay restarted, phone reconnected).
         self.pipe.set_state(Gst.State.NULL)
-        self.phone.waiting = True
-        self.phone.queue_draw()
+        self.phone.set_waiting(True)
         GLib.timeout_add(500, self.restart)
 
     def restart(self):

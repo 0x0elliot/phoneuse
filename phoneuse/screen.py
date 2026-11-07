@@ -18,6 +18,11 @@ from .config import PHONE_ASPECT
 
 MIRROR_CLASS = "phoneuse-mirror"  # window class (Wayland app id) of the mirror window, window.py
 RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.py shows it
+AIRPLAY_MIRROR_PORT = 7100  # UxPlay's mirroring stream port; a connection on it = the phone is mirroring
+# The window's title says whether it shows the phone: input is only forwarded
+# to the phone while it does (mirror_input.py, cli.py).
+TITLE_LIVE = "phoneuse mirror"
+TITLE_WAITING = "phoneuse mirror (not mirroring)"
 
 # Bezel around the picture in the mirror window, in units of the screen's width.
 # Presses on the bezel start edge swipes (mirror_input.py).
@@ -72,6 +77,27 @@ def hypr_eval(lua):
     """Run Lua in Hyprland (Lua-config builds). Returns False when unsupported."""
     r = subprocess.run(["hyprctl", "eval", lua], capture_output=True, text=True)
     return r.returncode == 0 and "unknown request" not in r.stdout and not r.stdout.startswith("error")
+
+
+def airplay_mirroring():
+    """True while a phone is mirroring to UxPlay (an open connection on its
+    mirroring port)."""
+    port = f":{AIRPLAY_MIRROR_PORT:04X}"
+    for path in ("/proc/net/tcp6", "/proc/net/tcp"):
+        try:
+            for line in open(path).readlines()[1:]:
+                f = line.split()
+                if f[1].endswith(port) and f[3] == "01":  # local port, ESTABLISHED
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def mirror_live(client=None):
+    """True when the mirror window shows the phone's screen."""
+    client = client or mirror_client()
+    return bool(client) and client["title"] == TITLE_LIVE
 
 
 def mirror_client():

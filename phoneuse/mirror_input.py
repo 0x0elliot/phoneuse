@@ -11,7 +11,8 @@ keyboard keep working normally everywhere.
 
 The mirror window (window.py) draws the phone screen inside a dark bezel.
 Pressing on the bezel starts the touch at the nearest screen edge (press the
-bottom bezel and drag up = swipe home; left bezel and drag right = back).
+bottom bezel and drag up = swipe home; left bezel and drag right = back). While the window doesn't show the phone (not mirroring),
+no mouse or keyboard input goes to the phone; the Bluetooth link stays up.
 
 iPhone settings: AssistiveTouch on, Dwell Control off.
 """
@@ -24,7 +25,7 @@ import time
 
 from . import touch
 from .hidclient import Hid
-from .screen import hypr, picture_rect, MIRROR_CLASS
+from .screen import hypr, mirror_live, picture_rect, MIRROR_CLASS
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
@@ -188,7 +189,7 @@ def run(stop=None):
     shared = {"hid": None}  # (not "state": the hover code below uses that name)
     hover = {"pos": None}  # last absolute position sent while hovering = where the phone's pointer is
     touch_at = {"pos": None, "carry": [0.0, 0.0]}  # where the touch is during a drag
-    win = {"body": None, "pic": None}
+    win = {"body": None, "pic": None, "live": False}
 
     def hid():
         if shared["hid"] is None:
@@ -197,14 +198,16 @@ def run(stop=None):
 
     def mirror_focused():
         try:
-            return hypr("j/activewindow").get("class") == MIRROR_CLASS
+            a = hypr("j/activewindow")
+            return a.get("class") == MIRROR_CLASS and mirror_live(a)
         except Exception:
             return False
 
     def cursor_fraction():
         """(fx, fy, inside) for the cursor against the phone picture; the bezel counts
-        as inside (positions on it clamp to the nearest screen edge)."""
-        if win["body"] is None:
+        as inside (positions on it clamp to the nearest screen edge). None while
+        the window doesn't show the phone: nothing is sent to it then."""
+        if win["body"] is None or not win["live"]:
             return None
         cur = hypr("j/cursorpos")
         bx, by, bw, bh = win["body"]
@@ -299,6 +302,7 @@ def run(stop=None):
             now = time.time()
             if now - window_checked > 0.5:
                 client = next((c for c in hypr("j/clients") if c["class"] == MIRROR_CLASS), None)
+                win["live"] = mirror_live(client) if client else False
                 win["body"] = (*client["at"], *client["size"]) if client else None
                 win["pic"] = picture_rect(client["at"], client["size"]) if client else None
                 window_checked = now
