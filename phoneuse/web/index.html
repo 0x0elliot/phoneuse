@@ -45,6 +45,8 @@ function showNote(html) { note.innerHTML = html && `<div>${html}</div>`; note.hi
 function updateNote() {
   if (!("VideoDecoder" in window)) return showNote("This browser can't decode video here (no WebCodecs).<br>Use a current Chrome, Edge or Firefox.");
   if (!ws || ws.readyState !== 1) return showNote("Not connected to <b>phoneuse up</b>");
+  if (!state.live && state.mirroring)  // the server started after mirroring did: no keyframe yet
+    return showNote(`The iPhone is mirroring, but this view started later.<br>Stop and start <b>Screen Mirroring</b> once to show it here.`);
   if (!state.live) return showNote(`On the iPhone, open Control Center<br><b>Screen Mirroring</b> › <b>${state.name}</b>`);
   showNote(playing ? "" : "Starting…");
 }
@@ -88,10 +90,8 @@ function newDecoder() {
       console.warn("decoder:", e);
       playing = false; updateNote();
       newDecoder();
-      if (performance.now() - askedKeyframe > 1000) {  // start over from a fresh keyframe
-        askedKeyframe = performance.now();
-        send({ t: "keyframe" });
-      }
+      awaitingKey = true;  // start over from a fresh keyframe
+      askKeyframe();
     },
   });
 }
@@ -113,18 +113,48 @@ async function configure(data) {
   if (!configured) showNote(`This browser can't decode the phone's video (${codec}).`);
 }
 
+// Every frame after a keyframe needs all the frames before it: dropping one
+// corrupts the picture until the next keyframe (green smears). So frames that
+// arrive while the decoder is being set up wait their turn, and a decoder that
+// falls behind skips to a fresh keyframe it asks the server for.
+let pending = [];        // frames waiting for the decoder to be configured
+let awaitingKey = true;  // skip frames until a keyframe
+
+function askKeyframe() {
+  if (performance.now() - askedKeyframe > 1000) {
+    askedKeyframe = performance.now();
+    send({ t: "keyframe" });
+  }
+}
+
+function decode(key, data) {
+  decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: performance.now() * 1000, data }));
+}
+
 function onFrame(buf) {
   const bytes = new Uint8Array(buf);
   const key = bytes[0] === 1, data = bytes.subarray(1);
   if (!decoder || decoder.state === "closed") newDecoder();
+  if (awaitingKey && !key) return;
+  awaitingKey = false;
   if (!configured) {
-    if (!key || configuring) return;
-    // Decode this keyframe once configured; deltas before then are dropped.
-    configure(data).then(() => { if (configured) onFrame(buf); });
+    pending.push([key, data]);
+    if (!configuring) {
+      configure(pending[0][1]).then(() => {
+        const frames = pending;
+        pending = [];
+        if (configured) for (const [k, d] of frames) decode(k, d);
+        else awaitingKey = true;
+      });
+    }
     return;
   }
-  if (decoder.decodeQueueSize > 4 && !key) return;  // behind: skip to the next keyframe
-  decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: performance.now() * 1000, data }));
+  if (decoder.decodeQueueSize > 8 && !key) {  // behind: drop the backlog, restart from a keyframe
+    awaitingKey = true;
+    askKeyframe();
+    return;
+  }
+  decode(key, data);
 }
 
 // ---- connection ----
@@ -142,7 +172,7 @@ function connect() {
     layout(); updateNote();
   };
   ws.onclose = () => {
-    playing = false; configured = false; updateNote();
+    playing = false; configured = false; awaitingKey = true; pending = []; updateNote();
     setTimeout(connect, 1000);
   };
 }
@@ -162,6 +192,15 @@ const lift = () => send({ t: "up" });
 phone.addEventListener("pointerup", (e) => { if (e.button === 0) lift(); });
 phone.addEventListener("pointercancel", lift);
 phone.addEventListener("contextmenu", (e) => e.preventDefault());
+// Wheel and trackpad scrolling: the server turns it into a drag (iOS ignores the
+// wheel). Scrolling down moves the content up, so the drag goes the other way.
+phone.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (!active()) return;
+  const r = scr.getBoundingClientRect();
+  const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? r.height : 1;  // lines, pages -> px
+  send({ t: "scroll", ...at(e), dx: -e.deltaX * unit / r.width, dy: -e.deltaY * unit / r.height });
+}, { passive: false });
 
 // ---- keyboard: KeyboardEvent.code -> USB HID usage; Meta (Super) is Cmd on the phone ----
 const MODS = { ControlLeft: 0x01, ShiftLeft: 0x02, AltLeft: 0x04, MetaLeft: 0x08,

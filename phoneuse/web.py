@@ -64,18 +64,21 @@ class Stream:
         self.caps = None
         self.frames_at = 0.0  # when the last frame arrived from the phone
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
-        download = "cudadownload ! " if dec.startswith("nvh264dec") else ""
+        # System-memory output: in CUDA output mode NVDEC hands out its own decode
+        # surfaces, which iOS's long reference chains reuse while we still hold
+        # them (green smears). Copying out costs ~1 ms per frame.
+        download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
         w, h = SCREEN_PT[0] * 2, SCREEN_PT[1] * 2  # screenshots at 2 px per phone point
         self.shot_lock = threading.Lock()
         # One pipeline for all three parts (decode, encode for browsers, screenshots),
         # so they share one GPU context.
         self.pipe = Gst.parse_launch(
             f'udpsrc address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{rtp}" '
-            f"! rtph264depay ! h264parse ! {dec} ! appsink name=raw sync=false async=false emit-signals=true "
+            f"! rtph264depay ! h264parse ! {dec} ! {download}appsink name=raw sync=false async=false emit-signals=true "
             f"appsrc name=src is-live=true format=time do-timestamp=true "
             f"! {encoder(dec)} ! h264parse ! video/x-h264,stream-format=byte-stream,alignment=au "
             f"! appsink name=enc sync=false async=false emit-signals=true "
-            f"appsrc name=shot format=time do-timestamp=true ! {download}videoconvert ! videoscale "
+            f"appsrc name=shot format=time do-timestamp=true ! videoconvert ! videoscale "
             f"! video/x-raw,format=RGB,width={w},height={h} ! pngenc compression-level=1 "
             f"! appsink name=png sync=false async=false max-buffers=1 drop=true")
         self.shot = self.pipe.get_by_name("shot")
@@ -173,9 +176,9 @@ class Mirror:
                     self.stream.forget()
                 for tab in list(self.tabs):
                     tab.state()
-            elif now and self.stream.last is not None:
+            elif now:
                 for tab in list(self.tabs):
-                    if not tab.told_live:
+                    if tab.told_live != self.live():
                         tab.state()
             await asyncio.sleep(0.25)
 
@@ -206,7 +209,8 @@ class Tab:
     def state(self):
         live = self.mirror.live()
         self.told_live = live
-        msg = json.dumps({"type": "state", "live": live, "name": NAME, "screen": SCREEN_PT,
+        msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
+                          "name": NAME, "screen": SCREEN_PT,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
 
@@ -233,6 +237,9 @@ class Tab:
             self.pointer.press(msg["x"], msg["y"])
         elif t == "up":
             self.pointer.release()
+        elif t == "scroll":  # fractions of the screen to drag the content by
+            self.pointer.hover(msg["x"], msg["y"])
+            self.pointer.scroll(msg["dx"] * SCREEN_PT[0], msg["dy"] * SCREEN_PT[1])
         elif t == "mod":
             self.keys.modifier(int(msg["bit"]), bool(msg["down"]))
         elif t == "key":
