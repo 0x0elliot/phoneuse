@@ -460,6 +460,27 @@ def up():
     stop = threading.Event()
     procs = {}
 
+    def supervise(module, label, watch):
+        """Run phoneuse.<module>; start it again when it exits or when one of the
+        `watch` files changes. (The page itself is served fresh on every load.)"""
+        files = [os.path.join(PKG, f) for f in watch]
+        mtimes = lambda: [os.path.getmtime(f) for f in files if os.path.exists(f)]
+        while not stop.is_set():
+            seen = mtimes()
+            procs[module] = subprocess.Popen([sys.executable, "-m", f"phoneuse.{module}"], cwd=ROOT)
+            while procs[module].poll() is None and not stop.is_set():
+                time.sleep(1)
+                if mtimes() != seen:
+                    print(time.strftime("%H:%M:%S"), f"{label} code changed; restarting it", flush=True)
+                    procs[module].terminate()
+                    procs[module].wait(5)
+                    break
+            else:
+                if stop.is_set():
+                    break
+                print(time.strftime("%H:%M:%S"), f"{label} exited ({procs[module].returncode}); starting it again.", flush=True)
+                time.sleep(1)
+
     def keep_hub():
         # The video hub (hub.py): decodes the phone's stream and serves it to the
         # window and the browser mirror. Started first; rarely restarts.
@@ -475,14 +496,8 @@ def up():
 
     def keep_frames():
         # The frames service (frames.py): settle and screenshots for agents. It
-        # joins the hub as a viewer, so it restarts freely.
-        while not stop.is_set():
-            procs["frames"] = subprocess.Popen([sys.executable, "-m", "phoneuse.frames"], cwd=ROOT)
-            rc = procs["frames"].wait()
-            if stop.is_set():
-                break
-            print(time.strftime("%H:%M:%S"), f"frames service exited ({rc}); starting it again.", flush=True)
-            time.sleep(1)
+        # joins the hub as a viewer, so it restarts freely, also on code changes.
+        supervise("frames", "frames service", ["frames.py", "screen.py"])
     threading.Thread(target=keep_frames, daemon=True).start()
 
     def keep_window():
@@ -498,14 +513,9 @@ def up():
     threading.Thread(target=keep_window, daemon=True).start()
 
     def keep_web():
-        # The browser mirror (web.py), on localhost only.
-        while not stop.is_set():
-            procs["web"] = subprocess.Popen([sys.executable, "-m", "phoneuse.web"], cwd=ROOT)
-            rc = procs["web"].wait()
-            if stop.is_set():
-                break
-            print(time.strftime("%H:%M:%S"), f"browser mirror exited ({rc}); starting it again.", flush=True)
-            time.sleep(2)
+        # The browser mirror (web.py), on localhost only. Restarts when its code
+        # changes: it rejoins the hub, so the phone keeps mirroring.
+        supervise("web", "browser mirror", ["web.py", "pointer.py", "unlock.py", "screen.py"])
     threading.Thread(target=keep_web, daemon=True).start()
 
     def keep_mirror():
