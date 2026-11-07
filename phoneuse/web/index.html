@@ -13,47 +13,65 @@
   #note { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; line-height: 1.5; padding: 0 8%; }
   #note b { font-weight: 600; }
   #note[hidden] { display: none; }
-  button { font: inherit; color: #fff; background: #2c2c32; border: 0; border-radius: 9px; padding: 7px 14px; cursor: pointer; }
-  button.primary { background: #0a84ff; }
-  button:disabled { opacity: .45; cursor: default; }
-  #gear { position: fixed; z-index: 10; top: 14px; right: 14px; width: 36px; height: 36px; padding: 0; border-radius: 50%;
-          display: grid; place-items: center; background: #1c1c21; color: rgba(255,255,255,.7); }
-  #gear:hover { color: #fff; }
-  #settings { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,.55); }
+  .glass { background: rgba(28, 28, 32, .72); -webkit-backdrop-filter: blur(28px) saturate(170%);
+           backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255, 255, 255, .09);
+           box-shadow: 0 18px 50px rgba(0, 0, 0, .45); color: #f5f5f7; }
+  button { font: inherit; border: 0; background: none; color: inherit; cursor: pointer; }
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid rgba(10, 132, 255, .7); outline-offset: 2px; }
+  #gear { position: fixed; z-index: 10; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%;
+          display: grid; place-items: center; color: rgba(255, 255, 255, .62); }
+  #gear:hover, #gear[aria-expanded="true"] { color: #fff; }
+  #settings { position: fixed; z-index: 20; top: 56px; right: 14px; width: 300px; border-radius: 18px; padding: 14px; }
   #settings[hidden], #ask[hidden] { display: none; }
-  .panel { width: min(360px, 90vw); background: #1c1c21; border-radius: 14px; padding: 18px; color: #fff; }
-  .panel h2 { margin: 0 0 14px; font-size: 17px; font-weight: 600; }
-  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-  .muted { color: rgba(255,255,255,.55); font-size: 13px; line-height: 1.45; }
-  input[type=password] { flex: 1; font: inherit; color: #fff; background: #2c2c32; border: 0; border-radius: 9px; padding: 7px 10px; }
-  #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); background: #1c1c21; color: #fff;
-         border-radius: 14px; padding: 12px 14px; display: flex; gap: 12px; align-items: center;
-         box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  .label { font-size: 12px; letter-spacing: .02em; color: rgba(235, 235, 245, .6); margin: 0 6px 7px; }
+  .group { background: rgba(255, 255, 255, .06); border-radius: 12px; overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; font-size: 15px; }
+  .item + .item { border-top: 1px solid rgba(255, 255, 255, .07); }
+  .item .grow { flex: 1; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: rgba(255, 255, 255, .09); color: rgba(235, 235, 245, .7); }
+  .pill.on { background: rgba(48, 209, 88, .16); color: #30d158; }
+  .item input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: #fff; background: none; border: 0; padding: 0;
+                letter-spacing: .12em; }
+  .item input::placeholder { letter-spacing: 0; color: rgba(235, 235, 245, .35); }
+  .item input:focus-visible { outline: none; }
+  #ask span { white-space: nowrap; }
+  .item:focus-within { box-shadow: inset 0 0 0 1.5px rgba(10, 132, 255, .7); border-radius: 12px; }
+  .link { color: #0a84ff; font-weight: 500; }
+  .link:disabled { color: rgba(235, 235, 245, .3); cursor: default; }
+  .danger { color: #ff453a; }
+  .foot { font-size: 12px; line-height: 1.45; color: rgba(235, 235, 245, .5); margin: 8px 6px 0; }
+  #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); border-radius: 16px;
+         padding: 10px 10px 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
+  #ask .btn { padding: 6px 12px; border-radius: 99px; background: rgba(255, 255, 255, .1); font-weight: 500; }
+  #ask .btn.primary { background: #0a84ff; color: #fff; }
 </style>
 </head>
 <body>
-<button id="gear" title="Settings" aria-label="Settings">
+<button id="gear" class="glass" title="Settings" aria-label="Settings" aria-expanded="false">
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 </button>
-<div id="settings" hidden>
-  <div class="panel" role="dialog" aria-label="Settings">
-    <h2>iPhone passcode</h2>
-    <div class="muted" id="pcStatus"></div>
-    <form class="row" id="pcForm" autocomplete="off">
-      <input type="password" id="pcInput" placeholder="Passcode" inputmode="numeric" autocomplete="off">
-      <button class="primary" type="submit">Save</button>
-    </form>
-    <div class="row">
-      <button id="pcRemove" hidden>Remove</button>
-      <span style="flex:1"></span>
-      <button id="closeSettings">Done</button>
+<div id="settings" class="glass" hidden role="dialog" aria-label="Settings">
+  <div class="label">Passcode</div>
+  <div class="group">
+    <div class="item">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.7"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
+      <span class="grow">iPhone passcode</span>
+      <span class="pill" id="pcPill">Not set</span>
     </div>
+    <form class="item" id="pcForm" autocomplete="off">
+      <input type="password" id="pcInput" placeholder="Enter passcode" inputmode="numeric" autocomplete="off" aria-label="iPhone passcode">
+      <button class="link" type="submit" id="pcSave" disabled>Save</button>
+    </form>
+    <div class="item" id="pcRemoveRow" hidden><button class="danger" id="pcRemove">Remove passcode</button></div>
   </div>
+  <p class="foot" id="pcFoot">Agents ask before using it, and you approve each unlock. Kept on this computer only.</p>
 </div>
-<div id="ask" hidden>
-  <span>An agent asks to unlock the iPhone with your passcode.</span>
-  <button id="deny">Deny</button>
-  <button class="primary" id="approve">Unlock</button>
+<div id="ask" class="glass" hidden role="alertdialog" aria-label="Unlock request">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.7"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
+  <span>An agent wants to unlock the iPhone</span>
+  <button class="btn" id="deny">Deny</button>
+  <button class="btn primary" id="approve">Unlock</button>
 </div>
 <div id="phone">
   <div id="screen">
@@ -271,29 +289,40 @@ addEventListener("keyup", (e) => onKey(e, false));
 addEventListener("blur", () => send({ t: "blur" }));  // let go of held keys and buttons
 
 // ---- settings: the saved passcode (never sent back to the page) ----
-const settings = document.getElementById("settings"), pcStatus = document.getElementById("pcStatus");
-const pcInput = document.getElementById("pcInput"), pcRemove = document.getElementById("pcRemove");
+const settings = document.getElementById("settings"), gear = document.getElementById("gear");
+const pcInput = document.getElementById("pcInput"), pcSave = document.getElementById("pcSave");
+const pcPill = document.getElementById("pcPill"), pcFoot = document.getElementById("pcFoot");
+const pcRemoveRow = document.getElementById("pcRemoveRow");
+const FOOT = pcFoot.textContent;
 function showSaved(saved) {
-  pcStatus.textContent = saved
-    ? "Saved on this computer. Agents can ask to use it; you approve each unlock here or in a notification."
-    : "Not saved. Save it so agents can ask you to unlock the phone; you approve each unlock.";
-  pcRemove.hidden = !saved;
+  pcPill.textContent = saved ? "Saved" : "Not set";
+  pcPill.classList.toggle("on", saved);
+  pcRemoveRow.hidden = !saved;
+  pcInput.placeholder = saved ? "Replace passcode" : "Enter passcode";
+  pcFoot.textContent = FOOT; pcFoot.classList.remove("danger");
 }
 async function passcode(method, body) {
   const r = await fetch("/api/passcode", { method, headers: { "Content-Type": "application/json" },
                                            body: body && JSON.stringify(body) });
   const j = await r.json();
-  if (j.error) pcStatus.textContent = j.error; else showSaved(j.saved);
+  if (j.error) { pcFoot.textContent = j.error; pcFoot.classList.add("danger"); } else showSaved(j.saved);
 }
-document.getElementById("gear").onclick = () => { settings.hidden = false; passcode("GET"); pcInput.focus(); };
-document.getElementById("closeSettings").onclick = () => { settings.hidden = true; pcInput.value = ""; };
-settings.onclick = (e) => { if (e.target === settings) document.getElementById("closeSettings").onclick(); };
+function openSettings(open) {
+  settings.hidden = !open;
+  gear.setAttribute("aria-expanded", open);
+  pcInput.value = ""; pcSave.disabled = true;
+  if (open) { passcode("GET"); pcInput.focus(); }
+}
+gear.onclick = () => openSettings(settings.hidden);
+addEventListener("pointerdown", (e) => { if (!settings.hidden && !settings.contains(e.target) && !gear.contains(e.target)) openSettings(false); });
+addEventListener("keydown", (e) => { if (e.key === "Escape" && !settings.hidden) openSettings(false); });
+pcInput.oninput = () => { pcSave.disabled = !pcInput.value; };
 document.getElementById("pcForm").onsubmit = (e) => {
   e.preventDefault();
   if (pcInput.value) passcode("POST", { code: pcInput.value });
-  pcInput.value = "";
+  pcInput.value = ""; pcSave.disabled = true;
 };
-pcRemove.onclick = () => passcode("DELETE");
+document.getElementById("pcRemove").onclick = () => passcode("DELETE");
 
 // ---- unlock requests from agents: the owner answers here ----
 const ask = document.getElementById("ask");
