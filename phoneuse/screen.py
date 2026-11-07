@@ -18,6 +18,7 @@ from .config import PHONE_ASPECT
 
 MIRROR_CLASS = "phoneuse-mirror"  # window class (Wayland app id) of the mirror window, window.py
 RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.py shows it
+WEB_RTP_PORT = 5602  # ...and here, for the browser mirror (web.py)
 AIRPLAY_MIRROR_PORT = 7100  # UxPlay's mirroring stream port; a connection on it = the phone is mirroring
 # The window's title says whether it shows the phone: input is only forwarded
 # to the phone while it does (mirror_input.py, cli.py).

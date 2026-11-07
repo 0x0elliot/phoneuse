@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>phoneuse</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0e11; overflow: hidden; }
+  body { display: grid; place-items: center; font: 15px system-ui, sans-serif; color: rgba(255, 255, 255, .55); }
+  #phone { position: relative; background: #18181c; touch-action: none; user-select: none; }
+  #screen { position: absolute; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #note { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; line-height: 1.5; padding: 0 8%; }
+  #note b { font-weight: 600; }
+  #note[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="phone">
+  <div id="screen">
+    <canvas id="video"></canvas>
+    <div id="note"></div>
+  </div>
+</div>
+<script>
+"use strict";
+// Video: H.264 access units over the WebSocket, decoded with WebCodecs and drawn
+// as soon as each frame is decoded. Input: pointer and key events back to the
+// server, which drives the phone the same way the mirror window does.
+
+const phone = document.getElementById("phone");
+const scr = document.getElementById("screen");
+const canvas = document.getElementById("video");
+const note = document.getElementById("note");
+const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+
+let ws = null, decoder = null, configured = false, configuring = false, askedKeyframe = 0;
+let state = { live: false, name: "phoneuse", screen: [402, 874], bezel: 30 / 498, radius: 60 / 498 };
+let playing = false;  // a frame from the current stream is on screen
+
+function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+function active() { return state.live && playing; }
+
+function showNote(html) { note.innerHTML = html && `<div>${html}</div>`; note.hidden = !html; }
+function updateNote() {
+  if (!("VideoDecoder" in window)) return showNote("This browser can't decode video here (no WebCodecs).<br>Use a current Chrome, Edge or Firefox.");
+  if (!ws || ws.readyState !== 1) return showNote("Not connected to <b>phoneuse up</b>");
+  if (!state.live) return showNote(`On the iPhone, open Control Center<br><b>Screen Mirroring</b> › <b>${state.name}</b>`);
+  showNote(playing ? "" : "Starting…");
+}
+
+// ---- layout: the phone body fits the window; the screen keeps the phone's shape ----
+function layout() {
+  const aspect = state.screen[0] / state.screen[1];
+  const dw = 1 + 2 * state.bezel, dh = 1 / aspect + 2 * state.bezel;
+  const u = Math.min((innerWidth - 24) / dw, (innerHeight - 24) / dh);  // px per screen width
+  Object.assign(phone.style, { width: `${dw * u}px`, height: `${dh * u}px`, borderRadius: `${(state.radius + state.bezel) * u}px` });
+  Object.assign(scr.style, { left: `${state.bezel * u}px`, top: `${state.bezel * u}px`, width: `${u}px`,
+                             height: `${u / aspect}px`, borderRadius: `${state.radius * u}px` });
+}
+addEventListener("resize", layout);
+
+// ---- video ----
+function codecString(data) {
+  // avc1.PPCCLL from the SPS (profile, constraint flags, level), found after a start code
+  for (let i = 0; i + 7 < data.length; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1 && (data[i + 3] & 0x1f) === 7) {
+      const h = (b) => b.toString(16).padStart(2, "0");
+      return `avc1.${h(data[i + 4])}${h(data[i + 5])}${h(data[i + 6])}`;
+    }
+  }
+  return null;
+}
+
+function newDecoder() {
+  if (decoder && decoder.state !== "closed") decoder.close();
+  configured = false;
+  decoder = new VideoDecoder({
+    output(frame) {
+      if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+        canvas.width = frame.displayWidth; canvas.height = frame.displayHeight;
+      }
+      ctx.drawImage(frame, 0, 0);
+      frame.close();
+      if (!playing) { playing = true; send({ t: "playing" }); updateNote(); }
+    },
+    error(e) {
+      console.warn("decoder:", e);
+      playing = false; updateNote();
+      newDecoder();
+      if (performance.now() - askedKeyframe > 1000) {  // start over from a fresh keyframe
+        askedKeyframe = performance.now();
+        send({ t: "keyframe" });
+      }
+    },
+  });
+}
+
+async function configure(data) {
+  // GPU decoding when the browser offers it (Chromium on Linux often doesn't), else software.
+  const codec = codecString(data);
+  if (!codec) return;
+  configuring = true;
+  for (const hardwareAcceleration of ["prefer-hardware", "no-preference"]) {
+    const config = { codec, optimizeForLatency: true, hardwareAcceleration };
+    if ((await VideoDecoder.isConfigSupported(config)).supported) {
+      decoder.configure(config);
+      configured = true;
+      break;
+    }
+  }
+  configuring = false;
+  if (!configured) showNote(`This browser can't decode the phone's video (${codec}).`);
+}
+
+function onFrame(buf) {
+  const bytes = new Uint8Array(buf);
+  const key = bytes[0] === 1, data = bytes.subarray(1);
+  if (!decoder || decoder.state === "closed") newDecoder();
+  if (!configured) {
+    if (!key || configuring) return;
+    // Decode this keyframe once configured; deltas before then are dropped.
+    configure(data).then(() => { if (configured) onFrame(buf); });
+    return;
+  }
+  if (decoder.decodeQueueSize > 4 && !key) return;  // behind: skip to the next keyframe
+  decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: performance.now() * 1000, data }));
+}
+
+// ---- connection ----
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = updateNote;
+  ws.onmessage = (e) => {
+    if (typeof e.data !== "string") return onFrame(e.data);
+    const msg = JSON.parse(e.data);
+    if (msg.type !== "state") return;
+    const wasLive = state.live;
+    state = msg;
+    if (!state.live && wasLive) { playing = false; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    layout(); updateNote();
+  };
+  ws.onclose = () => {
+    playing = false; configured = false; updateNote();
+    setTimeout(connect, 1000);
+  };
+}
+
+// ---- mouse: positions as fractions of the screen; outside 0..1 is the bezel ----
+function at(e) {
+  const r = scr.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+}
+phone.addEventListener("pointermove", (e) => { if (active()) send({ t: "move", ...at(e) }); });
+phone.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || !active()) return;
+  phone.setPointerCapture(e.pointerId);
+  send({ t: "down", ...at(e) });
+});
+const lift = () => send({ t: "up" });
+phone.addEventListener("pointerup", (e) => { if (e.button === 0) lift(); });
+phone.addEventListener("pointercancel", lift);
+phone.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// ---- keyboard: KeyboardEvent.code -> USB HID usage; Meta (Super) is Cmd on the phone ----
+const MODS = { ControlLeft: 0x01, ShiftLeft: 0x02, AltLeft: 0x04, MetaLeft: 0x08,
+               ControlRight: 0x10, ShiftRight: 0x20, AltRight: 0x40, MetaRight: 0x80 };
+const USAGE = { Enter: 40, Escape: 41, Backspace: 42, Tab: 43, Space: 44, Minus: 45, Equal: 46,
+                BracketLeft: 47, BracketRight: 48, Backslash: 49, Semicolon: 51, Quote: 52, Backquote: 53,
+                Comma: 54, Period: 55, Slash: 56, CapsLock: 57, Insert: 73, Home: 74, PageUp: 75,
+                Delete: 76, End: 77, PageDown: 78, ArrowRight: 79, ArrowLeft: 80, ArrowDown: 81, ArrowUp: 82 };
+for (let i = 0; i < 26; i++) USAGE["Key" + String.fromCharCode(65 + i)] = 4 + i;
+for (let i = 1; i <= 9; i++) USAGE["Digit" + i] = 29 + i;
+USAGE.Digit0 = 39;
+for (let i = 1; i <= 12; i++) USAGE["F" + i] = 57 + i;
+const BROWSER_KEYS = new Set(["F5", "F11", "F12"]);  // left to the browser
+
+function onKey(e, down) {
+  if (!active() || BROWSER_KEYS.has(e.code)) return;
+  if (e.code in MODS) { send({ t: "mod", bit: MODS[e.code], down }); e.preventDefault(); return; }
+  if (!(e.code in USAGE)) return;
+  e.preventDefault();
+  if (down && e.repeat) return;  // the phone repeats keys itself
+  send({ t: "key", usage: USAGE[e.code], down });
+}
+addEventListener("keydown", (e) => onKey(e, true));
+addEventListener("keyup", (e) => onKey(e, false));
+addEventListener("blur", () => send({ t: "blur" }));  // let go of held keys and buttons
+
+layout(); updateNote(); connect();
+</script>
+</body>
+</html>

@@ -39,7 +39,7 @@ import threading
 import time
 
 from . import screen, touch
-from .config import NAME, SCREEN_PT, VISION_SOCKET, RUNTIME_DIR
+from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
@@ -49,9 +49,10 @@ PT = SCREEN_PT
 LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-action")
 MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
 # UxPlay receives AirPlay and passes the phone's H.264 stream on as RTP to the
-# mirror window (window.py), which decodes and draws it inside its own bezel.
+# mirror window (window.py) and the browser mirror (web.py).
 MIRROR_ARGS = ["uxplay", "-p", "-n", NAME,
-               "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! udpsink host=127.0.0.1 port={screen.RTP_PORT} sync=false",
+               "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! multiudpsink sync=false "
+                        f"clients=127.0.0.1:{screen.RTP_PORT},127.0.0.1:{screen.WEB_RTP_PORT}",
                "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
@@ -275,6 +276,17 @@ def up():
             time.sleep(1)
     threading.Thread(target=keep_window, daemon=True).start()
 
+    def keep_web():
+        # The browser mirror (web.py), on localhost only.
+        while not stop.is_set():
+            procs["web"] = subprocess.Popen([sys.executable, "-m", "phoneuse.web"], cwd=ROOT)
+            rc = procs["web"].wait()
+            if stop.is_set():
+                break
+            print(time.strftime("%H:%M:%S"), f"browser mirror exited ({rc}); starting it again.", flush=True)
+            time.sleep(2)
+    threading.Thread(target=keep_web, daemon=True).start()
+
     def keep_mirror():
         # If UxPlay dies, start it again so the phone can reconnect without
         # restarting `phoneuse up`.
@@ -295,9 +307,10 @@ def up():
         h = Hid()
         print("Bluetooth:", h.cmd("status").replace("ok ", ""))
         print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
+        print(f"Browser mirror: http://localhost:{CFG['web_port']}")
         # The clicker runs as its own process and restarts by itself when its code
         # changes, so edits don't drop the AirPlay connection.
-        watched = [os.path.join(PKG, f) for f in ("mirror_input.py", "touch.py", "screen.py", "hidclient.py")]
+        watched = [os.path.join(PKG, f) for f in ("mirror_input.py", "pointer.py", "touch.py", "screen.py", "hidclient.py")]
         mtimes = lambda: [os.path.getmtime(f) for f in watched]
         while not stop.is_set():
             seen = mtimes()
@@ -318,7 +331,7 @@ def up():
         stop.set()
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        for name in ("mirror", "window"):
+        for name in ("mirror", "window", "web"):
             p = procs.get(name)
             if p and p.poll() is None:
                 p.terminate()

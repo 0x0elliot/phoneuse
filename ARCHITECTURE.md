@@ -10,11 +10,13 @@ read the screen.
 ```
             AirPlay video (Wi-Fi)                      Bluetooth HID (mouse + keyboard)
  iPhone  ─────────────────────────▶  mirror window      ◀─────────────────────────  phoneuse-hid daemon
-                                     (phoneuse up)                                      (root, systemd)
+                                     + browser mirror                                   (root, systemd)
+                                     (phoneuse up)
                                           │                                                 ▲
                          Hyprland IPC: where the window is, where the cursor is             │ command socket
                                           ▼                                                 │ /run/phoneuse-hid.sock
                                      mirror_input  ──── hover / press / drag / keys ────────┤
+                                     browser mirror ─── hover / press / drag / keys ────────┤
                                      phoneuse CLI   ──── tap / swipe / type / home ... ──────┘
                                           │
                                      vision service (OCR + grounding) for `phoneuse text/find`
@@ -36,7 +38,8 @@ would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".
 
 **`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay), the
-mirror window and the mirror input handler, and restarts any of them that exits. The mirror input
+mirror window, the browser mirror and the mirror input handler, and restarts any
+of them that exits. The mirror input
 handler is a separate process that reloads when its code changes, so edits don't
 drop the AirPlay connection.
 
@@ -51,6 +54,22 @@ phone picture in the middle with the screen's rounded corners; presses on the
 bezel become touches at the nearest screen edge. A Hyprland rule floats it and
 keeps its aspect ratio when you resize it, and if it ends up another shape
 anyway, the picture stays aspect-fit and the bezel gets wider.
+
+**`phoneuse/pointer.py`** turns a pointer over the mirror into touches on the
+phone: hover, press, drag and release, as described under "What iOS does with
+mouse input" below. The mirror window's input handler and the browser
+mirror both use it, so both behave the same.
+
+**`phoneuse/web.py`** is the browser mirror at http://localhost:8777. UxPlay
+sends it the same RTP stream as the mirror window. Because iOS sends a full
+keyframe only when mirroring starts, a tab opened later couldn't decode that
+stream. The server therefore decodes it once and encodes it again with NVENC
+(x264 without an NVIDIA GPU): no B-frames, keyframes only on request. It keeps
+the last decoded frame, and when a tab joins, it encodes that frame again as a
+keyframe, so the tab shows the phone at once. Tabs receive encoded frames over
+a WebSocket, decode them with WebCodecs (`phoneuse/web/index.html`) and send
+pointer and key events back. The server listens on 127.0.0.1 only and accepts
+input only while the phone is mirroring and the tab is showing it.
 
 **`phoneuse/touch.py`** holds the gesture code used by agents (tap, long press,
 swipe) and the measured table of how far iOS moves the pointer for each report

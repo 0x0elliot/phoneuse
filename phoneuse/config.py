@@ -6,6 +6,7 @@ Example config.toml:
     screen_points = [402, 874]       # your iPhone's screen in points (iPhone 17 Pro)
     decoder = "auto"                 # GStreamer H.264 decoder; auto picks NVDEC if present
     mirror_width = 498               # mirror window width in logical pixels
+    web_port = 8777                  # browser mirror: http://localhost:8777
 """
 import os
 import shutil
@@ -17,6 +18,7 @@ DEFAULTS = {
     "screen_points": [402, 874],
     "decoder": "auto",
     "mirror_width": 498,
+    "web_port": 8777,
 }
 
 # Runtime paths shared by the daemon (root) and the user-side tools.

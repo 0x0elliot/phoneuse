@@ -26,7 +26,7 @@ only on features every iPhone has: Screen Mirroring and AssistiveTouch.
 | UxPlay (AirPlay receiver) | 1.73.7 | `uxplay` in Arch's AUR and most distros |
 | GStreamer | 1.28 | NVIDIA decoding used when available, software otherwise |
 | GTK 4 + `gtk4paintablesink` | 4.24 | the mirror window; the sink is in `gst-plugin-gtk4` |
-| Python 3.11+ | 3.14 | with `python-dbus`, `python-gobject`, `numpy`, `pillow` |
+| Python 3.11+ | 3.14 | with `python-dbus`, `python-gobject`, `numpy`, `pillow`, `aiohttp` |
 | `grim` | | screenshots for agents |
 | `uv` | | only for the optional screen-reading models |
 
@@ -82,6 +82,11 @@ drag to swipe, and press on the dark bezel to start a swipe from the very edge
 of the screen (from the bottom bezel upward goes home). While the mirror window
 has focus, your keyboard types on the phone, and Super acts as Cmd.
 
+The same mirror also runs in your browser at http://localhost:8777, with mouse
+and keyboard working the same way. It listens on this computer only, and you can
+change the port with `web_port` (below). A current Chrome, Edge or Firefox
+decodes the video; it uses the GPU when the browser offers it.
+
 For agents and scripts, every action is a subcommand. `phoneuse --help` lists
 them; a typical loop looks like this:
 
@@ -106,6 +111,7 @@ name = "phoneuse"              # Bluetooth device and AirPlay receiver name
 screen_points = [402, 874]    # your iPhone's screen size in points
 decoder = "auto"              # GStreamer H.264 decoder
 mirror_width = 498            # mirror window width in logical pixels
+web_port = 8777               # browser mirror: http://localhost:8777
 ```
 
 After changing `name`, rerun `phoneuse install`.
