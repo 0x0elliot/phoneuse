@@ -22,6 +22,7 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse open APP             open an app by name (search, type, Enter)
   phoneuse type TEXT            type text (US layout); \\n presses Enter
   phoneuse key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
+  phoneuse keyboard             show or hide the iPhone's on-screen keyboard (Eject key)
   phoneuse where                debugging: where the pointer appears (needs Pointer
                                Control colour Orange)
 
@@ -647,6 +648,8 @@ def main():
         type_text(h, " ".join(args))
     elif cmd == "key":
         key_combo(h, args[0])
+    elif cmd == "keyboard":  # Eject: show or hide the on-screen keyboard
+        h.cmd("eject")
     elif cmd == "tap-on":
         print(tap_on(h, " ".join(args)))
     elif cmd == "where":

@@ -81,7 +81,11 @@ attached: without it the signal can be too weak to pair reliably.
 Over the mirror window, the phone's pointer follows your cursor. Click to tap,
 drag to swipe, scroll with the wheel or trackpad, and press on the dark bezel to start a swipe from the very edge
 of the screen (from the bottom bezel upward goes home). While the mirror window
-has focus, your keyboard types on the phone, and Super acts as Cmd.
+has focus, your keyboard types on the phone, and Super acts as Cmd. The iPhone
+hides its own keyboard while phoneuse's is connected; `phoneuse keyboard` (or
+the keyboard button on the browser mirror) shows or hides it. After updating
+phoneuse from a version without that key, forget PhoneUse in the iPhone's
+Bluetooth settings and pair again, so the phone reads the new key.
 
 The same mirror also runs in your browser at http://localhost:8777, with mouse
 and keyboard working the same way. It listens on this computer only, and you can

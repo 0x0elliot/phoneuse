@@ -137,6 +137,13 @@ def press_key(combo: str, look: Look = "both") -> list:
 
 
 @server.tool(structured_output=False)
+def toggle_keyboard(look: Look = "both") -> list:
+    """Show or hide the iPhone's on-screen keyboard (it hides while phoneuse's
+    Bluetooth keyboard is connected). Useful to see suggestions or emoji."""
+    return _act(lambda h: h.cmd("eject"), look)
+
+
+@server.tool(structured_output=False)
 def open_app(name: str, look: Look = "both") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)

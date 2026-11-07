@@ -45,6 +45,9 @@ REPORT_MAP = bytes.fromhex(
     # whether iOS will place the AssistiveTouch pointer at exact coordinates.
     + "05010902a10185030901a1000509190129031500250195037501810295017505810305010930093115002"
     "6ff7f751095028102c0c0"
+    # Report 4: consumer control, one bit: Eject. On iOS it shows or hides the
+    # on-screen keyboard while a hardware keyboard (this one) is connected.
+    + "050c0901a10185041500250175019501" "09b88102" "95078103c0"
 )
 
 
@@ -150,6 +153,12 @@ class HID:
             time.sleep(0.02)
 
     # keyboard
+    def eject(self):
+        """Press and release Eject: toggles the iPhone's on-screen keyboard."""
+        self.send(4, [1])
+        time.sleep(0.05)
+        self.send(4, [0])
+
     def key(self, code, mods=0):
         self.send(1, [mods, 0, code, 0, 0, 0, 0, 0])
         time.sleep(0.012)
@@ -472,6 +481,9 @@ def run_command(line):
         return f"ok connected={hid.connected} peer={hid.peer} paired={paired_devices()}"
     if cmd == "connect":
         return "ok " + connect_out()
+    if cmd == "eject":
+        hid.eject()
+        return "ok"
     if cmd == "pair":
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)

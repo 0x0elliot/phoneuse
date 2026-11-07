@@ -50,6 +50,7 @@ class Pointer:
         self.scrolling = False  # the touch is a wheel scroll, not a held button
         self.scrolled_at = 0.0
         self.stopped = False
+        self.last_error = None
         threading.Thread(target=self._tick, daemon=True).start()
 
     def hover(self, fx, fy):
@@ -164,7 +165,9 @@ class Pointer:
                         self.touch[0] = clamp(self.touch[0] + moved * ux / mag / touch.SCREEN_PT[0])
                         self.touch[1] = clamp(self.touch[1] + moved * uy / mag / touch.SCREEN_PT[1])
             except Exception as e:
-                self.log("pointer error:", e)
+                if str(e) != self.last_error:  # say it once, not every tick
+                    self.log("pointer error:", e)
+                    self.last_error = str(e)
                 time.sleep(0.5)
 
 

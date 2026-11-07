@@ -100,6 +100,7 @@ try is enough.
 | Control Center / Notification Center | `phoneuse control-center` · `phoneuse notifications` |
 | Close those overlays | `phoneuse dismiss` (Cmd+H does not close them) |
 | Type text / keys | `phoneuse type "hello\n"` · `phoneuse key cmd+space` |
+| Show / hide the iPhone keyboard | `phoneuse keyboard` (Eject; it hides while phoneuse's keyboard is connected) |
 | Where is the pointer | `phoneuse where` |
 
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read
