@@ -6,6 +6,8 @@ Setup and running:
                                config, and the local vision models
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse status               Bluetooth link and mirror window
+  phoneuse view [--print]       open the browser mirror (http://localhost:PORT) in the
+                               default browser; --print only prints its address
 
 Agent commands. Coordinates are fractions (0..1) of the screenshot, or phone
 points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
@@ -37,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 from . import screen, touch
 from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
@@ -185,7 +188,7 @@ def screenshot(path, park=True):
     from PIL import Image
     import io
     w, hgt = Image.open(io.BytesIO(png)).size
-    print(f"{path} ({w}x{hgt} px = 402x874 pt; tap with fractions of this image or points)")
+    print(f"{path} ({w}x{hgt} px = {PT[0]}x{PT[1]} pt; tap with fractions of this image or points)")
 
 
 # ---------- vision (OCR + grounding, see vision.py) ----------
@@ -354,6 +357,18 @@ def status():
         print(f"Mirror window: none (run `phoneuse up`, then Screen Mirroring > {NAME} on the iPhone)")
 
 
+def view(print_only):
+    """The browser mirror's address; opens it in the default browser unless print_only."""
+    url = f"http://localhost:{CFG['web_port']}"
+    try:
+        urllib.request.urlopen(url, timeout=2).close()
+    except OSError:
+        die(f"The browser mirror isn't running at {url}. Start `phoneuse up`.")
+    if not print_only:
+        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(url)
+
+
 def main():
     a = sys.argv[1:]
     if not a or a[0] in ("-h", "--help", "help"):
@@ -373,6 +388,8 @@ def main():
         return up()
     if cmd == "status":
         return status()
+    if cmd == "view":
+        return view("--print" in args)
     if cmd == "text":
         return text_cmd(args)
     if cmd == "find":

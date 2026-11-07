@@ -11,7 +11,8 @@ encodes that frame again as a keyframe, so the tab shows the phone right away.
 Each tab gets encoded frames over a WebSocket and decodes them itself
 (WebCodecs). Mouse and keyboard events come back over the same WebSocket and
 go to the phone through pointer.py, like the mirror window's. Input is only
-accepted while the phone is mirroring and the tab is showing it.
+accepted while the phone is mirroring and the tab is showing it. /screen.png
+serves the last frame for `phoneuse screenshot`.
 
 Listens on 127.0.0.1 only: anyone who can open the page can control the phone.
 """
@@ -63,13 +64,22 @@ class Stream:
         self.caps = None
         self.frames_at = 0.0  # when the last frame arrived from the phone
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
-        # One pipeline for both halves, so the decoder and encoder share a GPU context.
+        download = "cudadownload ! " if dec.startswith("nvh264dec") else ""
+        w, h = SCREEN_PT[0] * 2, SCREEN_PT[1] * 2  # screenshots at 2 px per phone point
+        self.shot_lock = threading.Lock()
+        # One pipeline for all three parts (decode, encode for browsers, screenshots),
+        # so they share one GPU context.
         self.pipe = Gst.parse_launch(
             f'udpsrc address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{rtp}" '
             f"! rtph264depay ! h264parse ! {dec} ! appsink name=raw sync=false async=false emit-signals=true "
             f"appsrc name=src is-live=true format=time do-timestamp=true "
             f"! {encoder(dec)} ! h264parse ! video/x-h264,stream-format=byte-stream,alignment=au "
-            f"! appsink name=enc sync=false async=false emit-signals=true")
+            f"! appsink name=enc sync=false async=false emit-signals=true "
+            f"appsrc name=shot format=time do-timestamp=true ! {download}videoconvert ! videoscale "
+            f"! video/x-raw,format=RGB,width={w},height={h} ! pngenc compression-level=1 "
+            f"! appsink name=png sync=false async=false max-buffers=1 drop=true")
+        self.shot = self.pipe.get_by_name("shot")
+        self.png = self.pipe.get_by_name("png")
         self.src = self.pipe.get_by_name("src")
         self.enc = self.pipe.get_by_name("enc")
         self.pipe.get_by_name("raw").connect("new-sample", self._decoded)
@@ -84,6 +94,7 @@ class Stream:
         if self.caps is None or not sample.get_caps().is_equal(self.caps):
             self.caps = sample.get_caps()
             self.src.set_property("caps", self.caps)
+            self.shot.set_property("caps", self.caps)
         self.last = sample.get_buffer()
         self.frames_at = time.time()
         self.src.emit("push-buffer", self.last.copy())
@@ -102,6 +113,20 @@ class Stream:
         self.enc.send_event(GstVideo.video_event_new_upstream_force_key_unit(Gst.CLOCK_TIME_NONE, True, 0))
         if self.last is not None:
             self.src.emit("push-buffer", self.last.copy())
+
+    def screenshot(self):
+        """PNG of the last frame, or None while there is none."""
+        with self.shot_lock:
+            if self.last is None:
+                return None
+            while self.png.emit("try-pull-sample", 0):  # drop a stale one
+                pass
+            self.shot.emit("push-buffer", self.last.copy())
+            sample = self.png.emit("try-pull-sample", 2 * Gst.SECOND)
+            if sample is None:
+                return None
+            buf = sample.get_buffer()
+            return buf.extract_dup(0, buf.get_size())
 
     def forget(self):
         """Mirroring ended: the last frame no longer shows the phone."""
@@ -249,8 +274,18 @@ def app(mirror):
             log("tab left;", len(mirror.tabs), "open")
         return sock
 
+    async def shot(_req):
+        # The phone's screen as PNG, for `phoneuse screenshot` (works even when the
+        # mirror window is covered). Only while the phone is mirroring.
+        png = await asyncio.get_running_loop().run_in_executor(None, mirror.stream.screenshot) \
+            if mirror.live() else None
+        if png is None:
+            return web.Response(status=503, text="not mirroring")
+        return web.Response(body=png, content_type="image/png", headers={"Cache-Control": "no-store"})
+
     a = web.Application()
     a.router.add_get("/", page)
+    a.router.add_get("/screen.png", shot)
     a.router.add_get("/ws", ws)
     return a
 

@@ -10,11 +10,12 @@ import json
 import os
 import socket
 import subprocess
+import urllib.request
 
 import numpy as np
 from PIL import Image
 
-from .config import PHONE_ASPECT
+from .config import CFG, PHONE_ASPECT
 
 MIRROR_CLASS = "phoneuse-mirror"  # window class (Wayland app id) of the mirror window, window.py
 RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.py shows it
@@ -134,8 +135,14 @@ def picture_rect(at, size):
 
 
 def grab_png():
-    """PNG of the phone picture. Captures that area of the screen, so the mirror
-    window must not be covered by other windows."""
+    """PNG of the phone's screen. From the browser mirror's server when it runs
+    (the last decoded frame, so windows on top don't matter); otherwise a capture
+    of the mirror window's area of the screen, which must not be covered."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CFG['web_port']}/screen.png", timeout=4) as r:
+            return r.read()
+    except OSError:
+        pass
     x, y, w, h = picture_rect(*mirror_window())
     return subprocess.check_output(["grim", "-g", f"{round(x)},{round(y)} {round(w)}x{round(h)}", "-"])
 
