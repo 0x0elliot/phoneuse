@@ -10,15 +10,15 @@ import json
 import os
 import socket
 import subprocess
-import urllib.request
 
 import numpy as np
 from PIL import Image
 
-from .config import CFG, PHONE_ASPECT
+from .config import HUB_SOCKET, PHONE_ASPECT
 
 MIRROR_CLASS = "phoneuse-mirror"  # window class (Wayland app id) of the mirror window, window.py
-RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.py shows it
+HUB_RTP_PORT = 5590  # UxPlay sends the phone's video here, to the hub (hub.py)
+RTP_PORT = 5600  # the hub sends it on here, for the mirror window (window.py)
 WEB_RTP_PORT = 5602  # ...and here, for the browser mirror (web.py)
 AIRPLAY_MIRROR_PORT = 7100  # UxPlay's mirroring stream port; a connection on it = the phone is mirroring
 # The window's title says whether it shows the phone: input is only forwarded
@@ -102,6 +102,19 @@ def mirror_live(client=None):
     return bool(client) and client["title"] == TITLE_LIVE
 
 
+def hub_request(cmd, timeout=3.0):
+    """One control request to the video hub (hub.py); returns (reply line, payload)."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    s.connect(HUB_SOCKET)
+    with s:
+        s.sendall(cmd.encode() + b"\n")
+        f = s.makefile("rb")
+        line = f.readline().decode().strip()
+        data = f.read(int(line.split()[1])) if cmd == "shot" and line.startswith("ok ") else b""
+        return line, data
+
+
 def mirror_client():
     return next((c for c in hypr("j/clients") if c["class"] == MIRROR_CLASS), None)
 
@@ -135,12 +148,13 @@ def picture_rect(at, size):
 
 
 def grab_png():
-    """PNG of the phone's screen. From the browser mirror's server when it runs
-    (the last decoded frame, so windows on top don't matter); otherwise a capture
-    of the mirror window's area of the screen, which must not be covered."""
+    """PNG of the phone's screen. From the video hub when it runs (its last
+    decoded frame, so windows on top don't matter); otherwise a capture of the
+    mirror window's area of the screen, which must not be covered."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{CFG['web_port']}/screen.png", timeout=4) as r:
-            return r.read()
+        line, png = hub_request("shot")
+        if line.startswith("ok"):
+            return png
     except OSError:
         pass
     x, y, w, h = picture_rect(*mirror_window())

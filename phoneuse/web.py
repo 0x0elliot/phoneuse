@@ -1,18 +1,13 @@
 """The browser mirror: the phone's screen, with mouse and keyboard, on a local
 web page (http://localhost:PORT, `web_port` in config.toml).
 
-UxPlay sends the phone's H.264 stream here as RTP over localhost, as it does to
-the mirror window. iOS sends a full keyframe only when mirroring starts, so a
-browser tab that opens later couldn't decode the original stream. This server
-therefore decodes the stream once and encodes it again for browsers (NVENC
-when available). It keeps the last decoded frame, and when a tab joins it
-encodes that frame again as a keyframe, so the tab shows the phone right away.
+The video comes from the hub (hub.py) as RTP over localhost. When a tab joins,
+this server asks the hub for a keyframe, so the tab shows the phone right away.
 
 Each tab gets encoded frames over a WebSocket and decodes them itself
 (WebCodecs). Mouse and keyboard events come back over the same WebSocket and
 go to the phone through pointer.py, like the mirror window's. Input is only
-accepted while the phone is mirroring and the tab is showing it. /screen.png
-serves the last frame for `phoneuse screenshot`.
+accepted while the phone is mirroring and the tab is showing it.
 
 Listens on 127.0.0.1 only: anyone who can open the page can control the phone.
 """
@@ -26,12 +21,11 @@ import time
 import gi
 
 gi.require_version("Gst", "1.0")
-gi.require_version("GstVideo", "1.0")
-from gi.repository import Gst, GstVideo  # noqa: E402
+from gi.repository import Gst  # noqa: E402
 from aiohttp import web  # noqa: E402
 
 from . import screen  # noqa: E402
-from .config import CFG, NAME, SCREEN_PT, decoder  # noqa: E402
+from .config import CFG, NAME, SCREEN_PT  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
 
@@ -45,65 +39,23 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), "web:", *a, flush=True)
 
 
-def encoder(dec):
-    """H.264 encoder for browsers: no B-frames or lookahead (each frame leaves
-    the encoder as soon as it is encoded), keyframes only on request, high
-    quality for text."""
-    if dec.startswith("nvh264dec"):
-        return ("nvh264enc preset=p4 tune=ultra-low-latency zerolatency=true bframes=0 gop-size=-1 "
-                "rc-mode=vbr const-quality=20 max-bitrate=40000 repeat-sequence-header=true")
-    return "x264enc tune=zerolatency speed-preset=veryfast key-int-max=0 pass=quant quantizer=20"
-
-
 class Stream:
-    """Decode the phone's stream, keep the last frame, encode for browsers."""
+    """The hub's stream (hub.py), as H.264 access units for the tabs."""
 
-    def __init__(self, dec, on_frame):
+    def __init__(self, on_frame):
         self.on_frame = on_frame  # (bytes, is_keyframe), called from a GStreamer thread
-        self.last = None  # last decoded frame (a Gst.Buffer)
-        self.caps = None
-        self.frames_at = 0.0  # when the last frame arrived from the phone
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
-        # System-memory output: in CUDA output mode NVDEC hands out its own decode
-        # surfaces, which iOS's long reference chains reuse while we still hold
-        # them (green smears). Copying out costs ~1 ms per frame.
-        download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
-        w, h = SCREEN_PT[0] * 2, SCREEN_PT[1] * 2  # screenshots at 2 px per phone point
-        self.shot_lock = threading.Lock()
-        # One pipeline for all three parts (decode, encode for browsers, screenshots),
-        # so they share one GPU context.
         self.pipe = Gst.parse_launch(
             f'udpsrc address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{rtp}" '
-            f"! rtph264depay ! h264parse ! {dec} ! {download}appsink name=raw sync=false async=false emit-signals=true "
-            f"appsrc name=src is-live=true format=time do-timestamp=true "
-            f"! {encoder(dec)} ! h264parse ! video/x-h264,stream-format=byte-stream,alignment=au "
-            f"! appsink name=enc sync=false async=false emit-signals=true "
-            f"appsrc name=shot format=time do-timestamp=true ! videoconvert ! videoscale "
-            f"! video/x-raw,format=RGB,width={w},height={h} ! pngenc compression-level=1 "
-            f"! appsink name=png sync=false async=false max-buffers=1 drop=true")
-        self.shot = self.pipe.get_by_name("shot")
-        self.png = self.pipe.get_by_name("png")
-        self.src = self.pipe.get_by_name("src")
-        self.enc = self.pipe.get_by_name("enc")
-        self.pipe.get_by_name("raw").connect("new-sample", self._decoded)
-        self.enc.connect("new-sample", self._encoded)
+            "! rtph264depay ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au "
+            "! appsink name=enc sync=false async=false emit-signals=true")
+        self.pipe.get_by_name("enc").connect("new-sample", self._frame)
         bus = self.pipe.get_bus()
         bus.add_signal_watch()
         bus.connect("message::error", self._error)
         self.pipe.set_state(Gst.State.PLAYING)
 
-    def _decoded(self, sink):
-        sample = sink.emit("pull-sample")
-        if self.caps is None or not sample.get_caps().is_equal(self.caps):
-            self.caps = sample.get_caps()
-            self.src.set_property("caps", self.caps)
-            self.shot.set_property("caps", self.caps)
-        self.last = sample.get_buffer()
-        self.frames_at = time.time()
-        self.src.emit("push-buffer", self.last.copy())
-        return Gst.FlowReturn.OK
-
-    def _encoded(self, sink):
+    def _frame(self, sink):
         buf = sink.emit("pull-sample").get_buffer()
         ok, info = buf.map(Gst.MapFlags.READ)
         if ok:
@@ -111,29 +63,13 @@ class Stream:
             buf.unmap(info)
         return Gst.FlowReturn.OK
 
-    def keyframe(self):
-        """Encode the last frame again, as a keyframe (a tab just joined)."""
-        self.enc.send_event(GstVideo.video_event_new_upstream_force_key_unit(Gst.CLOCK_TIME_NONE, True, 0))
-        if self.last is not None:
-            self.src.emit("push-buffer", self.last.copy())
-
-    def screenshot(self):
-        """PNG of the last frame, or None while there is none."""
-        with self.shot_lock:
-            if self.last is None:
-                return None
-            while self.png.emit("try-pull-sample", 0):  # drop a stale one
-                pass
-            self.shot.emit("push-buffer", self.last.copy())
-            sample = self.png.emit("try-pull-sample", 2 * Gst.SECOND)
-            if sample is None:
-                return None
-            buf = sample.get_buffer()
-            return buf.extract_dup(0, buf.get_size())
-
-    def forget(self):
-        """Mirroring ended: the last frame no longer shows the phone."""
-        self.last = None
+    @staticmethod
+    def keyframe():
+        """Ask the hub for a keyframe (a tab joined or its decoder started over)."""
+        try:
+            screen.hub_request("keyframe")
+        except OSError as e:
+            log("hub:", e)
 
     def _error(self, _bus, msg):
         err, _ = msg.parse_error()
@@ -141,11 +77,12 @@ class Stream:
 
 
 class Mirror:
-    def __init__(self, dec):
+    def __init__(self):
         self.loop = None
         self.tabs = set()
-        self.stream = Stream(dec, self._frame)
+        self.stream = Stream(self._frame)
         self.mirroring = False
+        self.hub_live = False
         self.hid = None
 
     def get_hid(self):
@@ -154,7 +91,7 @@ class Mirror:
         return self.hid
 
     def live(self):
-        return self.mirroring and self.stream.last is not None
+        return self.mirroring and self.hub_live
 
     def _frame(self, data, key):
         self.loop.call_soon_threadsafe(self._send_frame, data, key)
@@ -167,20 +104,25 @@ class Mirror:
                 tab.send(bytes([1 if key else 0]) + data)
 
     async def watch(self):
-        # Follow whether the phone is mirroring (the same check as the window's).
+        # Stay subscribed to the hub, and follow whether the phone is mirroring and
+        # the hub has a picture of it.
+        loop = asyncio.get_running_loop()
+        joined = False
         while True:
-            now = screen.airplay_mirroring()
-            if now != self.mirroring:
-                self.mirroring = now
-                if not now:
-                    self.stream.forget()
-                for tab in list(self.tabs):
+            try:
+                line, _ = await loop.run_in_executor(None, screen.hub_request, f"{'keep' if joined else 'join'} {RTP_PORT}")
+                joined = line.startswith("ok")
+                line, _ = await loop.run_in_executor(None, screen.hub_request, "status")
+                self.hub_live = "live=1" in line
+            except OSError:
+                joined, self.hub_live = False, False  # the hub is (re)starting
+            mirroring = screen.airplay_mirroring()
+            changed = mirroring != self.mirroring
+            self.mirroring = mirroring
+            for tab in list(self.tabs):
+                if changed or tab.told_live != self.live():
                     tab.state()
-            elif now:
-                for tab in list(self.tabs):
-                    if tab.told_live != self.live():
-                        tab.state()
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.5)
 
 
 class Tab:
@@ -258,7 +200,7 @@ def app(mirror):
         return web.FileResponse(PAGE, headers={"Cache-Control": "no-cache"})
 
     async def ws(req):
-        sock = web.WebSocketResponse(max_msg_size=1 << 16)
+        sock = web.WebSocketResponse(max_msg_size=1 << 16, heartbeat=20)
         await sock.prepare(req)
         tab = Tab(mirror, sock)
         mirror.tabs.add(tab)
@@ -281,26 +223,15 @@ def app(mirror):
             log("tab left;", len(mirror.tabs), "open")
         return sock
 
-    async def shot(_req):
-        # The phone's screen as PNG, for `phoneuse screenshot` (works even when the
-        # mirror window is covered). Only while the phone is mirroring.
-        png = await asyncio.get_running_loop().run_in_executor(None, mirror.stream.screenshot) \
-            if mirror.live() else None
-        if png is None:
-            return web.Response(status=503, text="not mirroring")
-        return web.Response(body=png, content_type="image/png", headers={"Cache-Control": "no-store"})
-
     a = web.Application()
     a.router.add_get("/", page)
-    a.router.add_get("/screen.png", shot)
     a.router.add_get("/ws", ws)
     return a
 
 
 def main():
     Gst.init(None)
-    dec = os.environ.get("PHONEUSE_DECODER") or decoder()
-    mirror = Mirror(dec)
+    mirror = Mirror()
     # GStreamer's bus signals need a GLib main loop; run one beside asyncio.
     from gi.repository import GLib
     threading.Thread(target=GLib.MainLoop().run, daemon=True).start()

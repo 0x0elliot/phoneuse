@@ -52,10 +52,9 @@ PT = SCREEN_PT
 LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-action")
 MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
 # UxPlay receives AirPlay and passes the phone's H.264 stream on as RTP to the
-# mirror window (window.py) and the browser mirror (web.py).
+# video hub (hub.py), which serves the mirror window and the browser mirror.
 MIRROR_ARGS = ["uxplay", "-p", "-n", NAME,
-               "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! multiudpsink sync=false "
-                        f"clients=127.0.0.1:{screen.RTP_PORT},127.0.0.1:{screen.WEB_RTP_PORT}",
+               "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! udpsink host=127.0.0.1 port={screen.HUB_RTP_PORT} sync=false",
                "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
@@ -267,6 +266,19 @@ def up():
     stop = threading.Event()
     procs = {}
 
+    def keep_hub():
+        # The video hub (hub.py): decodes the phone's stream and serves it to the
+        # window and the browser mirror. Started first; rarely restarts.
+        while not stop.is_set():
+            procs["hub"] = subprocess.Popen([sys.executable, "-m", "phoneuse.hub"], cwd=ROOT)
+            rc = procs["hub"].wait()
+            if stop.is_set():
+                break
+            print(time.strftime("%H:%M:%S"), f"video hub exited ({rc}); starting it again. "
+                  "Reconnect Screen Mirroring on the iPhone.", flush=True)
+            time.sleep(1)
+    threading.Thread(target=keep_hub, daemon=True).start()
+
     def keep_window():
         # The mirror window (window.py) outlives UxPlay restarts and phone
         # reconnects; it waits for the next stream by itself.
@@ -334,7 +346,7 @@ def up():
         stop.set()
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        for name in ("mirror", "window", "web"):
+        for name in ("mirror", "window", "web", "hub"):
             p = procs.get(name)
             if p and p.poll() is None:
                 p.terminate()

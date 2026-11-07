@@ -1,8 +1,9 @@
 """The mirror window: an ordinary window filled with a dark bezel, with the
 phone picture in the middle.
 
-UxPlay sends the phone's H.264 stream here as RTP over localhost (its -vrtp
-option); this process decodes it and draws each frame. Hyprland draws its usual
+The video hub (hub.py) sends the phone's H.264 stream here as RTP over
+localhost, starting with a keyframe when this window joins; this process decodes
+it and draws each frame. Hyprland draws its usual
 decorations around it; a Hyprland rule floats the window and keeps the aspect
 ratio when you resize it. If the window is resized to another shape anyway, the
 phone is drawn aspect-fit and centered, never stretched.
@@ -13,6 +14,8 @@ from /dev/input); presses on the bezel become touches at the nearest screen edge
 import os
 import subprocess
 import sys
+import threading
+import time
 
 import gi
 
@@ -152,6 +155,19 @@ class Mirror(Gtk.Application):
         self.start()
         win.present()
         GLib.timeout_add(500, self.phone.check_mirroring)
+        threading.Thread(target=self.stay_joined, daemon=True).start()
+
+    def stay_joined(self):
+        """Subscribe to the hub's stream and keep the subscription alive. The first
+        join (and any after the hub restarts) brings a keyframe."""
+        joined = False
+        while True:
+            try:
+                line, _ = screen.hub_request(f"{'keep' if joined else 'join'} {RTP_PORT}")
+                joined = line.startswith("ok")
+            except OSError:
+                joined = False
+            time.sleep(2)
 
     def start(self):
         self.pipe = Gst.parse_launch(pipeline_desc(self.dec))

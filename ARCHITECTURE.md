@@ -38,8 +38,8 @@ would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".
 
 **`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay), the
-mirror window, the browser mirror and the mirror input handler, and restarts any
-of them that exits. The mirror input
+video hub, the mirror window, the browser mirror and the mirror input handler,
+and restarts any of them that exits. The mirror input
 handler is a separate process that reloads when its code changes, so edits don't
 drop the AirPlay connection.
 
@@ -60,89 +60,46 @@ phone: hover, press, drag and release, as described under "What iOS does with
 mouse input" below. The mirror window's input handler and the browser
 mirror both use it, so both behave the same.
 
-**`phoneuse/web.py`** is the browser mirror at http://localhost:8777. UxPlay
-sends it the same RTP stream as the mirror window. Because iOS sends a full
-keyframe only when mirroring starts, a tab opened later couldn't decode that
-stream. The server therefore decodes it once and encodes it again with NVENC
-(x264 without an NVIDIA GPU): no B-frames, keyframes only on request. It keeps
-the last decoded frame, and when a tab joins, it encodes that frame again as a
-keyframe, so the tab shows the phone at once. Tabs receive encoded frames over
-a WebSocket, decode them with WebCodecs (`phoneuse/web/index.html`) and send
-pointer and key events back. The server listens on 127.0.0.1 only and accepts
-input only while the phone is mirroring and the tab is showing it.
+**`phoneuse/hub.py`** is the video hub. UxPlay sends the phone's stream to it,
+and it serves the mirror window and the browser mirror. iOS sends a full
+keyframe only when mirroring starts (a measured minute of use had none), so
+anything that starts later couldn't decode the phone's own stream. The hub
+decodes the stream once, keeps the last frame, and encodes it again with NVENC
+(x264 without an NVIDIA GPU): no B-frames, keyframes only on request. When a
+viewer joins, including a mirror window or browser server that just restarted,
+the hub encodes its last frame again as a keyframe, so the viewer shows the
+phone at once. It also hands out that frame as a PNG for `phoneuse screenshot`,
+so screenshots don't depend on the mirror window being uncovered. NVDEC copies
+each frame into system memory here: in CUDA output mode it hands out its own
+decode surfaces, which iOS's long reference chains reuse while the hub still
+holds the last one, and that smeared green over the picture.
 
-**`phoneuse/touch.py`** holds the gesture code used by agents (tap, long press,
-swipe) and the measured table of how far iOS moves the pointer for each report
-size.
-
-**`phoneuse/screen.py`** finds the mirror window, captures the phone picture with
-`grim`, and finds the orange pointer in a screenshot by its size and hollow
-shape.
-
-**`phoneuse/vision.py`** is an optional local service, started on first use, that
-keeps two models loaded: RapidOCR with PP-OCRv6 for `phoneuse text` (every text
-line with its position) and GoClick-Large, a 0.8B GUI grounding model, for
-`phoneuse find` and `tap-on` ("Settings app icon" → a position). Reading a
-screen as text costs an agent a few hundred tokens instead of about 1,300 for a
-screenshot image.
-
-## What iOS does with mouse input
-
-iOS has no remote-control API and ignores HID touchscreens, so phoneuse is a
-mouse, and iOS's AssistiveTouch turns mouse input into touches. Everything
-below was measured on a real iPhone, mostly with `touchlab/`, a page that logs
-the touch events Safari receives. When a guess and a measurement disagreed, the
-measurement won, and several early guesses were wrong.
-
-- **The absolute pointer lands exactly** where it's told, anywhere on the
-  screen, within about half a percent. Hover and taps use it directly, with no
-  calibration.
-- **Presses only count from the absolute pointer.** A button press in a relative
-  report does nothing.
-- **An absolute position change while the button is held ends the touch** after
-  about 90 ms, and it reads as a click. So a press must go down exactly where the
-  pointer already is (the last hover position), and the release must happen
-  where the touch is.
-- **Drags therefore use relative motion.** After the absolute press, the touch
-  follows relative reports. Those reports carry no button state: a button in a
-  relative report reads as a second press or release, which gave double clicks.
-- **iOS accelerates relative motion** by report size and drops motion from
-  reports less than about 8 ms apart. Drags send exactly one report every 8 ms,
-  empty ones included (slow drags die without them), sized from the measured
-  table so the touch moves exactly as far as the cursor did. Sizes round down,
-  because overshooting and correcting made the pointer vibrate. In touchlab, a
-  175-point drag lands at 175 points.
-- **The iPhone may poll the Bluetooth link only every ~50 ms**, which caps input
-  at about 20 reports a second and makes the pointer crawl. The daemon asks for an
-  8 ms poll interval with an HCI QoS Setup on every connection and every 20
-  seconds, which brings acknowledgements to about 2 ms apart.
-- **The daemon reconnects by itself.** While the iPhone is disconnected, it pages
-  the phone with a pause between tries that grows from 5 to 30 seconds, because
-  paging nonstop keeps the radio busy and makes it miss the iPhone's own
-  connection attempts. A dropped link, a command sent while disconnected, or
-  BlueZ seeing the phone connect cuts the pause short.
-- **Some gestures are iOS's own.** Dragging along the page dots above the dock
-  scrubs through home screen pages, with a click per page, and tapping the
-  Dynamic Island opens a popup with a Stop Mirroring button. `docs/RECIPES.md`
-  lists the gestures that work for agents.
+**`phoneuse/web.py`** is the browser mirror at http://localhost:8777. It takes
+the hub's stream and passes the encoded frames to each tab over a WebSocket,
+asking the hub for a keyframe when a tab joins. Tabs decode with WebCodecs
+(`phoneuse/web/index.html`) and send pointer and key events back. The server
+listens on 127.0.0.1 only and accepts input only while the phone is mirroring
+and the tab is showing it.
 
 ## The mirror
 
 UxPlay receives the AirPlay stream and passes the H.264 video on, undecoded, as
-RTP over localhost (`-vrtp`, port 5600). The mirror window decodes it with
-GStreamer and draws each frame as soon as it is decoded (`sync=false`), on the
-GPU when NVDEC is available. Drawing in our own window lets the window be
-resized and styled freely; UxPlay's own GL window crashed when resized. The
-window stays open across UxPlay restarts and reconnects. If the window itself
-restarts, it shows nothing until Screen Mirroring is reconnected, because iOS
-sends a full keyframe only when mirroring starts.
+RTP over localhost (`-vrtp`) to the hub, which sends its own stream on to the
+mirror window (port 5600) and the browser mirror (5602). The mirror window
+decodes it with GStreamer and draws each frame as soon as it is decoded
+(`sync=false`), on the GPU when NVDEC is available. Drawing in our own window
+lets the window be resized and styled freely; UxPlay's own GL window crashed
+when resized. The window and the browser mirror can restart at any time: they
+get a keyframe from the hub when they join. Only a restart of the hub itself
+needs Screen Mirroring reconnected.
 
 iOS sends a frame only when the screen changes, and its stream doesn't declare
 that frames never need reordering. A default H.264 decoder therefore keeps each
 frame until the next one arrives, which GStreamer's latency tracer measured at
 200 ms. `nvh264dec compliance=flexible` releases frames in about 1 ms, and the
-software decoder does too. A pointer move now shows up in the mirror about
-100 ms later, most of it the phone encoding and sending the video.
+software decoder does too. A pointer move shows up in the mirror about 100 ms
+later, most of it the phone encoding and sending the video; the hub's second
+encode adds roughly 15 ms (two samples, 117 ms against 101 ms).
 
 Audio comes along with the mirror. The playback buffer is kept at 40 ms instead
 of the sink's default of up to 200 ms.
