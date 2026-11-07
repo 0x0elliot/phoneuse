@@ -1,27 +1,26 @@
 ---
-name: iphone
-description: See and operate the user's iPhone from this Linux PC with the `phone` CLI (AirPlay mirror for the screen, Bluetooth mouse/keyboard for input). Use when a task needs the iPhone: open or use an app, read what is on the phone screen, tap, type, swipe, check a notification, change a phone setting, or test something on the device. Also use when the mirror or the Bluetooth link needs starting or fixing.
+name: airwisp
+description: See and operate the user's iPhone from this Linux PC with the `airwisp` CLI (AirPlay mirror for the screen, Bluetooth mouse/keyboard for input). Use when a task needs the iPhone: open or use an app, read what is on the airwisp screen, tap, type, swipe, check a notification, change a airwisp setting, or test something on the device. Also use when the mirror or the Bluetooth link needs starting or fixing.
 ---
 
-# Operating the iPhone
+# Operating the iPhone with airwisp
 
-The `phone` command (`~/.local/bin/phone`, code in `~/iphone-hid`) drives a real,
-unmodified iPhone. Its screen arrives as an AirPlay mirror window on this PC, and
+The `airwisp` command drives a real, unmodified iPhone. Its screen arrives as an AirPlay mirror window on this PC, and
 input goes in as a Bluetooth mouse and keyboard. Everything an agent does is a
-`phone` subcommand; run `phone --help` for the full list.
+`airwisp` subcommand; run `airwisp --help` for the full list.
 
 ## Before acting
 
-1. Run `phone status`. You need `HID service: active`, `connected=True`, and a
+1. Run `airwisp status`. You need `HID service: active`, `connected=True`, and a
    line `Mirror window: [x, y] [w, h]` (not "none").
-2. No mirror window: check whether `phone up` is running (it lives in the user's tmux
+2. No mirror window: check whether `airwisp up` is running (it lives in the user's tmux
    session `mirror`, window 0). If it isn't, start it there with
-   `tmux send-keys -t mirror:0 'phone up' Enter`, not in the background, so the user
+   `tmux send-keys -t mirror:0 'airwisp up' Enter`, not in the background, so the user
    can see it. Then ask the user to start Screen Mirroring to "Linux" from the iPhone's
    Control Center. You can't start mirroring from the PC.
-3. `connected=False`: run `phone status` again after a few seconds (the daemon
-   reconnects), then ask the user to tap "iphone-hid" in the iPhone's Bluetooth settings.
-4. HID service not active: `phone install` (needs sudo) sets it up.
+3. `connected=False`: run `airwisp status` again after a few seconds (the daemon
+   reconnects), then ask the user to tap "airwisp" in the iPhone's Bluetooth settings.
+4. HID service not active: `airwisp install` (needs sudo) sets it up.
 
 ## The loop
 
@@ -29,31 +28,31 @@ Look, decide, act, look again. Look with text first; it costs a few hundred
 tokens, where a screenshot image costs about 1,300.
 
 ```bash
-phone text                         # every text line on screen: "x y  text"
-phone tap-on "Wi-Fi"               # find an element by description and tap it
-phone find "clear search (X) button"   # just the position, to tap or swipe yourself
+airwisp text                         # every text line on screen: "x y  text"
+airwisp tap-on "Wi-Fi"               # find an element by description and tap it
+airwisp find "clear search (X) button"   # just the position, to tap or swipe yourself
 ```
 
-`phone text` and `phone find` run local models (PP-OCRv6 OCR and the GoClick
+`airwisp text` and `airwisp find` run local models (PP-OCRv6 OCR and the GoClick
 grounding model) through a service that starts on first use (first call takes
 a few seconds). `find` and `tap-on` take plain descriptions, including icons
 without text ("Settings app icon", "back button", "share button").
 
 `find` always returns a position, even when the element isn't on screen, so
-confirm with `phone text` (or a screenshot) when it matters. `tap-on` refuses
+confirm with `airwisp text` (or a screenshot) when it matters. `tap-on` refuses
 targets in the status bar, where such misses tend to land.
 
 Take a real screenshot when text isn't enough: pictures, icon-only screens,
 checking a layout, or when `find` lands somewhere surprising.
 
 ```bash
-phone screenshot $SCRATCH/s1.png   # then look at the image with the Read tool
-phone tap 0.5 0.35                 # fractions of the screenshot (x, y)
-phone screenshot $SCRATCH/s2.png   # waits out the ~0.5 s mirror lag by itself
+airwisp screenshot $SCRATCH/s1.png   # then look at the image with the Read tool
+airwisp tap 0.5 0.35                 # fractions of the screenshot (x, y)
+airwisp screenshot $SCRATCH/s2.png   # waits out the ~0.5 s mirror lag by itself
 ```
 
 Write screenshots into your own scratch directory with a new name each time,
-so you never read a stale image. `phone screenshot` moves the orange pointer to
+so you never read a stale image. `airwisp screenshot` moves the orange pointer to
 the left edge first so it doesn't cover text (`--keep-pointer` to see where the
 pointer is). The grey AssistiveTouch button near the lower right stays on screen
 and can hide what is under it; scroll a little if you need that spot.
@@ -67,27 +66,27 @@ try is enough.
 
 | Goal | Command |
 |---|---|
-| Open an app | `phone open Settings` (Cmd+H, Cmd+Space, type the name, Enter) |
-| Tap / long press | `phone tap X Y` · `phone longpress X Y [seconds]` |
-| Swipe or drag | `phone swipe X0 Y0 X1 Y1 [seconds]` |
-| Scroll | `phone scroll down [N]` · `phone scroll up [N]` (N half-screens) |
-| Back | `phone back` (finger sliding in from the very left edge) |
-| Home | `phone home` |
-| App switcher | `phone switcher` |
-| Control Center / Notification Center | `phone control-center` · `phone notifications` |
-| Close those overlays | `phone dismiss` (Cmd+H does not close them) |
-| Type text / keys | `phone type "hello\n"` · `phone key cmd+space` |
-| Where is the pointer | `phone where` |
+| Open an app | `airwisp open Settings` (Cmd+H, Cmd+Space, type the name, Enter) |
+| Tap / long press | `airwisp tap X Y` · `airwisp longpress X Y [seconds]` |
+| Swipe or drag | `airwisp swipe X0 Y0 X1 Y1 [seconds]` |
+| Scroll | `airwisp scroll down [N]` · `airwisp scroll up [N]` (N half-screens) |
+| Back | `airwisp back` (finger sliding in from the very left edge) |
+| Home | `airwisp home` |
+| App switcher | `airwisp switcher` |
+| Control Center / Notification Center | `airwisp control-center` · `airwisp notifications` |
+| Close those overlays | `airwisp dismiss` (Cmd+H does not close them) |
+| Type text / keys | `airwisp type "hello\n"` · `airwisp key cmd+space` |
+| Where is the pointer | `airwisp where` |
 
-`~/iphone-hid/RECIPES.md` explains why each gesture works the way it does. Read
-it before inventing a new gesture with `phone swipe`.
+``docs/RECIPES.md` in the airwisp repository` explains why each gesture works the way it does. Read
+it before inventing a new gesture with `airwisp swipe`.
 
 ## Apps reopen where they were left
 
-`phone open` brings an app back in whatever state it was last in: a detail
+`airwisp open` brings an app back in whatever state it was last in: a detail
 sheet, a settings sub-page, a half-scrolled list. Check the first screenshot
 before trusting what it shows. A sheet with an X or "Done" in a top corner is a
-leftover; close it, or `phone back` until you reach the app's main view.
+leftover; close it, or `airwisp back` until you reach the app's main view.
 
 ## Rules
 
@@ -104,14 +103,14 @@ leftover; close it, or `phone back` until you reach the app's main view.
   security setting, just as you would in a browser.
 - **Permission prompts** ("Allow notifications?" and the like) belong to the user.
   Leave them, or ask, unless the task is about that permission.
-- If the user is using the phone at the same time (the screen changes on its own), pause
+- If the user is using the airwisp at the same time (the screen changes on its own), pause
   and ask before continuing; both of you would be moving the same pointer.
 
 ## When something misbehaves
 
 - A tap or swipe seems to miss: take a fresh screenshot first. The mirror trails
-  the phone by about half a second, so an earlier screenshot may be stale.
-- The pointer isn't visible: `phone where` returns "not found". On the phone, under
+  the airwisp by about half a second, so an earlier screenshot may be stale.
+- The pointer isn't visible: `airwisp where` returns "not found". On the phone, under
   Accessibility → Pointer Control, the colour should be Orange (large) and
   Automatically Hide Pointer off.
 - Taps happen on their own wherever the pointer rests: Dwell Control is on. Ask
