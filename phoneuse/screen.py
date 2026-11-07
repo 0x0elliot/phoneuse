@@ -22,7 +22,7 @@ RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.p
 # Bezel around the picture in the mirror window, in units of the screen's width.
 # Presses on the bezel start edge swipes (mirror_input.py).
 BEZEL = 30 / 498
-SCREEN_RADIUS = 70 / 498  # the screen's corners, ~56 pt on the phone (superellipse, n = 3)
+SCREEN_RADIUS = 60 / 498  # the screen's corner radius, ~48 pt on the phone
 
 
 def _find_hyprland():

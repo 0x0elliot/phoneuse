@@ -10,21 +10,20 @@ phone is drawn aspect-fit and centered, never stretched.
 Mouse input over the window is handled by mirror_input.py (it reads the mouse
 from /dev/input); presses on the bezel become touches at the nearest screen edge.
 """
-import math
 import os
 import subprocess
 import sys
 
-import cairo
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gst", "1.0")
 gi.require_version("Graphene", "1.0")
+gi.require_version("Gsk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gdk, GLib, Graphene, Gst, Gtk, Pango, PangoCairo  # noqa: E402
+from gi.repository import Gdk, GLib, Graphene, Gsk, Gst, Gtk, Pango, PangoCairo  # noqa: E402
 
 from . import screen  # noqa: E402
 from .config import CFG, NAME, decoder  # noqa: E402
@@ -62,21 +61,6 @@ def pipeline_desc(dec):
             "! glsinkbin sink=\"gtk4paintablesink name=sink sync=false\"")
 
 
-def superellipse_rect(cr, x, y, w, h, r, n=3.0, steps=12):
-    """Path of a rectangle with superellipse corners (|x|^n + |y|^n = 1), the
-    shape of the phone's screen corners."""
-    pts = []
-    for cx, cy, q in ((x + w - r, y + r, 0), (x + w - r, y + h - r, 1), (x + r, y + h - r, 2), (x + r, y + r, 3)):
-        for i in range(steps + 1):
-            t = (q + i / steps) * math.pi / 2 - math.pi / 2
-            c, s = math.cos(t), math.sin(t)
-            pts.append((cx + r * math.copysign(abs(c) ** (2 / n), c), cy + r * math.copysign(abs(s) ** (2 / n), s)))
-    cr.move_to(*pts[0])
-    for p in pts[1:]:
-        cr.line_to(*p)
-    cr.close_path()
-
-
 class Phone(Gtk.Widget):
     """Fills the window with the bezel colour and draws the phone picture,
     aspect-fit, in the middle, with the screen's rounded corners."""
@@ -100,21 +84,20 @@ class Phone(Gtk.Widget):
         w, h = self.get_width(), self.get_height()
         sx, sy, sw, sh = screen.picture_rect((0, 0), (w, h))
         snap.append_color(BEZEL, Graphene.Rect().init(0, 0, w, h))
-        snap.append_color(BLACK, Graphene.Rect().init(sx, sy, sw, sh))
+        # the screen, clipped to its rounded corners
+        rect = Graphene.Rect().init(sx, sy, sw, sh)
+        clip = Gsk.RoundedRect()
+        clip.init_from_rect(rect, screen.SCREEN_RADIUS * sw)
+        snap.push_rounded_clip(clip)
+        snap.append_color(BLACK, rect)
         if not self.waiting:
-            snap.save()
             snap.translate(Graphene.Point().init(sx, sy))
             self.paintable.snapshot(snap, sw, sh)
-            snap.restore()
-        cr = snap.append_cairo(Graphene.Rect().init(sx, sy, sw, sh))
-        # round the screen's corners: bezel colour outside the superellipse
-        cr.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
-        cr.rectangle(sx, sy, sw, sh)
-        superellipse_rect(cr, sx, sy, sw, sh, screen.SCREEN_RADIUS * sw)
-        cr.set_source_rgba(BEZEL.red, BEZEL.green, BEZEL.blue, 1)
-        cr.fill()
+            snap.translate(Graphene.Point().init(-sx, -sy))
+        snap.pop()
         if not self.waiting:
             return
+        cr = snap.append_cairo(rect)
         # Until the first frame: how to start mirroring. Pango picks a fallback
         # font for any glyph the default font lacks.
         pl = PangoCairo.create_layout(cr)

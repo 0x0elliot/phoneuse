@@ -113,7 +113,10 @@ UxPlay receives the AirPlay stream and passes the H.264 video on, undecoded, as
 RTP over localhost (`-vrtp`, port 5600). The mirror window decodes it with
 GStreamer and draws each frame as soon as it is decoded (`sync=false`), on the
 GPU when NVDEC is available. Drawing in our own window lets the window be
-resized and styled freely; UxPlay's own GL window crashed when resized.
+resized and styled freely; UxPlay's own GL window crashed when resized. The
+window stays open across UxPlay restarts and reconnects. If the window itself
+restarts, it shows nothing until Screen Mirroring is reconnected, because iOS
+sends a full keyframe only when mirroring starts.
 
 iOS sends a frame only when the screen changes, and its stream doesn't declare
 that frames never need reordering. A default H.264 decoder therefore keeps each
