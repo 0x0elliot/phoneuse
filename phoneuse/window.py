@@ -95,6 +95,8 @@ class Phone(Gtk.Widget):
         # mirroring starts, so the next frame after that shows it.
         if not self.waiting and not screen.airplay_mirroring():
             self.set_waiting(True)
+        elif self.waiting:
+            self.queue_draw()  # the hint depends on whether the phone is mirroring
         return True
 
     def do_snapshot(self, snap):
@@ -121,8 +123,12 @@ class Phone(Gtk.Widget):
         pl.set_font_description(Pango.FontDescription.from_string(f"sans {max(9.0, sw * 0.03):.1f}px"))
         pl.set_alignment(Pango.Alignment.CENTER)
         pl.set_width(int(sw * 0.86 * Pango.SCALE))
-        pl.set_markup("On the iPhone, open Control Center\n"
-                      f"<b>Screen Mirroring</b>  ›  <b>{GLib.markup_escape_text(NAME)}</b>", -1)
+        if screen.airplay_mirroring():  # this window started after mirroring did: no keyframe yet
+            pl.set_markup("The iPhone is mirroring, but this window started later.\n"
+                          "Stop and start <b>Screen Mirroring</b> once to show it here.", -1)
+        else:
+            pl.set_markup("On the iPhone, open Control Center\n"
+                          f"<b>Screen Mirroring</b>  ›  <b>{GLib.markup_escape_text(NAME)}</b>", -1)
         _ink, logical = pl.get_pixel_extents()
         cr.set_source_rgba(1, 1, 1, 0.55)
         cr.move_to(sx + sw * 0.07, sy + (sh - logical.height) / 2)
