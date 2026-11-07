@@ -2,7 +2,7 @@
 
 Example config.toml:
 
-    name = "phoneuse"                 # Bluetooth device and AirPlay receiver name
+    name = "PhoneUse"                 # Bluetooth device and AirPlay receiver name
     screen_points = [402, 874]       # your iPhone's screen in points (iPhone 17 Pro)
     decoder = "auto"                 # GStreamer H.264 decoder; auto picks NVDEC if present
     mirror_width = 498               # mirror window width in logical pixels
@@ -14,7 +14,7 @@ import subprocess
 import tomllib
 
 DEFAULTS = {
-    "name": "phoneuse",
+    "name": "PhoneUse",
     "screen_points": [402, 874],
     "decoder": "auto",
     "mirror_width": 498,
@@ -27,6 +27,7 @@ ALLOWED_FILE = "/etc/phoneuse/allowed"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 VISION_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-vision.sock")
 HUB_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-hub.sock")
+FRAMES_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-frames.sock")
 
 
 def config_path():
