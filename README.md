@@ -1,6 +1,6 @@
-# airwisp
+# phoneuse
 
-airwisp lets a Linux PC see and operate an unmodified iPhone. The phone's screen
+phoneuse lets a Linux PC see and operate an unmodified iPhone. The phone's screen
 arrives over AirPlay as a window on your desktop, and your PC acts as a Bluetooth
 mouse and keyboard for the phone. You can use the mirror window like the phone
 itself (hover, click to tap, drag to swipe, type), and agents can drive the phone
@@ -31,19 +31,19 @@ attached: without it the signal can be too weak to pair reliably.
 
 1. **Get the code** and put the command on your path:
    ```sh
-   git clone https://github.com/lxe/airwisp.git ~/airwisp
-   ln -s ~/airwisp/bin/airwisp ~/.local/bin/airwisp
+   git clone https://github.com/lxe/phoneuse.git ~/phoneuse
+   ln -s ~/phoneuse/bin/phoneuse ~/.local/bin/phoneuse
    ```
 
 2. **Install the Bluetooth side** (and, if `uv` is present, the screen-reading
    models):
    ```sh
-   airwisp install
+   phoneuse install
    ```
    This needs sudo. It configures bluetoothd so the PC can act as a mouse and
    keyboard (it disables bluetoothd's own input and hostname plugins, so this PC
    stops accepting Bluetooth keyboards and mice of its own), and runs the HID
-   daemon as the `airwisp-hid` service. `sudo scripts/install.sh --uninstall`
+   daemon as the `phoneuse-hid` service. `sudo scripts/install.sh --uninstall`
    undoes it.
 
 3. **Open the firewall for AirPlay**, if you run one. UxPlay uses TCP 7000, 7001,
@@ -53,19 +53,19 @@ attached: without it the signal can be too weak to pair reliably.
    - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
      pointer taps by itself when it rests).
    - Optional, for the debugging tools: Pointer Control colour **Orange**, large,
-     with Automatically Hide Pointer off. `airwisp where` and the telemetry tools
+     with Automatically Hide Pointer off. `phoneuse where` and the telemetry tools
      find the pointer in screenshots by this colour. Agents don't need it: every
-     tap and drag starts from an exact position, so airwisp always knows where
+     tap and drag starts from an exact position, so phoneuse always knows where
      the pointer is.
 
-5. **Pair**: on the iPhone, Settings → Bluetooth → tap **airwisp**. The first
-   device to pair is trusted from then on (`/etc/airwisp/allowed`).
+5. **Pair**: on the iPhone, Settings → Bluetooth → tap **phoneuse**. The first
+   device to pair is trusted from then on (`/etc/phoneuse/allowed`).
 
 6. **Start it**:
    ```sh
-   airwisp up
+   phoneuse up
    ```
-   Then on the iPhone: Control Center → Screen Mirroring → **airwisp**. A
+   Then on the iPhone: Control Center → Screen Mirroring → **phoneuse**. A
    phone-shaped window appears on your desktop.
 
 ## Using it
@@ -75,33 +75,33 @@ drag to swipe, and press on the dark bezel to start a swipe from the very edge
 of the screen (from the bottom bezel upward goes home). While the mirror window
 has focus, your keyboard types on the phone, and Super acts as Cmd.
 
-For agents and scripts, every action is a subcommand. `airwisp --help` lists
+For agents and scripts, every action is a subcommand. `phoneuse --help` lists
 them; a typical loop looks like this:
 
 ```sh
-airwisp open Settings
-airwisp text                 # the screen as text lines with positions
-airwisp tap-on "Wi-Fi"       # find an element by description and tap it
-airwisp screenshot shot.png  # when text isn't enough
-airwisp back
+phoneuse open Settings
+phoneuse text                 # the screen as text lines with positions
+phoneuse tap-on "Wi-Fi"       # find an element by description and tap it
+phoneuse screenshot shot.png  # when text isn't enough
+phoneuse back
 ```
 
 `docs/RECIPES.md` lists the gestures that work, the ones that don't, and why.
 `skill/SKILL.md` is a ready-made skill for Claude Code agents: link it into
-`~/.claude/skills/airwisp`.
+`~/.claude/skills/phoneuse`.
 
 ## Configuration
 
-Optional, in `~/.config/airwisp/config.toml`:
+Optional, in `~/.config/phoneuse/config.toml`:
 
 ```toml
-name = "airwisp"              # Bluetooth device and AirPlay receiver name
+name = "phoneuse"              # Bluetooth device and AirPlay receiver name
 screen_points = [402, 874]    # your iPhone's screen size in points
 decoder = "auto"              # GStreamer H.264 decoder
 mirror_width = 498            # mirror window width in logical pixels
 ```
 
-After changing `name`, rerun `airwisp install`.
+After changing `name`, rerun `phoneuse install`.
 
 ## How it works
 

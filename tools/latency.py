@@ -19,8 +19,8 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from airwisp import screen as steer  # noqa: E402
-from airwisp.hidclient import Hid  # noqa: E402
+from phoneuse import screen as steer  # noqa: E402
+from phoneuse.hidclient import Hid  # noqa: E402
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 12
 SPOTS = [(0.3, 0.62), (0.7, 0.62)]

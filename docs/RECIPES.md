@@ -1,9 +1,9 @@
-# Operating the iPhone with `airwisp`
+# Operating the iPhone with `phoneuse`
 
-`airwisp up` runs the AirPlay mirror and mouse control together; on the iPhone,
-start Control Center → Screen Mirroring → airwisp. Agents then use the commands
-below and look at `airwisp screenshot`, which waits out the mirror's half-second
-delay after the last action, so it always shows the result.
+`phoneuse up` runs the AirPlay mirror and mouse control together; on the iPhone,
+start Control Center → Screen Mirroring → phoneuse. Agents then use the commands
+below and look at `phoneuse screenshot`, which waits for the mirror to catch up
+after the last action, so it always shows the result.
 
 Coordinates are fractions of the screenshot (0 to 1), or iPhone points when any
 value is above 1. The screen is 402 × 874 points.
@@ -18,24 +18,24 @@ points, which is plenty for scrolling and edge gestures.
 
 | Goal | Command | What it does |
 |---|---|---|
-| Tap | `airwisp tap X Y` | press and release at the point |
-| Long press | `airwisp longpress X Y [S]` | hold 0.8 s by default; opens context menus |
-| Home | `airwisp home` | Cmd+H; works from any app |
-| Back | `airwisp back` | swipe right starting at the very left edge (x = 0), like a finger sliding in |
-| App switcher | `airwisp switcher` | slow swipe up from the bottom, then hold |
-| Control Center | `airwisp control-center` | slow (0.6 s) swipe down from the top-right corner |
-| Notification Center | `airwisp notifications` | slow swipe down from the top-left |
-| Close an overlay | `airwisp dismiss` | fast, long swipe up from the very bottom; closes Control Center, Notification Center and the switcher |
-| Scroll | `airwisp scroll down [N]` / `up` | drags the content by N half-screens |
-| Open an app | `airwisp open Settings` | Cmd+H, Cmd+Space, type the name, Enter |
-| Type | `airwisp type "hello\n"` | US layout; `\n` presses Enter |
-| Keys | `airwisp key cmd+space` | modifiers: cmd, shift, alt, ctrl |
+| Tap | `phoneuse tap X Y` | press and release at the point |
+| Long press | `phoneuse longpress X Y [S]` | hold 0.8 s by default; opens context menus |
+| Home | `phoneuse home` | Cmd+H; works from any app |
+| Back | `phoneuse back` | swipe right starting at the very left edge (x = 0), like a finger sliding in |
+| App switcher | `phoneuse switcher` | slow swipe up from the bottom, then hold |
+| Control Center | `phoneuse control-center` | slow (0.6 s) swipe down from the top-right corner |
+| Notification Center | `phoneuse notifications` | slow swipe down from the top-left |
+| Close an overlay | `phoneuse dismiss` | fast, long swipe up from the very bottom; closes Control Center, Notification Center and the switcher |
+| Scroll | `phoneuse scroll down [N]` / `up` | drags the content by N half-screens |
+| Open an app | `phoneuse open Settings` | Cmd+H, Cmd+Space, type the name, Enter |
+| Type | `phoneuse type "hello\n"` | US layout; `\n` presses Enter |
+| Keys | `phoneuse key cmd+space` | modifiers: cmd, shift, alt, ctrl |
 
 ## Things that don't work, or bite
 
 - Avoid tapping the top centre of the screen: it hits the Dynamic Island, which
   opens the Screen Mirroring popup with a Stop Mirroring button.
-- Cmd+H doesn't close Control Center or Notification Center; use `airwisp dismiss`.
+- Cmd+H doesn't close Control Center or Notification Center; use `phoneuse dismiss`.
 - The mouse wheel and Cmd+Tab do nothing on iOS.
 - Fast swipes down from the top are ignored; the top-edge recipes are slow on purpose.
 - If the phone locks, the passcode screen appears. The agent must stop and ask the
@@ -61,6 +61,6 @@ points, which is plenty for scrolling and edge gestures.
 - Accessibility → Touch → AssistiveTouch: on; Dwell Control: off (otherwise a
   resting pointer taps on its own).
 - Optional: Accessibility → Pointer Control colour Orange, large size, Automatically
-  Hide Pointer off. Only `airwisp where` and the telemetry tools use it, to find
+  Hide Pointer off. Only `phoneuse where` and the telemetry tools use it, to find
   the pointer in screenshots; gestures never need to locate the pointer.
 - Consider Display & Brightness → Auto-Lock: Never while an agent is working.

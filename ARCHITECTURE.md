@@ -1,6 +1,6 @@
-# How airwisp works
+# How phoneuse works
 
-airwisp has two independent channels to the phone. The screen comes in over
+phoneuse has two independent channels to the phone. The screen comes in over
 AirPlay, the same way it would go to an Apple TV, and input goes out over
 Bluetooth, with the PC pretending to be a mouse and keyboard. Nothing runs on the
 phone. Everything else in the repository connects these two channels: turning
@@ -9,62 +9,62 @@ read the screen.
 
 ```
             AirPlay video (Wi-Fi)                      Bluetooth HID (mouse + keyboard)
- iPhone  ─────────────────────────▶  UxPlay window      ◀─────────────────────────  airwisp-hid daemon
-                                     (airwisp up)                                      (root, systemd)
+ iPhone  ─────────────────────────▶  UxPlay window      ◀─────────────────────────  phoneuse-hid daemon
+                                     (phoneuse up)                                      (root, systemd)
                                           │                                                 ▲
                          Hyprland IPC: where the window is, where the cursor is             │ command socket
-                                          ▼                                                 │ /run/airwisp-hid.sock
+                                          ▼                                                 │ /run/phoneuse-hid.sock
                                      mirror_input  ──── hover / press / drag / keys ────────┤
-                                     airwisp CLI   ──── tap / swipe / type / home ... ──────┘
+                                     phoneuse CLI   ──── tap / swipe / type / home ... ──────┘
                                           │
-                                     vision service (OCR + grounding) for `airwisp text/find`
+                                     vision service (OCR + grounding) for `phoneuse text/find`
 ```
 
 ## The pieces
 
-**`airwisp/hid_daemon.py`** runs as root under systemd (`airwisp-hid`). It
+**`phoneuse/hid_daemon.py`** runs as root under systemd (`phoneuse-hid`). It
 registers a classic Bluetooth HID profile with BlueZ (the SDP record in
 `sdp_record.xml`), owns the HID control and interrupt channels, and pairs with
 "Just Works". Its report descriptor declares three things: a keyboard, a
 relative mouse and an absolute pointer. Other programs send it one-line commands
-on `/run/airwisp-hid.sock`: `a X Y BUTTON` for the absolute pointer, `m DX DY
+on `/run/phoneuse-hid.sock`: `a X Y BUTTON` for the absolute pointer, `m DX DY
 WHEEL BUTTON` for the relative mouse, `k MODS KEYS` and `type TEXT` for the
 keyboard. It also keeps the Bluetooth link responsive (below) and only talks to
-devices in `/etc/airwisp/allowed`, trusting the first device that pairs.
+devices in `/etc/phoneuse/allowed`, trusting the first device that pairs.
 `scripts/install.sh` reconfigures bluetoothd so this can work: the input plugin
 would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".
 
-**`airwisp up`** (`airwisp/cli.py`) starts the AirPlay receiver (UxPlay) and
+**`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay) and
 the mirror input handler, and restarts either when it exits. The mirror input
 handler is a separate process that reloads when its code changes, so edits don't
 drop the AirPlay connection.
 
-**`airwisp/mirror_input.py`** makes the mirror window behave like the phone's
+**`phoneuse/mirror_input.py`** makes the mirror window behave like the phone's
 screen. It reads mouse buttons and keys from `/dev/input` read-only, so it never
 takes over the PC's mouse or keyboard, and gets the cursor position and window
 geometry from Hyprland's IPC socket, which answers in about 0.03 ms. It also
 gives the window its phone shape through a Hyprland window rule: rounded
 corners, a dark border as the bezel, and a locked size.
 
-**`airwisp/touch.py`** holds the gesture code used by agents (tap, long press,
+**`phoneuse/touch.py`** holds the gesture code used by agents (tap, long press,
 swipe) and the measured table of how far iOS moves the pointer for each report
 size.
 
-**`airwisp/screen.py`** finds the mirror window, captures the phone picture with
+**`phoneuse/screen.py`** finds the mirror window, captures the phone picture with
 `grim`, and finds the orange pointer in a screenshot by its size and hollow
 shape.
 
-**`airwisp/vision.py`** is an optional local service, started on first use, that
-keeps two models loaded: RapidOCR with PP-OCRv6 for `airwisp text` (every text
+**`phoneuse/vision.py`** is an optional local service, started on first use, that
+keeps two models loaded: RapidOCR with PP-OCRv6 for `phoneuse text` (every text
 line with its position) and GoClick-Large, a 0.8B GUI grounding model, for
-`airwisp find` and `tap-on` ("Settings app icon" → a position). Reading a
+`phoneuse find` and `tap-on` ("Settings app icon" → a position). Reading a
 screen as text costs an agent a few hundred tokens instead of about 1,300 for a
 screenshot image.
 
 ## What iOS does with mouse input
 
-iOS has no remote-control API and ignores HID touchscreens, so airwisp is a
+iOS has no remote-control API and ignores HID touchscreens, so phoneuse is a
 mouse, and iOS's AssistiveTouch turns mouse input into touches. Everything
 below was measured on a real iPhone, mostly with `touchlab/`, a page that logs
 the touch events Safari receives. When a guess and a measurement disagreed, the
@@ -100,10 +100,10 @@ measurement won, and several early guesses were wrong.
 ## The mirror
 
 UxPlay renders the AirPlay stream with GStreamer. Two defaults made it unusable
-on this setup, and `airwisp up` changes both:
+on this setup, and `phoneuse up` changes both:
 
 - UxPlay converts frames to packed 24-bit RGB on Linux, which NVIDIA's EGL can't
-  import, giving a black window. airwisp passes `-srgb no`.
+  import, giving a black window. phoneuse passes `-srgb no`.
 - iOS sends a frame only when the screen changes, and its stream doesn't declare
   that frames never need reordering. A default H.264 decoder therefore keeps each
   frame until the next one arrives, which GStreamer's latency tracer measured at
@@ -121,5 +121,5 @@ every 4 ms, every Bluetooth report sent (btmon), and a 60 fps video of the
 mirror. `tools/telemetry_analyze.py` lines these up and tracks the pointer in
 every frame, which is how the drag problems above were found. `touchlab/` shows
 what iOS turns the reports into. `tools/latency.py` times pointer jumps from
-report to screen, and `AIRWISP_TRACE=1 airwisp up` turns on GStreamer's
+report to screen, and `PHONEUSE_TRACE=1 phoneuse up` turns on GStreamer's
 per-element latency tracer.

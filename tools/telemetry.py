@@ -23,9 +23,9 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from airwisp import screen as steer  # noqa: E402
-from airwisp.screen import hypr  # noqa: E402
-from airwisp.mirror_input import FRAME  # noqa: E402
+from phoneuse import screen as steer  # noqa: E402
+from phoneuse.screen import hypr  # noqa: E402
+from phoneuse.mirror_input import FRAME  # noqa: E402
 
 EVENT = struct.Struct("llHHi")
 

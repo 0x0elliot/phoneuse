@@ -4,7 +4,7 @@
 Run as root. bluetoothd must be started with --noplugin=input so this process
 can own the HID PSMs (17 control, 19 interrupt). See install.sh.
 
-Commands on /run/airwisp-hid.sock, one per line, reply "ok ..." or "err ...":
+Commands on /run/phoneuse-hid.sock, one per line, reply "ok ..." or "err ...":
   move DX DY        relative pointer move (split into small steps)
   click [left|right|middle]
   down [btn] / up   hold / release a button (for drags)
@@ -31,11 +31,11 @@ from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from .config import HID_SOCKET as SOCK_PATH, ALLOWED_FILE as ALLOW_FILE
-DEVICE_NAME = os.environ.get("AIRWISP_NAME", "airwisp")  # what the phone sees in Bluetooth settings
+DEVICE_NAME = os.environ.get("PHONEUSE_NAME", "phoneuse")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
-PROFILE_PATH = "/io/airwisp/hid/profile"
-AGENT_PATH = "/io/airwisp/hid/agent"
+PROFILE_PATH = "/io/phoneuse/hid/profile"
+AGENT_PATH = "/io/phoneuse/hid/agent"
 
 # Report 1: boot-style keyboard (mods, reserved, 6 keys). Report 2: mouse (buttons, x, y, wheel).
 REPORT_MAP = bytes.fromhex(

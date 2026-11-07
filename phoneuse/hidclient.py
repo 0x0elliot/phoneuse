@@ -1,4 +1,4 @@
-"""Client for the airwisp HID daemon's command socket (see hid_daemon.py)."""
+"""Client for the phoneuse HID daemon's command socket (see hid_daemon.py)."""
 import socket
 import threading
 

@@ -43,7 +43,7 @@ MIRROR_W = CFG["mirror_width"]  # logical px; height follows from the phone's as
 MIRROR_H = round(MIRROR_W / PHONE_ASPECT * (1 + 2 * STRIP))
 # min_size = max_size locks the window: resizing the GL window crashed uxplay.
 BEZEL_RULE = (
-    'hl.window_rule({ name = "airwisp-mirror", match = { class = "^uxplay$" }, '
+    'hl.window_rule({ name = "phoneuse-mirror", match = { class = "^uxplay$" }, '
     f'border_size = {FRAME}, rounding = {CORNER}, rounding_power = 3.0, border_color = "rgb(18181c) rgb(18181c)", '
     f'min_size = {{ {MIRROR_W}, {MIRROR_H} }}, max_size = {{ {MIRROR_W}, {MIRROR_H} }} }})'
 )

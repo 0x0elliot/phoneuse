@@ -1,8 +1,8 @@
-"""airwisp settings: defaults, overridden by ~/.config/airwisp/config.toml.
+"""phoneuse settings: defaults, overridden by ~/.config/phoneuse/config.toml.
 
 Example config.toml:
 
-    name = "airwisp"                 # Bluetooth device and AirPlay receiver name
+    name = "phoneuse"                 # Bluetooth device and AirPlay receiver name
     screen_points = [402, 874]       # your iPhone's screen in points (iPhone 17 Pro)
     decoder = "auto"                 # GStreamer H.264 decoder; auto picks NVDEC if present
     mirror_width = 498               # mirror window width in logical pixels
@@ -13,22 +13,22 @@ import subprocess
 import tomllib
 
 DEFAULTS = {
-    "name": "airwisp",
+    "name": "phoneuse",
     "screen_points": [402, 874],
     "decoder": "auto",
     "mirror_width": 498,
 }
 
 # Runtime paths shared by the daemon (root) and the user-side tools.
-HID_SOCKET = "/run/airwisp-hid.sock"
-ALLOWED_FILE = "/etc/airwisp/allowed"
+HID_SOCKET = "/run/phoneuse-hid.sock"
+ALLOWED_FILE = "/etc/phoneuse/allowed"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-VISION_SOCKET = os.path.join(RUNTIME_DIR, "airwisp-vision.sock")
+VISION_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-vision.sock")
 
 
 def config_path():
     base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    return os.path.join(base, "airwisp", "config.toml")
+    return os.path.join(base, "phoneuse", "config.toml")
 
 
 def load():
