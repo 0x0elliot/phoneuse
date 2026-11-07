@@ -38,18 +38,25 @@ tokens, where a screenshot image costs about 1,300.
 
 ```bash
 phoneuse text                         # every text line on screen: "x y  text"
-phoneuse tap-on "Wi-Fi"               # find an element by description and tap it
-phoneuse find "clear search (X) button"   # just the position, to tap or swipe yourself
+phoneuse tap-on "Wi-Fi"               # tap a text label (exact position from OCR)
+phoneuse tap-on "gear icon"           # tap something visual (grounding model)
+phoneuse tap 0.5 0.35 --text          # any action + --text: act, then print the screen
 ```
 
-`phoneuse text` and `phoneuse find` run local models (PP-OCRv6 OCR and the GoClick
-grounding model) through a service that starts on first use (first call takes
-a few seconds). `find` and `tap-on` take plain descriptions, including icons
-without text ("Settings app icon", "back button", "share button").
+End actions with `--text` to read the result in the same call; it waits until
+the screen stops changing (apps launching, pages sliding in) before reading.
+`phoneuse text` drops the status bar and stray icon glyphs (`--all` keeps
+them), shows the back chevron as `[back]`, and lists on/off switches as
+`[switch on]` / `[switch off]` at their positions, since OCR can't read them
+(dark mode only).
 
-`find` always returns a position, even when the element isn't on screen, so
-confirm with `phoneuse text` (or a screenshot) when it matters. `tap-on` refuses
-targets in the status bar, where such misses tend to land.
+`tap-on` first looks for the words among the screen's text and taps that line
+exactly. Plain words that aren't on screen are refused, so scroll first. Only
+descriptions of visual things (icon, button, arrow, switch, avatar, ...) go to
+the GoClick grounding model, which always answers even when the element isn't
+there: check the result. `phoneuse find` gives a grounding position without
+tapping. The models run locally through a service that starts on first use
+(the first call takes a few seconds).
 
 Take a real screenshot when text isn't enough: pictures, icon-only screens,
 checking a layout, or when `find` lands somewhere surprising.
@@ -62,7 +69,7 @@ phoneuse screenshot $SCRATCH/s2.png   # waits out the ~0.5 s mirror lag by itsel
 
 Write screenshots into your own scratch directory with a new name each time,
 so you never read a stale image. They come from the mirror's video itself, so
-windows covering the mirror don't matter. `phoneuse screenshot` moves the orange pointer to
+windows covering the mirror don't matter. `phoneuse screenshot` moves the pointer to
 the left edge first so it doesn't cover text (`--keep-pointer` to see where the
 pointer is). The grey AssistiveTouch button near the lower right stays on screen
 and can hide what is under it; scroll a little if you need that spot.
@@ -90,6 +97,13 @@ try is enough.
 
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read
 it before inventing a new gesture with `phoneuse swipe`.
+
+## Typing
+
+The phone applies autocorrect to typed text (a test typed "phoneuse" and sent
+"phone use"). Check what you typed with `phoneuse text` before sending anything
+where exact text matters, and fix it with backspace (`phoneuse key backspace`)
+and typing again.
 
 ## Apps reopen where they were left
 
@@ -122,6 +136,10 @@ leftover; close it, or `phoneuse back` until you reach the app's main view.
   the phone slightly, so an earlier screenshot may be stale.
 - You never need to locate the pointer to act: taps and drags start from exact
   positions. `phoneuse where` (a debugging aid) finds it only if Pointer Control's
-  colour is Orange; "not found" otherwise is normal.
+  colour is Orange (Settings → Accessibility → Accessories → Pointer Control);
+  "not found" otherwise is normal.
+- An action seems to do nothing: the screen was probably still changing (an app
+  launching, a sheet animating). Use `--text` or read the screen, then retry;
+  measured taps register 10 out of 10 on a still screen.
 - Taps happen on their own wherever the pointer rests: Dwell Control is on. Ask
   the user to turn it off (Accessibility → Touch → AssistiveTouch → Dwell Control).

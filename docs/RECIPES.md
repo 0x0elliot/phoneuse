@@ -61,7 +61,7 @@ points, which is plenty for scrolling and edge gestures.
 
 - Accessibility → Touch → AssistiveTouch: on; Dwell Control: off (otherwise a
   resting pointer taps on its own).
-- Optional: Accessibility → Pointer Control colour Orange, large size, Automatically
+- Optional: Accessibility → Accessories → Pointer Control colour Orange, large size, Automatically
   Hide Pointer off. Only `phoneuse where` and the telemetry tools use it, to find
   the pointer in screenshots; gestures never need to locate the pointer.
 - Consider Display & Brightness → Auto-Lock: Never while an agent is working.

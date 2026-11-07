@@ -59,7 +59,8 @@ attached: without it the signal can be too weak to pair reliably.
 4. **Set up the iPhone** under Settings → Accessibility:
    - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
      pointer taps by itself when it rests).
-   - Optional, for the debugging tools: Pointer Control colour **Orange**, large,
+   - Optional, for the debugging tools: Accessibility → Accessories → Pointer
+     Control colour **Orange**, large,
      with Automatically Hide Pointer off. `phoneuse where` and the telemetry tools
      find the pointer in screenshots by this colour. Agents don't need it: every
      tap and drag starts from an exact position, so phoneuse always knows where
