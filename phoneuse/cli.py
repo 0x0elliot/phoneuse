@@ -20,7 +20,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse scroll up|down [N]   scroll the content by N half-screens (default 1)
   phoneuse home | back | switcher | control-center | notifications | dismiss
   phoneuse open APP             open an app by name (search, type, Enter)
-  phoneuse type TEXT            type text (US layout); \\n presses Enter
+  phoneuse type [--append] TEXT  type text (US layout); \\n presses Enter. Replaces what
+                               the field holds (Cmd+A first) unless --append
   phoneuse key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
   phoneuse keyboard             show or hide the iPhone's on-screen keyboard (Eject key)
   phoneuse where                debugging: where the pointer appears (needs Pointer
@@ -196,6 +197,13 @@ def settle():
         line, _ = screen.frames_request(f"settle {since}" if since is not None else "settle", timeout=6)
         with open(LAST_SEEN, "w") as f:  # what the agent has now seen (see agent_turn)
             f.write(line.split("seq=")[1].split()[0])
+        note = None
+        if "still=0" in line:
+            note = "note: the screen was still changing when read; look again if it matters"
+        elif "ambient=1" in line or float(line.split("ignored=")[1].split()[0]) > 0.05:
+            note = "note: parts of the screen keep moving (video or animation); read the rest as settled"
+        if note and note not in NOTES:
+            NOTES.append(note)
         if since is not None:  # this action's result has been waited for: later reads needn't wait again
             acted(None)
     except (OSError, IndexError):
@@ -393,6 +401,8 @@ def text_cmd(args):
         return
     for x, y, t in lines:
         print(f"{x:.3f} {y:.3f}  {t}")
+    if NOTES:
+        print("\n".join(NOTES))
 
 
 FILLER = {"row", "button", "icon", "link", "tab", "cell", "item", "the", "label", "option"}
@@ -673,6 +683,12 @@ def main():
     elif cmd == "open":
         open_app(h, " ".join(args))
     elif cmd == "type":
+        # The text replaces what the field holds (Cmd+A first): fields often keep
+        # earlier text. --append adds to it instead.
+        if args and args[0] == "--append":
+            args = args[1:]
+        else:
+            key_combo(h, "cmd+a")
         type_text(h, " ".join(args))
     elif cmd == "key":
         key_combo(h, args[0])
@@ -687,10 +703,12 @@ def main():
     else:
         die(f"unknown command: {cmd} (phoneuse --help)")
     acted(h.first_seq if getattr(h, "first_seq", None) is not None else seq_before)
-    print("\n".join(["ok"] + NOTES))
+    print("ok")
     if then_text:
         for x, y, t in screen_text():
             print(f"{x:.3f} {y:.3f}  {t}")
+    if NOTES:
+        print("\n".join(NOTES))
 
 
 if __name__ == "__main__":

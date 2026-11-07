@@ -76,9 +76,14 @@ picture.
 
 **`phoneuse/frames.py`** is the frames service, a hub viewer that watches the
 picture for agents. It counts meaningful changes (a coarse luma thumbnail per
-frame; the pointer moving or a caret blinking doesn't count) and answers
-`settle`: return as soon as an action's result has appeared and the picture has
-stopped changing, or at once when nothing is happening. No fixed delays. It
+frame; the pointer moving or a caret blinking doesn't count; regions that have
+moved without pause for over a second, like video, are ignored) and answers
+`settle`: return as soon as an action's result has appeared and big motion (a
+page, a scroll) has stopped; small motion that never stops (tiles cycling)
+counts as ambient and is reported, not waited for. No fixed delays. The MCP
+server doesn't wait at all by default: each action returns frames from 0.1, 0.4
+and 0.8 s after it in one image (identical frames dropped), and the agent judges
+the motion itself, calling `wait` when it wants another look. It
 also hands out screenshots of the current picture, so they don't depend on the
 mirror window being uncovered.
 

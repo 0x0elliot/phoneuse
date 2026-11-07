@@ -1,10 +1,11 @@
 """phoneuse as an MCP server (stdio), for agents: see and operate the iPhone.
 
-Every action returns the phone's screen once it has settled, in the same call:
-a small screenshot (402 x 874, one pixel per phone point, about 470 tokens) and
-the screen as text lines "x y  text" with exact positions from OCR, plus on/off
-switches. `look` picks what comes back: "both" (default), "text", "image" or
-"none". Positions are fractions of the screen (0..1) or phone points when a
+Every action returns the phone's screen in the same call. By default ("strip")
+that is three frames taken 0.1, 0.4 and 0.8 s after the action, side by side in
+one image (~625 tokens), plus the last frame as text lines "x y  text" with exact
+positions from OCR: no waiting for the screen to settle, and motion (a page
+sliding in, video) is visible. `look` can instead be "both" (one settled
+screenshot + text, ~470 tokens + text), "text", "image" or "none". Positions are fractions of the screen (0..1) or phone points when a
 value is above 1. Same engine as the `phoneuse` CLI.
 
 Run it with bin/phoneuse-mcp; it needs `phoneuse up` running.
@@ -20,13 +21,15 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import cli, touch
 
-Look = Literal["both", "text", "image", "none"]
+Look = Literal["strip", "both", "text", "image", "none"]
+STRIP_AT = (0.1, 0.4, 0.8)  # seconds after an action: frames in the strip
 
 server = MCPServer(
     "phoneuse",
     instructions=(
-        "Operate the user's real iPhone. Every action returns the settled screen (small screenshot + "
-        "text with positions), so you rarely need `look` on its own. Prefer tap_on for visible text. "
+        "Operate the user's real iPhone. Every action returns three frames from just after it (one image) "
+        "plus the screen's text with positions, so you rarely need `look` on its own. If the last frame "
+        "is still mid-transition, call look. Prefer tap_on for visible text. "
         "On the lock screen call unlock (the owner approves each unlock); never type a passcode. "
         "This is the user's personal phone: ask before sending, posting, buying, deleting, or changing "
         "account or security settings. Don't tap the top centre (Dynamic Island): it can stop mirroring."),
@@ -68,6 +71,57 @@ def _screen(look):
     return parts
 
 
+def _strip():
+    """Three frames right after an action, side by side in one image (~625
+    tokens), with the text of the last one. No waiting for the screen to settle:
+    the agent sees what moved (a page sliding in, video, a spinner) itself."""
+    import time
+    from phoneuse import screen
+    t0, frames = time.time(), []
+    for at in STRIP_AT:
+        time.sleep(max(0.0, t0 + at - time.time()))
+        try:
+            line, png = screen.frames_request("shot")
+        except OSError as e:
+            return [f"error: no frames ({e})"]
+        if line.startswith("ok"):
+            frames.append(PILImage.open(io.BytesIO(png)).convert("RGB"))
+    if not frames:
+        return ["error: no picture of the phone"]
+    # Frames identical to the one before add nothing: keep only the ones that
+    # changed. A still screen comes back as a single frame.
+    import numpy as np
+    def small(f):
+        return np.asarray(f.convert("L").resize((50, 109)), dtype=np.int16)
+    kept, times = [frames[0]], [STRIP_AT[0]]
+    for f, at in zip(frames[1:], STRIP_AT[1:]):
+        if (np.abs(small(f) - small(kept[-1])) > 12).mean() > 0.004:
+            kept.append(f)
+            times.append(at)
+    if len(kept) == 1:
+        kept, times = [frames[-1]], [STRIP_AT[-1]]
+        w, h = cli.PT  # one frame: a full 402 x 874 screenshot (~470 tokens)
+    else:
+        w, h = cli.PT[0] * 2 // 3, cli.PT[1] * 2 // 3  # each frame at 268 x 583
+    frames = kept
+    strip = PILImage.new("RGB", (w * len(frames) + 6 * (len(frames) - 1), h), (40, 40, 40))
+    for i, f in enumerate(frames):
+        strip.paste(f.resize((w, h), PILImage.LANCZOS), (i * (w + 6), 0))
+    buf = io.BytesIO()
+    strip.save(buf, "JPEG", quality=82)
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"phoneuse-strip-{os.getpid()}.png")
+    with open(path, "wb") as f:
+        f.write(png)
+    try:
+        ok, lines = _quietly(lambda: cli.screen_text(shot=path))
+        text = "\n".join(f"{x:.3f} {y:.3f}  {t}" for x, y, t in lines) if ok else lines
+    finally:
+        os.unlink(path)
+    legend = (f"frames at +{', +'.join(str(a) for a in times)} s, left to right; text from the last"
+              if len(times) > 1 else "the screen was still (one frame)")
+    return [Image(data=buf.getvalue(), format="jpeg"), legend + "\n" + text]
+
+
 def _act(action, look):
     def run():
         h = cli.hid()
@@ -78,7 +132,8 @@ def _act(action, look):
     ok, msg = _quietly(run)
     if not ok:
         return [f"error: {msg}"]
-    return ["\n".join([msg] + cli.NOTES)] + _screen(look)
+    screen_parts = _strip() if look == "strip" else _screen(look)  # may add notes
+    return ["\n".join([msg] + cli.NOTES)] + screen_parts
 
 
 def _pt(x, y):
@@ -87,18 +142,31 @@ def _pt(x, y):
 
 @server.tool(structured_output=False)
 def look(look: Look = "both") -> list:
-    """The phone's screen now: small screenshot and/or text lines with positions."""
-    return _screen(look)
+    """The phone's screen now: one settled screenshot and text lines with positions
+    ("both"), or "strip": three frames over 0.8 s, to watch something move."""
+    cli.NOTES.clear()
+    parts = _strip() if look == "strip" else _screen(look)
+    return parts + (["\n".join(cli.NOTES)] if cli.NOTES else [])
 
 
 @server.tool(structured_output=False)
-def tap(x: float, y: float, look: Look = "both") -> list:
+def wait(seconds: float = 1.0, look: Look = "strip") -> list:
+    """Wait, then look again: for a page or result still loading in the last frames.
+    Decide from what you saw how long (0.5-10 s)."""
+    import time
+    time.sleep(min(max(seconds, 0.0), 10.0))
+    cli.NOTES.clear()
+    return _strip() if look == "strip" else _screen(look)
+
+
+@server.tool(structured_output=False)
+def tap(x: float, y: float, look: Look = "strip") -> list:
     """Tap at (x, y): fractions of the screen (0..1), or phone points if a value is above 1."""
     return _act(lambda h: touch.tap(h, *_pt(x, y)), look)
 
 
 @server.tool(structured_output=False)
-def tap_on(target: str, look: Look = "both") -> list:
+def tap_on(target: str, look: Look = "strip") -> list:
     """Tap an element by description. Visible text is tapped exactly; text that isn't on
     screen is refused. Visual descriptions ("gear icon", "back button", "share button")
     use a grounding model: check the returned screen."""
@@ -106,52 +174,58 @@ def tap_on(target: str, look: Look = "both") -> list:
 
 
 @server.tool(structured_output=False)
-def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "both") -> list:
+def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "strip") -> list:
     """Press and hold at (x, y)."""
     return _act(lambda h: touch.long_press(h, *_pt(x, y), hold=seconds), look)
 
 
 @server.tool(structured_output=False)
-def swipe(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.3, look: Look = "both") -> list:
+def swipe(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.3, look: Look = "strip") -> list:
     """Drag from (x0, y0) to (x1, y1) over `seconds` (sliders, custom gestures)."""
     return _act(lambda h: touch.swipe(h, *_pt(x0, y0), *_pt(x1, y1), duration=seconds), look)
 
 
 @server.tool(structured_output=False)
-def scroll(direction: Literal["up", "down"] = "down", amount: float = 1.0, look: Look = "both") -> list:
+def scroll(direction: Literal["up", "down"] = "down", amount: float = 1.0, look: Look = "strip") -> list:
     """Scroll the content by `amount` half-screens."""
     return _act(lambda h: cli.scroll(h, direction, amount), look)
 
 
 @server.tool(structured_output=False)
-def type_text(text: str, look: Look = "both") -> list:
-    """Type text into the focused field (US layout); "\\n" presses Enter. The phone may
-    autocorrect words: check the returned text before sending anything."""
-    return _act(lambda h: cli.type_text(h, text), look)
+def type_text(text: str, replace: bool = True, look: Look = "strip") -> list:
+    """Type text into the focused field (US layout); "\\n" presses Enter. By default
+    the text replaces what the field already holds (Cmd+A first): fields often keep
+    earlier text. replace=false adds to it instead. The phone may autocorrect:
+    check the result before sending."""
+    def act(h):
+        if replace:
+            cli.key_combo(h, "cmd+a")
+        cli.type_text(h, text)
+    return _act(act, look)
 
 
 @server.tool(structured_output=False)
-def press_key(combo: str, look: Look = "both") -> list:
+def press_key(combo: str, look: Look = "strip") -> list:
     """Press a key or shortcut: enter, escape, backspace, tab, arrows, cmd+space, shift+tab..."""
     return _act(lambda h: cli.key_combo(h, combo), look)
 
 
 @server.tool(structured_output=False)
-def toggle_keyboard(look: Look = "both") -> list:
+def toggle_keyboard(look: Look = "strip") -> list:
     """Show or hide the iPhone's on-screen keyboard (it hides while phoneuse's
     Bluetooth keyboard is connected). Useful to see suggestions or emoji."""
     return _act(lambda h: h.cmd("eject"), look)
 
 
 @server.tool(structured_output=False)
-def open_app(name: str, look: Look = "both") -> list:
+def open_app(name: str, look: Look = "strip") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)
 
 
 @server.tool(structured_output=False)
 def navigate(to: Literal["home", "back", "switcher", "control-center", "notifications", "dismiss"],
-             look: Look = "both") -> list:
+             look: Look = "strip") -> list:
     """System gestures: home screen, back (edge swipe), app switcher, Control Center,
     Notification Center, or dismiss those overlays."""
     fn = {"home": cli.home, "back": cli.back, "switcher": cli.switcher, "control-center": cli.control_center,

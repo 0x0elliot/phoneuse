@@ -34,11 +34,13 @@ the full list.
 ## MCP or CLI
 
 If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`,
-`type_text`, `open_app`, `navigate`, `unlock`, ...), use them: every action
-returns the settled screen in the same call, as a small screenshot (about 470
-tokens) plus text lines with exact positions. Pass `look: "text"` when the text
-is enough, `"none"` for a burst of actions. Otherwise use the `phoneuse` CLI
-below; the rules are the same.
+`type_text`, `open_app`, `navigate`, `wait`, `unlock`, ...), use them. Every action
+returns, in the same call, frames from just after it (0.1, 0.4 and 0.8 s; frames
+that didn't change are dropped, so a still screen is one frame) plus the last
+frame as text lines with exact positions. You see motion yourself: a page still
+sliding in, a spinner, a video. If the last frame isn't final yet, call
+`wait(seconds)` with a duration you choose, and look again. Otherwise use the
+`phoneuse` CLI below; the rules are the same.
 
 ## The loop
 
@@ -113,6 +115,10 @@ only when the user tells you to. A note that the screen changed without your
 action means someone may be using the phone: look again before acting.
 
 ## Typing
+
+Typing replaces what the focused field already holds (fields often keep earlier
+text, such as a previous search or prompt); add `--append` (CLI) or
+`replace=false` (MCP) to add to it instead.
 
 The phone applies autocorrect to typed text (a test typed "phoneuse" and sent
 "phone use"). Check what you typed with `phoneuse text` before sending anything

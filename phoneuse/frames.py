@@ -29,6 +29,11 @@ from . import screen  # noqa: E402
 from .config import FRAMES_SOCKET, SCREEN_PT, decoder  # noqa: E402
 
 
+DYNAMIC_AFTER = 1.0  # a region moving continuously this long (s) is video/animation: ignored
+AMBIENT_AFTER = 0.4  # after this long (s), only big motion keeps settle waiting
+BIG = 0.05  # a change of at least this share of the picture is big (a page, a scroll)
+
+
 def log(*a):
     print(time.strftime("%H:%M:%S"), "frames:", *a, flush=True)
 
@@ -42,7 +47,13 @@ class Frames:
         self.frame_at = 0.0  # when the last meaningful change arrived
         self.ref = None  # luma thumbnail at the last meaningful change
         self.cv = threading.Condition()
-        self.history = []  # (time, change vs last counted frame, change vs previous frame)
+        self.history = []
+        self.dynamic_frac = 0.0  # share of the picture currently ignored as video/animation
+        self.last_frac = 0.0  # size of the last counted change (share of the picture)
+        self.big_at = 0.0  # when the picture last changed in a big way (>= BIG)
+        self.last_still = True
+        self.ambient = False
+        self.last_move = self.moving_since = None  # (time, change vs last counted frame, change vs previous frame)
         self.shot_lock = threading.Lock()
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
         # System memory: NVDEC's own CUDA surfaces get reused while we hold the last one.
@@ -94,18 +105,46 @@ class Frames:
                 buf.unmap(m)
         except Exception:
             return True
-        frac = 1.0 if self.ref is None or self.ref.shape != thumb.shape else float((np.abs(thumb - self.ref) > 12).mean())
+        now = time.time()
         prev = getattr(self, "prev_thumb", None)
-        step = 1.0 if prev is None or prev.shape != thumb.shape else float((np.abs(thumb - prev) > 12).mean())
         self.prev_thumb = thumb
-        self.history.append((time.time(), round(frac, 4), round(step, 4)))  # for studying settle
+        if prev is None or prev.shape != thumb.shape or self.ref is None or self.ref.shape != thumb.shape:
+            self.ref = thumb
+            self.last_move = np.full(thumb.shape, now)
+            self.moving_since = np.full(thumb.shape, now)
+            return True
+        # Per cell: when it last moved, and since when it has been moving without a
+        # pause. A cell that has moved continuously for over DYNAMIC_AFTER seconds
+        # (a playing video, an animated banner) is ignored: page transitions and
+        # scroll flings finish well within that, video never does.
+        moved = np.abs(thumb - prev) > 12
+        paused = now - self.last_move > 0.6  # pixels in a video pause now and then
+        self.moving_since[moved & paused] = now
+        self.last_move[moved] = now
+        dynamic = (now - self.moving_since > DYNAMIC_AFTER) & (now - self.last_move < 0.6)
+        # Grow by 3 cells (~16 pt) so a whole video rectangle is covered, not only
+        # the cells that happened to move.
+        for _ in range(3):
+            d = dynamic.copy()
+            d[1:, :] |= dynamic[:-1, :]
+            d[:-1, :] |= dynamic[1:, :]
+            d[:, 1:] |= dynamic[:, :-1]
+            d[:, :-1] |= dynamic[:, 1:]
+            dynamic = d
+        differs = (np.abs(thumb - self.ref) > 12) & ~dynamic
+        frac = float(differs.mean())
+        self.dynamic_frac = float(dynamic.mean())
+        self.history.append((now, round(frac, 4), round(float(moved.mean()), 4)))  # for studying settle
         del self.history[:-3000]
         if frac > 0.004:
-            self.ref = thumb
+            self.ref = np.where(dynamic, self.ref, thumb)
+            self.last_frac = frac
+            if frac >= BIG:
+                self.big_at = now
             return True
         return False
 
-    def settle(self, since=None, change=0.6, quiet=0.1, limit=4.0):
+    def settle(self, since=None, change=0.6, quiet=0.1, limit=3.0):
         """Wait until the picture is still. Measured (history, PHONEUSE_STEPLOG):
         an action's first visible change comes ~0.1-0.15 s after the input ends,
         animations run 0.4-0.7 s (scroll flings ~1-2.5 s), and frames during an
@@ -119,11 +158,24 @@ class Frames:
             if since is not None:
                 while self.seq <= since and time.time() - start < change:
                     self.cv.wait(change - (time.time() - start))
+            still = False
+            ambient = False
             while time.time() - start < limit:
                 idle = time.time() - self.frame_at
                 if idle >= quiet:
+                    still = True
                     break
-                self.cv.wait(quiet - idle)
+                # After AMBIENT_AFTER s (time for small animations like a switch to
+                # finish), only big motion (a page moving, a scroll coasting) keeps
+                # us waiting; small local changes that never stop (tiles cycling,
+                # clips swapping) are ambient: return, and say so.
+                now = time.time()
+                if now - start > AMBIENT_AFTER and now - self.big_at >= quiet:
+                    still = ambient = True
+                    break
+                self.cv.wait(min(quiet - idle, 0.05))
+            self.ambient = ambient
+            self.last_still = still
             return self.seq
 
     def screenshot(self):
@@ -179,7 +231,9 @@ class Frames:
                         since = int(a[0]) if a and a[0] != "-" else None
                         quiet = float(a[1]) if len(a) > 1 else 0.1
                         change = float(a[2]) if len(a) > 2 else 0.6
-                        conn.sendall(f"ok seq={self.settle(since, change=change, quiet=quiet)}\n".encode())
+                        seq = self.settle(since, change=change, quiet=quiet)
+                        conn.sendall(f"ok seq={seq} still={int(self.last_still)} ambient={int(self.ambient)} "
+                                     f"ignored={self.dynamic_frac:.3f}\n".encode())
                     elif cmd == "history":  # history SINCE_EPOCH: frames after that time, as JSON
                         import json
                         t0 = float(arg or 0)
