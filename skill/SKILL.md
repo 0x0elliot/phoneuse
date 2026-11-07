@@ -31,6 +31,15 @@ the full list.
    reconnects), then ask the user to tap "phoneuse" in the iPhone's Bluetooth settings.
 5. HID service not active: `phoneuse install` (needs sudo) sets it up.
 
+## MCP or CLI
+
+If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`,
+`type_text`, `open_app`, `navigate`, `unlock`, ...), use them: every action
+returns the settled screen in the same call, as a small screenshot (about 470
+tokens) plus text lines with exact positions. Pass `look: "text"` when the text
+is enough, `"none"` for a burst of actions. Otherwise use the `phoneuse` CLI
+below; the rules are the same.
+
 ## The loop
 
 Look, decide, act, look again. Look with text first; it costs a few hundred

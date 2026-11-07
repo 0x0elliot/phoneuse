@@ -105,6 +105,17 @@ phoneuse screenshot shot.png  # when text isn't enough
 phoneuse back
 ```
 
+### As an MCP server
+
+`bin/phoneuse-mcp` serves the same actions over MCP (stdio). Every action returns
+the phone's screen once it has settled: a small screenshot and the screen as
+text with positions, so an agent needs one call per step. Set it up once:
+
+```sh
+scripts/setup-mcp.sh                                   # MCP SDK in .venv-mcp
+claude mcp add --scope user phoneuse ~/phoneuse/bin/phoneuse-mcp
+```
+
 `docs/RECIPES.md` lists the gestures that work, the ones that don't, and why.
 `skill/SKILL.md` is a ready-made skill for Claude Code agents: link it into
 `~/.claude/skills/phoneuse`.
