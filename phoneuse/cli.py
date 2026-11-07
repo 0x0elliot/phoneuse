@@ -6,6 +6,8 @@ Setup and running:
                                config, and the local vision models
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse status               Bluetooth link and mirror window
+  phoneuse unlock               on the lock screen: ask the owner to approve entering the
+                               passcode they saved in the browser mirror's settings
   phoneuse view [--print]       open the browser mirror (http://localhost:PORT) in the
                                default browser; --print only prints its address
 
@@ -44,6 +46,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import screen, touch
@@ -157,8 +160,8 @@ def refuse_if_locked():
     attempt. Only the owner may unlock the phone."""
     words = " ".join(t for _, _, t in screen_text()).lower()
     if "passcode" in words or ("emergency" in words and "cancel" in words):
-        die("The phone is locked (passcode screen). Nothing was typed. Ask the owner to "
-            "unlock it; never enter a passcode.")
+        die("The phone is locked (passcode screen). Nothing was typed. Run `phoneuse unlock` to "
+            "ask the owner to approve an unlock, or ask them to unlock it.")
 
 
 def open_app(h, name):
@@ -466,6 +469,22 @@ def view(print_only):
     print(url)
 
 
+def unlock_cmd():
+    """Ask the owner to unlock the phone with the saved passcode. Waits for their
+    answer (up to 2 minutes); the passcode never passes through here."""
+    import json
+    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/unlock", data=b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    print("Asked the owner to approve an unlock (browser mirror or notification); waiting...", flush=True)
+    try:
+        with urllib.request.urlopen(req, timeout=150) as r:
+            print(json.loads(r.read())["result"])
+    except urllib.error.HTTPError as e:
+        die(json.loads(e.read()).get("result", str(e)))
+    except OSError as e:
+        die(f"The browser mirror isn't running ({e}). Start `phoneuse up`.")
+
+
 def main():
     a = sys.argv[1:]
     if not a or a[0] in ("-h", "--help", "help"):
@@ -490,6 +509,8 @@ def main():
         return up()
     if cmd == "status":
         return status()
+    if cmd == "unlock":
+        return unlock_cmd()
     if cmd == "view":
         return view("--print" in args)
     if cmd == "text":

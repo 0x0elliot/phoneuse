@@ -10,10 +10,15 @@ go to the phone through pointer.py, like the mirror window's. Input is only
 accepted while the phone is mirroring and the tab is showing it.
 
 Listens on 127.0.0.1 only: anyone who can open the page can control the phone.
+
+Unlocking: the page's settings panel saves the phone's passcode in
+~/.config/phoneuse/passcode (mode 600). `phoneuse unlock` asks to use it (POST /api/unlock); the owner answers on
+the page or in a desktop notification, and only then is it typed (unlock.py).
 """
 import asyncio
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -24,7 +29,7 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
 from aiohttp import web  # noqa: E402
 
-from . import screen  # noqa: E402
+from . import screen, unlock  # noqa: E402
 from .config import CFG, NAME, SCREEN_PT  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
@@ -195,9 +200,108 @@ class Tab:
             log("closing tab:", e)
 
 
+def same_origin(req):
+    """Requests from the page itself, not from other websites (which could send
+    the browser here): their Origin must be this server."""
+    return req.headers.get("Origin") in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}")
+
+
+class UnlockRequests:
+    """`phoneuse unlock` asks; the owner answers on the page or in a desktop
+    notification; only then is the saved passcode typed (unlock.py)."""
+
+    def __init__(self, mirror):
+        self.mirror = mirror
+        self.pending = None  # {"id", "event", "approved", "notice"}
+
+    def broadcast(self, msg):
+        for tab in list(self.mirror.tabs):
+            asyncio.ensure_future(tab.ws.send_str(json.dumps(msg)))
+
+    async def ask(self, req):
+        if self.pending:
+            return web.json_response({"result": "another unlock request is waiting for the owner"}, status=409)
+        if not await asyncio.get_running_loop().run_in_executor(None, unlock.saved):
+            return web.json_response({"result": "no passcode saved: the owner can save one in the browser "
+                                                "mirror's settings, or unlock the phone themselves"}, status=409)
+        rid = secrets.token_hex(8)
+        p = self.pending = {"id": rid, "event": asyncio.Event(), "approved": False, "notice": None}
+        self.broadcast({"type": "unlock-request", "id": rid})
+        asyncio.ensure_future(self._notify(p))
+        log("unlock requested; waiting for the owner")
+        try:
+            await asyncio.wait_for(p["event"].wait(), 120)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self.pending = None
+            self.broadcast({"type": "unlock-done"})
+            if p["notice"] and p["notice"].returncode is None:
+                p["notice"].kill()
+        if not p["event"].is_set():
+            return web.json_response({"result": "no answer from the owner within 2 minutes"})
+        if not p["approved"]:
+            log("unlock denied")
+            return web.json_response({"result": "denied by the owner"})
+        result = await asyncio.get_running_loop().run_in_executor(None, self._unlock)
+        log("unlock:", result)
+        return web.json_response({"result": result})
+
+    @staticmethod
+    def _unlock():
+        try:
+            from . import cli
+            return unlock.unlock(cli.screen_text)
+        except BaseException as e:  # cli helpers exit on errors; never take the server down
+            return f"failed: {e}"
+
+    async def _notify(self, p):
+        # A desktop notification with Unlock / Deny, where the notification daemon supports actions.
+        try:
+            p["notice"] = await asyncio.create_subprocess_exec(
+                "notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "unlock=Unlock", "-A", "deny=Deny",
+                "Unlock the iPhone?", f"An agent asks to enter your saved passcode. Answer here or at "
+                f"http://localhost:{PORT}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await p["notice"].communicate()
+            answer = out.decode().strip()
+            if answer in ("unlock", "deny") and self.pending is p:
+                p["approved"] = answer == "unlock"
+                p["event"].set()
+        except (OSError, asyncio.CancelledError):
+            pass
+
+    async def answer(self, req):
+        if not same_origin(req):
+            return web.Response(status=403)
+        body = await req.json()
+        p = self.pending
+        if not p or body.get("id") != p["id"]:
+            return web.json_response({"ok": False})
+        p["approved"] = bool(body.get("approve"))
+        p["event"].set()
+        return web.json_response({"ok": True})
+
+
 def app(mirror):
+    unlocks = UnlockRequests(mirror)
+
     async def page(_req):
         return web.FileResponse(PAGE, headers={"Cache-Control": "no-cache"})
+
+    async def passcode(req):
+        # The page's settings panel: whether a passcode is saved, save one, or remove
+        # it. The passcode itself is never sent back.
+        loop = asyncio.get_running_loop()
+        if req.method != "GET" and not same_origin(req):
+            return web.Response(status=403)
+        try:
+            if req.method == "POST":
+                await loop.run_in_executor(None, unlock.save, (await req.json()).get("code", ""))
+            elif req.method == "DELETE":
+                await loop.run_in_executor(None, unlock.forget)
+        except (ValueError, OSError) as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response({"saved": await loop.run_in_executor(None, unlock.saved)})
 
     async def ws(req):
         sock = web.WebSocketResponse(max_msg_size=1 << 16, heartbeat=20)
@@ -226,6 +330,9 @@ def app(mirror):
     a = web.Application()
     a.router.add_get("/", page)
     a.router.add_get("/ws", ws)
+    a.router.add_route("*", "/api/passcode", passcode)
+    a.router.add_post("/api/unlock", unlocks.ask)
+    a.router.add_post("/api/unlock/answer", unlocks.answer)
     return a
 
 

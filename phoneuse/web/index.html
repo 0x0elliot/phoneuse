@@ -13,9 +13,48 @@
   #note { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; line-height: 1.5; padding: 0 8%; }
   #note b { font-weight: 600; }
   #note[hidden] { display: none; }
+  button { font: inherit; color: #fff; background: #2c2c32; border: 0; border-radius: 9px; padding: 7px 14px; cursor: pointer; }
+  button.primary { background: #0a84ff; }
+  button:disabled { opacity: .45; cursor: default; }
+  #gear { position: fixed; z-index: 10; top: 14px; right: 14px; width: 36px; height: 36px; padding: 0; border-radius: 50%;
+          display: grid; place-items: center; background: #1c1c21; color: rgba(255,255,255,.7); }
+  #gear:hover { color: #fff; }
+  #settings { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0,0,0,.55); }
+  #settings[hidden], #ask[hidden] { display: none; }
+  .panel { width: min(360px, 90vw); background: #1c1c21; border-radius: 14px; padding: 18px; color: #fff; }
+  .panel h2 { margin: 0 0 14px; font-size: 17px; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .muted { color: rgba(255,255,255,.55); font-size: 13px; line-height: 1.45; }
+  input[type=password] { flex: 1; font: inherit; color: #fff; background: #2c2c32; border: 0; border-radius: 9px; padding: 7px 10px; }
+  #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); background: #1c1c21; color: #fff;
+         border-radius: 14px; padding: 12px 14px; display: flex; gap: 12px; align-items: center;
+         box-shadow: 0 6px 24px rgba(0,0,0,.5); }
 </style>
 </head>
 <body>
+<button id="gear" title="Settings" aria-label="Settings">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+</button>
+<div id="settings" hidden>
+  <div class="panel" role="dialog" aria-label="Settings">
+    <h2>iPhone passcode</h2>
+    <div class="muted" id="pcStatus"></div>
+    <form class="row" id="pcForm" autocomplete="off">
+      <input type="password" id="pcInput" placeholder="Passcode" inputmode="numeric" autocomplete="off">
+      <button class="primary" type="submit">Save</button>
+    </form>
+    <div class="row">
+      <button id="pcRemove" hidden>Remove</button>
+      <span style="flex:1"></span>
+      <button id="closeSettings">Done</button>
+    </div>
+  </div>
+</div>
+<div id="ask" hidden>
+  <span>An agent asks to unlock the iPhone with your passcode.</span>
+  <button id="deny">Deny</button>
+  <button class="primary" id="approve">Unlock</button>
+</div>
 <div id="phone">
   <div id="screen">
     <canvas id="video"></canvas>
@@ -32,7 +71,7 @@ const phone = document.getElementById("phone");
 const scr = document.getElementById("screen");
 const canvas = document.getElementById("video");
 const note = document.getElementById("note");
-const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+const ctx = canvas.getContext("2d", { alpha: false });  // (desynchronized drew over the settings panel)
 
 let ws = null, decoder = null, configured = false, configuring = false, askedKeyframe = 0;
 let state = { live: false, name: "phoneuse", screen: [402, 874], bezel: 30 / 498, radius: 60 / 498 };
@@ -165,6 +204,8 @@ function connect() {
   ws.onmessage = (e) => {
     if (typeof e.data !== "string") return onFrame(e.data);
     const msg = JSON.parse(e.data);
+    if (msg.type === "unlock-request") return showAsk(msg.id);
+    if (msg.type === "unlock-done") return showAsk(null);
     if (msg.type !== "state") return;
     const wasLive = state.live;
     state = msg;
@@ -217,6 +258,8 @@ const BROWSER_KEYS = new Set(["F5", "F11", "F12"]);  // left to the browser
 
 function onKey(e, down) {
   if (!active() || BROWSER_KEYS.has(e.code)) return;
+  // Keys typed into the page itself (the settings panel's passcode field) never go to the phone.
+  if (!settings.hidden || e.target.closest?.("input, textarea, button, .panel")) return;
   if (e.code in MODS) { send({ t: "mod", bit: MODS[e.code], down }); e.preventDefault(); return; }
   if (!(e.code in USAGE)) return;
   e.preventDefault();
@@ -226,6 +269,44 @@ function onKey(e, down) {
 addEventListener("keydown", (e) => onKey(e, true));
 addEventListener("keyup", (e) => onKey(e, false));
 addEventListener("blur", () => send({ t: "blur" }));  // let go of held keys and buttons
+
+// ---- settings: the saved passcode (never sent back to the page) ----
+const settings = document.getElementById("settings"), pcStatus = document.getElementById("pcStatus");
+const pcInput = document.getElementById("pcInput"), pcRemove = document.getElementById("pcRemove");
+function showSaved(saved) {
+  pcStatus.textContent = saved
+    ? "Saved on this computer. Agents can ask to use it; you approve each unlock here or in a notification."
+    : "Not saved. Save it so agents can ask you to unlock the phone; you approve each unlock.";
+  pcRemove.hidden = !saved;
+}
+async function passcode(method, body) {
+  const r = await fetch("/api/passcode", { method, headers: { "Content-Type": "application/json" },
+                                           body: body && JSON.stringify(body) });
+  const j = await r.json();
+  if (j.error) pcStatus.textContent = j.error; else showSaved(j.saved);
+}
+document.getElementById("gear").onclick = () => { settings.hidden = false; passcode("GET"); pcInput.focus(); };
+document.getElementById("closeSettings").onclick = () => { settings.hidden = true; pcInput.value = ""; };
+settings.onclick = (e) => { if (e.target === settings) document.getElementById("closeSettings").onclick(); };
+document.getElementById("pcForm").onsubmit = (e) => {
+  e.preventDefault();
+  if (pcInput.value) passcode("POST", { code: pcInput.value });
+  pcInput.value = "";
+};
+pcRemove.onclick = () => passcode("DELETE");
+
+// ---- unlock requests from agents: the owner answers here ----
+const ask = document.getElementById("ask");
+let askId = null;
+function showAsk(id) { askId = id; ask.hidden = !id; }
+async function answer(approve) {
+  if (!askId) return;
+  await fetch("/api/unlock/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ id: askId, approve }) });
+  showAsk(null);
+}
+document.getElementById("approve").onclick = () => answer(true);
+document.getElementById("deny").onclick = () => answer(false);
 
 layout(); updateNote(); connect();
 </script>
