@@ -6,8 +6,9 @@ one JSON request per connection, one JSON reply:
   {"op": "find", "image": PATH, "what": S} -> {"x", "y"}   (fractions of the image)
 
 Models (chosen 2026-11-06 on real iPhone screenshots):
-  OCR: RapidOCR with PP-OCRv6 small (ONNX, CPU). Exact on iOS UI text incl. arrows,
-       ~1 s per screen; Tesseract garbled symbols.
+  OCR: RapidOCR with PP-OCRv6 small (ONNX; GPU with onnxruntime-gpu, else CPU).
+       Exact on iOS UI text incl. arrows, ~0.18 s per screen on an RTX 5090
+       (~1.2 s on the CPU); Tesseract garbled symbols.
   Grounding: GoClick-Large (Florence-2 based, ~0.8B, fp16 on GPU, CPU fallback).
        Finds an element from a plain description ("clear search (X) button"),
        matched OCR positions within ~1 px, ~50 ms per query once warm.
@@ -32,8 +33,17 @@ class Vision:
     def __init__(self):
         from rapidocr import RapidOCR
         import logging
+        import onnxruntime
         logging.getLogger("RapidOCR").setLevel(logging.WARNING)
-        self.ocr = RapidOCR()
+        # No text-orientation classifier: iOS text is upright (saves ~75 ms). On an
+        # NVIDIA GPU (onnxruntime-gpu) a screen takes ~0.18 s, on the CPU ~1.2 s.
+        params = {"Global.use_cls": False, "Det.limit_side_len": 960,
+                  "EngineConfig.onnxruntime.intra_op_num_threads": min(8, os.cpu_count() or 4)}
+        if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+            params["EngineConfig.onnxruntime.use_cuda"] = True
+        self.ocr = RapidOCR(params=params)
+        self.ocr_device = "cuda" if params.get("EngineConfig.onnxruntime.use_cuda") else "cpu"
+        log("OCR on", self.ocr_device)
         self._g = None
         self.lock = threading.Lock()
 
