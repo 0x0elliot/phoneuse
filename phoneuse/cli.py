@@ -236,7 +236,7 @@ def scroll(h, direction, n=1.0):
     touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
 
 
-def step(h, command, quiet=0.1):
+def step(h, command, quiet=0.1, change=1.0):
     """Send one HID command and wait until the phone has shown its result (the
     frames service), instead of a fixed pause. `quiet`: how long the picture
     must stay still, longer where results stream in (search)."""
@@ -246,7 +246,7 @@ def step(h, command, quiet=0.1):
         time.sleep(0.8)  # no frames service (older setup)
         return
     try:
-        screen.frames_request(f"settle {seq} {quiet}", timeout=6)
+        screen.frames_request(f"settle {seq} {quiet} {change}", timeout=6)
     except OSError:
         time.sleep(0.8)
 
@@ -262,7 +262,7 @@ def refuse_if_locked():
 
 
 def open_app(h, name):
-    step(h, "key h gui")  # also wakes a locked phone, showing the passcode screen
+    step(h, "key h gui", change=0.3)  # often already home (no change); also wakes a locked phone
     refuse_if_locked()
     step(h, "key space gui")
     step(h, "type " + name, quiet=0.35)  # search results arrive in waves

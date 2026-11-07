@@ -8,8 +8,8 @@ request:
 
   status       "ok live=1 seq=N": live while it has a picture of the phone; N
                counts meaningful picture changes (not pointer moves or carets)
-  settle [N|-] [Q]  wait until the picture is still (after change N's successor,
-               when given) for Q seconds (default 0.1); at once when nothing changes
+  settle [N|-] [Q] [C]  wait until the picture is still for Q seconds (default 0.1);
+               with N, first up to C seconds (default 1) for a change after N
   shot         PNG of the current picture (2 px per phone point):
                "ok LENGTH\\n" + bytes
 """
@@ -167,7 +167,8 @@ class Frames:
                         a = arg.split()
                         since = int(a[0]) if a and a[0] != "-" else None
                         quiet = float(a[1]) if len(a) > 1 else 0.1
-                        conn.sendall(f"ok seq={self.settle(since, quiet=quiet)}\n".encode())
+                        change = float(a[2]) if len(a) > 2 else 1.0
+                        conn.sendall(f"ok seq={self.settle(since, change=change, quiet=quiet)}\n".encode())
                     elif cmd == "shot":
                         png = self.screenshot()
                         conn.sendall(b"err not mirroring\n" if png is None else f"ok {len(png)}\n".encode() + png)
