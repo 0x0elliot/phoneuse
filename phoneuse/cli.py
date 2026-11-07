@@ -277,16 +277,19 @@ STATUS_BAR = 0.055  # lines above this (time, signal, battery) are left out of `
 BACK_GLYPHS = {"く", "<", "‹", "〈", "〈"}  # how OCR reads the back chevron at the top left
 
 
-def screen_text(show_all=False):
+def screen_text(show_all=False, shot=None):
     """The screen as text lines [(x, y, text)]: OCR plus the state of on/off
     switches, which OCR can't read. Drops the status bar and icon glyphs OCR
-    mistakes for text (lines without a letter or digit) unless show_all."""
+    mistakes for text (lines without a letter or digit) unless show_all. Takes a
+    settled screenshot unless given one (`shot`, a PNG path, which it leaves)."""
     import numpy as np
     from PIL import Image
-    shot = fresh_screenshot()
+    own = shot is None
+    shot = shot or fresh_screenshot()
     r = vision({"op": "text", "image": shot})
     rgb = np.asarray(Image.open(shot).convert("RGB"))
-    os.unlink(shot)
+    if own:
+        os.unlink(shot)
     if "error" in r:
         die(r["error"])
     lines = [(ln["x"], ln["y"], "[back]" if ln["text"].strip() in BACK_GLYPHS and ln["x"] < 0.15 else ln["text"])
@@ -334,6 +337,28 @@ def text_target(what):
     if scored and scored[0][0] >= 0.85 and (len(scored) == 1 or scored[1][0] < scored[0][0] - 0.1):
         return scored[0][1], scored[0][2]
     return None
+
+
+def tap_on(h, what):
+    """Tap an element by description: on-screen text exactly (OCR), else, for
+    visual descriptions only, the grounding model. Returns what it did."""
+    hit = text_target(what)
+    if hit:
+        x, y = hit
+        how = "text"
+    elif not VISUAL.intersection(what.lower().replace('"', "").split()):
+        die(f"'{what}' isn't on screen as text, so nothing was tapped. Scroll to it, or describe "
+            "something visual (\"gear icon\", \"back button\") to use the grounding model.")
+    else:
+        x, y = find(what)
+        how = "grounding (check the result)"
+        # find always answers, even when the element isn't there; it then tends to
+        # point at the status bar. Never tap there: the Dynamic Island in its middle
+        # opens the Stop Mirroring popup.
+        if y < 0.06:
+            die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{what}' is probably not on screen")
+    touch.tap(h, x, y)
+    return f"tapped {x:.3f} {y:.3f} by {how}"
 
 
 def find(what):
@@ -544,24 +569,7 @@ def main():
     elif cmd == "key":
         key_combo(h, args[0])
     elif cmd == "tap-on":
-        what = " ".join(args)
-        hit = text_target(what)
-        if hit:
-            x, y = hit
-            how = "text"
-        elif not VISUAL.intersection(what.lower().replace('"', "").split()):
-            die(f"'{what}' isn't on screen as text, so nothing was tapped. Scroll to it, or describe "
-                "something visual (\"gear icon\", \"back button\") to use the grounding model.")
-        else:
-            x, y = find(what)
-            how = "grounding (check the result)"
-            # find always answers, even when the element isn't there; it then tends to
-            # point at the status bar. Never tap there: the Dynamic Island in its middle
-            # opens the Stop Mirroring popup.
-            if y < 0.06:
-                die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{what}' is probably not on screen")
-        touch.tap(h, x, y)
-        print(f"tapped {x:.3f} {y:.3f} by {how}")
+        print(tap_on(h, " ".join(args)))
     elif cmd == "where":
         p = screen.find_orange(screen.grab_rgb())
         print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")

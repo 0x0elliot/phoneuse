@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 allowed
 telemetry-sessions/
+.venv-mcp/
