@@ -1,5 +1,11 @@
 # phoneuse
 
+> [!WARNING]
+> **Under heavy construction.** This is a technology demo, built quickly for my
+> own setup: one iPhone 17 Pro, Arch Linux, Hyprland and an NVIDIA GPU. Other
+> setups will probably need fixes, and things may change or break without notice.
+> Enjoy it as it is.
+
 phoneuse lets a Linux PC see and operate an unmodified iPhone. The phone's screen
 arrives over AirPlay as a window on your desktop, and your PC acts as a Bluetooth
 mouse and keyboard for the phone. You can use the mirror window like the phone
