@@ -12,10 +12,13 @@ button 1).
 Held: every 8 ms a relative report moves the touch by exactly what the pointer
 moved (sized from the measured table), button 0 on these reports.
 Release: absolute report, button 0, where the touch is.
-Scroll: iOS ignores the mouse wheel, so wheel scrolling becomes a short swipe
-at the pointer: touch down where the pointer is, move the touch by the scrolled
-amount, and lift as soon as the wheel stops. Further wheel steps that arrive
-before the lift extend the same swipe.
+Scroll: iOS ignores the mouse wheel, so wheel scrolling becomes a drag at the
+pointer. Wheel steps go into a backlog that the touch drains with
+touch.scroll_step: quick while much is left, slow for the last points, so iOS
+sees a slow finger lift and doesn't fling (one fast drag per notch moved Hacker
+News over a screen per 145 pt notch). Near the screen edge the touch slows down
+the same way, lifts, and grips again where there is room, so long scrolls
+continue.
 
 Verified on a touch-event test page (touchlab/): this delivers one touch whose
 path matches the request (175 -> 175 pt, flicks 144 -> 141 pt). An absolute
@@ -28,7 +31,11 @@ import time
 from . import touch
 
 MIN_GAP = 1 / 250  # at most this many hover reports per second
-SCROLL_IDLE = 0.05  # lift the scroll touch this soon after the wheel stops (s): a short swipe
+SCROLL_STILL = touch.SCROLL_HOLD  # lift once the wheel scroll is done and the wheel idle this long (s)
+SCROLL_MARGIN = 0.06  # regrip before the touch comes this close to an edge (screen fraction)
+GRIP_DELAY = 0.024  # between the hover to the grip point and the press (s)
+MIN_GRIP = 15.0  # grip for at least this much wheel scrolling: a shorter drag reads as a tap
+WHEEL_FORGET = 0.3  # a remainder below MIN_GRIP is dropped once the wheel is idle this long (s)
 
 
 def clamp(v):
@@ -49,6 +56,10 @@ class Pointer:
         self.dragged_from = None  # pointer position the carry is measured from
         self.scrolling = False  # the touch is a wheel scroll, not a held button
         self.scrolled_at = 0.0
+        self.wheel = [0.0, 0.0]  # wheel scrolling not yet handed to the touch (phone points)
+        self.moved_at = 0.0  # last time the scroll touch moved
+        self.grip = None  # (position, time) of a hover waiting to become a scroll press
+        self.crawl = 0  # ticks counted while the scroll crawls (touch.SCROLL_CRAWL)
         self.stopped = False
         self.last_error = None
         threading.Thread(target=self._tick, daemon=True).start()
@@ -71,19 +82,78 @@ class Pointer:
 
     def scroll(self, dx_pt, dy_pt):
         """Scroll by dragging the content dx_pt, dy_pt phone points (positive dy
-        moves the content down, like a finger dragging down)."""
+        moves the content down, like a finger dragging down). The tick does the
+        dragging; this only adds to the backlog."""
         with self.lock:
             if self.pressed and not self.scrolling:
                 return  # a held button is already dragging
-            if not self.pressed:
-                if self.at is None:
-                    return
-                self._down()
-                self.carry = [0.0, 0.0]
-                self.scrolling = True
-            self.carry[0] += dx_pt
-            self.carry[1] += dy_pt
+            if self.at is None:
+                return
+            self.wheel[0] += dx_pt
+            self.wheel[1] += dy_pt
             self.scrolled_at = time.time()
+
+    def _grip_point(self):
+        # (lock held) Where a scroll touch goes down: at the pointer, unless that
+        # leaves too little room in the scroll's direction; never on the edges
+        # (back swipe, home bar).
+        fx, fy = clamp(self.at[0]), clamp(self.at[1])
+        if self.wheel[1] < 0 and fy < 0.45:
+            fy = 0.75
+        elif self.wheel[1] > 0 and fy > 0.55:
+            fy = 0.25
+        if self.wheel[0] < 0 and fx < 0.4:
+            fx = 0.7
+        elif self.wheel[0] > 0 and fx > 0.6:
+            fx = 0.3
+        return (round(min(max(fx, 0.08), 0.92), 4), round(min(max(fy, 0.12), 0.85), 4))
+
+    def _scroll_step(self):
+        # (lock held) The part of the backlog the touch moves this tick, at the
+        # speed touch.scroll_step gives for what is left: the backlog, or the room
+        # before the touch nears an edge if that is less (so it slows down there
+        # too). Returns the step and whether the edge stopped it.
+        w = (self.wheel[0] ** 2 + self.wheel[1] ** 2) ** 0.5
+        if w < 0.5:
+            return [0.0, 0.0], False
+        d = (self.wheel[0] / w, self.wheel[1] / w)
+        room = w
+        for i in (0, 1):
+            if abs(d[i]) > 1e-6:
+                size = touch.SCREEN_PT[i]
+                at = self.touch[i] * size + self.carry[i]
+                edge = (1 - SCROLL_MARGIN) * size - at if d[i] > 0 else at - SCROLL_MARGIN * size
+                room = min(room, max(edge, 0.0) / abs(d[i]))
+        if room < 0.5:
+            return [0.0, 0.0], True
+        if room < touch.SCROLL_CRAWL:  # the last points crawl: one report every few ticks
+            self.crawl += 1
+            if self.crawl % touch.SCROLL_CRAWL_TICKS:
+                return [0.0, 0.0], False
+        v = touch.scroll_step(room)
+        return [d[0] * v, d[1] * v], False
+
+    def _grip_tick(self, now):
+        # (lock held) Start a scroll touch: hover to the grip point, then press
+        # there a little later (a press that also moves makes iOS end the touch).
+        if self.grip is None:
+            pos = self._grip_point()
+            if pos != self.sent:
+                self.hid().cmd(f"a {pos[0]:.5f} {pos[1]:.5f} 0")
+                self.sent = pos
+            self.grip = (pos, now)
+            return
+        pos, since = self.grip
+        if now - since < GRIP_DELAY:
+            return
+        self.grip = None
+        self.hid().cmd(f"a {pos[0]:.5f} {pos[1]:.5f} 1")
+        self.touch = list(pos)
+        self.carry = [0.0, 0.0]
+        self.dragged_from = self.at
+        self.pressed = self.scrolling = True
+        self.moved_at = now
+        self.log("scroll down", f"({pos[0]:.3f}, {pos[1]:.3f})", f"wheel {self.wheel[0]:.0f},{self.wheel[1]:.0f} pt")
 
     def _down(self):
         # (lock held) Touch down exactly where the phone's pointer already is (the
@@ -107,8 +177,10 @@ class Pointer:
 
     def press(self, fx, fy):
         with self.lock:
+            self.wheel = [0.0, 0.0]  # a click ends a wheel scroll first
+            self.grip = None
             if self.scrolling:
-                self._up()  # a click ends a wheel scroll first
+                self._up()
             if self.pressed:
                 return
             self.at = (fx, fy)
@@ -142,20 +214,41 @@ class Pointer:
             time.sleep(touch.TICK)
             try:
                 with self.lock:
+                    now = time.time()
                     if not self.pressed:
-                        if self.at is not None:
+                        if (self.wheel[0] ** 2 + self.wheel[1] ** 2) ** 0.5 >= MIN_GRIP:
+                            self._grip_tick(now)
+                            continue
+                        if self.wheel != [0.0, 0.0] and now - self.scrolled_at > WHEEL_FORGET:
+                            self.wheel = [0.0, 0.0]
+                            self.grip = None
+                        if self.grip is not None:
+                            continue
+                        elif self.at is not None:
                             self._send_hover()
                         continue
                     fx, fy = self.at
                     lx, ly = self.dragged_from
                     self.dragged_from = (fx, fy)
-                    if not self.scrolling:  # a wheel scroll ignores the pointer's motion
+                    clipped = False
+                    if self.scrolling:  # a wheel scroll ignores the pointer's motion
+                        step, clipped = self._scroll_step()
+                        for i in (0, 1):
+                            self.wheel[i] -= step[i]
+                            self.carry[i] += step[i]
+                    else:
                         self.carry[0] += (fx - lx) * touch.SCREEN_PT[0]
                         self.carry[1] += (fy - ly) * touch.SCREEN_PT[1]
                     ux, uy = touch.whole_units(*self.carry)  # never more than the pointer moved
-                    if self.scrolling and not (ux or uy) and time.time() - self.scrolled_at > SCROLL_IDLE:
-                        self._up()
-                        continue
+                    if self.scrolling:
+                        if ux or uy:
+                            self.moved_at = now
+                        elif now - self.moved_at > SCROLL_STILL and (clipped or now - self.scrolled_at > SCROLL_STILL):
+                            self._up()  # at rest, so no fling; leftover wheel regrips
+                            self.carry = [0.0, 0.0]
+                            self.log("scroll up", f"({self.touch[0]:.3f}, {self.touch[1]:.3f})",
+                                     f"left {self.wheel[0]:.0f},{self.wheel[1]:.0f} pt")
+                            continue
                     self.hid().cmd(f"m {ux} {uy} 0 0")
                     if ux or uy:
                         mag = (ux * ux + uy * uy) ** 0.5
