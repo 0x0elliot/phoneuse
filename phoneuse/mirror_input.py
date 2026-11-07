@@ -1,18 +1,18 @@
 #!/usr/bin/python
 """Use the mirror window like the iPhone's screen: the phone's pointer follows
-your cursor while it is over the mirror, clicks tap, drags swipe.
+your cursor while it is over the mirror, clicks tap, drags swipe, and the
+keyboard types on the phone while the window has focus. The gestures themselves
+are in pointer.py, shared with the browser mirror.
 
-Hover, press and release go to the iPhone as absolute pointer reports (hidd
-'a'), which iOS places exactly. Motion while pressed goes as relative reports
-(hidd 'm'), because iOS ends a touch when the absolute position changes while
-the button is held. Mouse buttons
-are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
-keyboard keep working normally everywhere.
+Mouse buttons and keys are read from /dev/input read-only; nothing is grabbed,
+so the PC's mouse and keyboard keep working normally everywhere. The cursor
+position and window geometry come from Hyprland.
 
 The mirror window (window.py) draws the phone screen inside a dark bezel.
 Pressing on the bezel starts the touch at the nearest screen edge (press the
-bottom bezel and drag up = swipe home; left bezel and drag right = back). While the window doesn't show the phone (not mirroring),
-no mouse or keyboard input goes to the phone; the Bluetooth link stays up.
+bottom bezel and drag up = swipe home; left bezel and drag right = back). While
+the window doesn't show the phone (not mirroring), no mouse or keyboard input
+goes to the phone; the Bluetooth link stays up.
 
 iPhone settings: AssistiveTouch on, Dwell Control off.
 """
@@ -23,40 +23,30 @@ import struct
 import threading
 import time
 
-from . import touch
 from .hidclient import Hid
+from .pointer import Keys, Pointer
 from .screen import hypr, mirror_live, picture_rect, MIRROR_CLASS
 
 EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
-MIN_GAP = 1 / 250  # at most this many pointer reports per second
 
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
 
-class Buttons:
-    """Mouse input from every mouse, read-only. Calls on_press/on_release the moment
-    the left button changes, and collects raw motion while `dragging` is set."""
+class Mice:
+    """Left button and motion from every mouse, read-only. Calls on_press /
+    on_release the moment the button changes and sets `changed` on any event."""
 
-    def __init__(self, on_press=None, on_release=None):
-        self.down = False
+    def __init__(self, on_press, on_release):
         self.changed = threading.Event()
         self.on_press, self.on_release = on_press, on_release
-        self.dragging = False
-        self.dx = self.dy = 0
-        self.lock = threading.Lock()
         paths = sorted(glob.glob("/dev/input/by-id/*event-mouse"))
         self.fds = [os.open(p, os.O_RDONLY | os.O_NONBLOCK) for p in paths]
         log("watching", len(paths), "mice")
         threading.Thread(target=self._run, daemon=True).start()
-
-    def take_motion(self):
-        with self.lock:
-            dx, dy, self.dx, self.dy = self.dx, self.dy, 0, 0
-        return dx, dy
 
     def _run(self):
         while True:
@@ -69,19 +59,11 @@ class Buttons:
                 for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
                     _, _, etype, code, value = EVENT.unpack_from(data, i)
                     if etype == EV_KEY and code == BTN_LEFT and value in (0, 1):
-                        self.down = bool(value)
                         try:
                             (self.on_press if value else self.on_release)()
                         except Exception as e:
                             log("button error:", e)
-                        self.changed.set()
-                    elif etype == EV_REL:
-                        if self.dragging and code in (0, 1):  # REL_X, REL_Y
-                            with self.lock:
-                                if code == 0:
-                                    self.dx += value
-                                else:
-                                    self.dy += value
+                    if etype in (EV_KEY, EV_REL):
                         self.changed.set()
 
 
@@ -116,24 +98,17 @@ def keyboard_paths():
 
 
 class KeyForwarder:
-    """Types on the iPhone while the mirror window has focus. Read-only: keys still
-    reach the PC as usual (the mirror window ignores them)."""
+    """Types on the iPhone while the mirror window has focus (and shows the phone).
+    Read-only: keys still reach the PC as usual (the mirror window ignores them)."""
 
-    def __init__(self, hid_getter, focused):
-        self.hid_getter = hid_getter
+    def __init__(self, keys, focused):
+        self.keys = keys
         self.focused = focused
-        self.mods = 0
-        self.held = []
         self.sending = False
         paths = keyboard_paths()
         self.fds = [os.open(p, os.O_RDONLY | os.O_NONBLOCK) for p in paths]
         log("typing to the phone from", len(paths), "keyboard(s) while the mirror is focused")
         threading.Thread(target=self._run, daemon=True).start()
-
-    def _send(self):
-        hid = self.hid_getter()
-        if hid:
-            hid.cmd("k %d %s" % (self.mods, " ".join(str(c) for c in self.held[-6:])))
 
     def _run(self):
         while True:
@@ -153,42 +128,23 @@ class KeyForwarder:
                         log("key error:", e)
 
     def _key(self, code, down):
-        if code in _EVMOD:
-            self.mods = self.mods | _EVMOD[code] if down else self.mods & ~_EVMOD[code]
-        elif code in _EV2HID:
-            u = _EV2HID[code]
-            if down and u not in self.held:
-                self.held.append(u)
-            elif not down and u in self.held:
-                self.held.remove(u)
-        else:
+        if code not in _EVMOD and code not in _EV2HID:
             return
-        if self.focused():
-            self.sending = True
-            self._send()
-        elif self.sending:  # focus left the mirror: let go of everything on the phone
-            self.mods, self.held, self.sending = 0, [], False
-            self._send()
+        if not self.focused():
+            if self.sending:  # focus left the mirror: let go of everything on the phone
+                self.keys.release_all()
+                self.sending = False
+            return
+        self.sending = True
+        if code in _EVMOD:
+            self.keys.modifier(_EVMOD[code], down)
+        else:
+            self.keys.key(_EV2HID[code], down)
 
 
 def run(stop=None):
-    """Mirror-window mouse handling until `stop` (a threading.Event) is set.
-
-    Hover: the phone's pointer follows the cursor (absolute reports).
-    Press: touch down at the pointer immediately (absolute report, button 1).
-    Held: every 8 ms a relative report moves the touch by exactly what the
-    cursor moved (sized from the measured table), button 0 on these reports.
-    Release: absolute report, button 0.
-
-    Verified on a touch-event test page (touchlab/): this delivers one touch
-    whose path matches the request (175 -> 175 pt, flicks 144 -> 141 pt). An
-    absolute move while pressed makes iOS end the touch after ~90 ms (it reads
-    as a click), and relative-only presses are ignored.
-    Release: touch up.
-    """
-    shared = {"hid": None}  # (not "state": the hover code below uses that name)
-    hover = {"pos": None}  # last absolute position sent while hovering = where the phone's pointer is
-    touch_at = {"pos": None, "carry": [0.0, 0.0]}  # where the touch is during a drag
+    """Mirror-window mouse and keyboard handling until `stop` (a threading.Event) is set."""
+    shared = {"hid": None}
     win = {"body": None, "pic": None, "live": False}
 
     def hid():
@@ -203,101 +159,30 @@ def run(stop=None):
         except Exception:
             return False
 
-    def cursor_fraction():
-        """(fx, fy, inside) for the cursor against the phone picture; the bezel counts
-        as inside (positions on it clamp to the nearest screen edge). None while
-        the window doesn't show the phone: nothing is sent to it then."""
+    def cursor():
+        """(fx, fy, inside): the cursor as fractions of the phone picture (outside
+        0..1 on the bezel) and whether it is over the window. None while the window
+        doesn't show the phone: nothing is sent to it then."""
         if win["body"] is None or not win["live"]:
             return None
         cur = hypr("j/cursorpos")
         bx, by, bw, bh = win["body"]
         x, y, w, h = win["pic"]
         inside = bx <= cur["x"] <= bx + bw and by <= cur["y"] <= by + bh
-        fx = min(max((cur["x"] - x) / w, 0.0), 1.0)
-        fy = min(max((cur["y"] - y) / h, 0.0), 1.0)
-        return fx, fy, inside
+        return (cur["x"] - x) / w, (cur["y"] - y) / h, inside
+
+    pointer = Pointer(hid, log)
 
     def on_press():
-        c = cursor_fraction()
-        if not c or not c[2]:
-            return
-        # Touch down exactly where the phone's pointer already is (the last hover
-        # report), not at the cursor: a press that also changes the absolute position
-        # makes iOS end the touch after ~90 ms (drags die, clicks get flaky). Any gap
-        # between that spot and the cursor is sent as ordinary drag motion.
-        fx, fy = hover["pos"] if hover["pos"] else (c[0], c[1])
-        hid().cmd(f"a {fx:.5f} {fy:.5f} 1")
-        touch_at["pos"] = [fx, fy]
-        touch_at["carry"] = [(c[0] - fx) * touch.SCREEN_PT[0], (c[1] - fy) * touch.SCREEN_PT[1]]
-        buttons.take_motion()
-        buttons.dragging = True  # only now may motion reports follow
-        log("down", f"({fx:.3f}, {fy:.3f})")
+        c = cursor()
+        if c and c[2]:
+            pointer.press(c[0], c[1])
 
-    def on_release():
-        if not buttons.dragging:
-            return
-        buttons.dragging = False
-        # lift where the touch is, so the release carries no position change
-        fx, fy = touch_at["pos"] or (0.5, 0.5)
-        hid().cmd(f"a {fx:.5f} {fy:.5f} 0")  # touch up
-        hover["pos"] = (fx, fy)
-        log("up", f"({fx:.3f}, {fy:.3f})")
+    mice = Mice(on_press, pointer.release)
+    KeyForwarder(Keys(hid), mirror_focused)
 
-    buttons = Buttons(on_press, on_release)
-    KeyForwarder(hid, mirror_focused)
-
-    def motion_sender():
-        # While held: every 8 ms, move the phone's touch by exactly what the cursor
-        # moved over the mirror. Cursor deltas (not raw mouse counts, which are
-        # DPI-scaled) are converted to phone points, then to the report size that
-        # moves that far (touch.DRAG_PTS, measured; iOS accelerates by report size
-        # and drops reports sent faster than ~8 ms apart). Remainders carry over.
-        last = None
-        carry = [0.0, 0.0]  # phone points still to move
-        while stop is None or not stop.is_set():
-            time.sleep(touch.TICK)
-            if not buttons.dragging or win["pic"] is None:
-                last, carry[:] = None, [0.0, 0.0]
-                continue
-            try:
-                cur = hypr("j/cursorpos")
-            except Exception:
-                continue
-            if last is None:
-                last = cur
-                carry[:] = touch_at["carry"]
-                continue
-            x, y, w, h = win["pic"]
-            carry[0] += (cur["x"] - last["x"]) / w * touch.SCREEN_PT[0]
-            carry[1] += (cur["y"] - last["y"]) / h * touch.SCREEN_PT[1]
-            last = cur
-            ux, uy = touch.whole_units(carry[0], carry[1])  # never more than the cursor moved
-            # One report every tick, even with no motion: steady timing keeps iOS's
-            # acceleration predictable. The button stays 0 here: iOS holds the touch
-            # from the absolute press, and a button on these reports reads as a
-            # second press/release (double tap sounds).
-            try:
-                hid().cmd(f"m {ux} {uy} 0 0")
-            except Exception as e:
-                log("drag error:", e)
-                continue
-            if ux or uy:
-                mag = (ux * ux + uy * uy) ** 0.5
-                moved = touch.points_for(mag)
-                carry[0] -= moved * ux / mag
-                carry[1] -= moved * uy / mag
-                p = touch_at["pos"]
-                if p:
-                    p[0] = min(max(p[0] + moved * ux / mag / touch.SCREEN_PT[0], 0.0), 1.0)
-                    p[1] = min(max(p[1] + moved * uy / mag / touch.SCREEN_PT[1], 0.0), 1.0)
-    threading.Thread(target=motion_sender, daemon=True).start()
-
-    sent = None
     window_checked = 0.0
-    last_send = 0.0
     while stop is None or not stop.is_set():
-        buttons.changed.wait(IDLE_WAKE)
-        buttons.changed.clear()
         try:
             now = time.time()
             if now - window_checked > 0.5:
@@ -306,23 +191,16 @@ def run(stop=None):
                 win["body"] = (*client["at"], *client["size"]) if client else None
                 win["pic"] = picture_rect(client["at"], client["size"]) if client else None
                 window_checked = now
-            if buttons.dragging or win["body"] is None:
-                continue
-            if now - last_send < MIN_GAP:
-                continue
-            c = cursor_fraction()
-            if c and c[2]:
-                state = (round(c[0], 4), round(c[1], 4))
-                if state != sent:
-                    hid().cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
-                    sent = state
-                    hover["pos"] = state
-                    last_send = now
+            c = cursor()
+            if c and (c[2] or pointer.pressed):  # a drag may leave the window
+                pointer.hover(c[0], c[1])
         except Exception as e:
             log("error:", e)
             shared["hid"] = None
-            sent = None
             time.sleep(1)
+        mice.changed.wait(IDLE_WAKE)
+        mice.changed.clear()
+
 
 if __name__ == "__main__":
     run()
