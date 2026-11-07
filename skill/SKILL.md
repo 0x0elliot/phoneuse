@@ -108,6 +108,12 @@ try is enough.
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read
 it before inventing a new gesture with `phoneuse swipe`.
 
+## Ending a session
+
+Your actions start an agent session by themselves (the user's view glows and
+their mouse and keyboard pause). When your task is done, run `phoneuse done`
+(MCP: `end_session`) to hand the phone back at once.
+
 ## When the user takes over
 
 If an action fails with "The user took over the phone", stop and wait. Continue

@@ -6,6 +6,7 @@ Setup and running:
                                config, and the local vision models
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse status               Bluetooth link and mirror window
+  phoneuse done                 end the agent session: control goes back to the user
   phoneuse unlock               on the lock screen: ask the owner to approve entering the
                                passcode they saved in the browser mirror's settings
   phoneuse view [--print]       open the browser mirror (http://localhost:PORT) in the
@@ -282,8 +283,8 @@ def refuse_if_locked():
     """Stop before typing into the lock screen: typed text and Enter there would
     go to the passcode field, and a submitted wrong passcode counts as a failed
     attempt. Only the owner may unlock the phone."""
-    words = " ".join(t for _, _, t in screen_text()).lower()
-    if "passcode" in words or ("emergency" in words and "cancel" in words):
+    from . import unlock
+    if unlock.locked(screen_text):  # the passcode prompt, or the lock screen's clock and date
         die("The phone is locked (passcode screen). Nothing was typed. Run `phoneuse unlock` to "
             "ask the owner to approve an unlock, or ask them to unlock it.")
 
@@ -496,6 +497,18 @@ def up():
                 print(time.strftime("%H:%M:%S"), f"{label} exited ({procs[module].returncode}); starting it again.", flush=True)
                 time.sleep(1)
 
+    def start_vision():
+        # The screen-reading models (OCR and grounding) load as soon as phoneuse
+        # starts, not on an agent's first look. Skipped if they aren't installed.
+        if os.path.exists(os.path.join(ROOT, ".venv-vision", "bin", "python")):
+            try:
+                import contextlib, io
+                with contextlib.redirect_stderr(io.StringIO()):
+                    vision({"op": "ping"}, timeout=120)
+            except SystemExit:
+                pass
+    threading.Thread(target=start_vision, daemon=True).start()
+
     def keep_hub():
         # The video hub (hub.py): decodes the phone's stream and serves it to the
         # window and the browser mirror. Started first; rarely restarts.
@@ -612,6 +625,18 @@ def view(print_only):
     print(url)
 
 
+def agent_done():
+    """End the agent's session: the browser mirror stops glowing and its mouse and
+    keyboard reach the phone again, at once (not after 20 idle seconds)."""
+    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/done", data=b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=2).close()
+    except OSError:
+        pass
+    print("ok: session ended; control is back with the user")
+
+
 def unlock_cmd():
     """Ask the owner to unlock the phone with the saved passcode. Waits for their
     answer (up to 2 minutes); the passcode never passes through here."""
@@ -654,6 +679,8 @@ def main():
         return status()
     if cmd == "unlock":
         return unlock_cmd()
+    if cmd == "done":
+        return agent_done()
     if cmd == "view":
         return view("--print" in args)
     if cmd == "text":

@@ -31,6 +31,7 @@ server = MCPServer(
         "plus the screen's text with positions, so you rarely need `look` on its own. If the last frame "
         "is still mid-transition, call look. Prefer tap_on for visible text. "
         "On the lock screen call unlock (the owner approves each unlock); never type a passcode. "
+        "When your task is done, call end_session to hand the phone back to the user. "
         "This is the user's personal phone: ask before sending, posting, buying, deleting, or changing "
         "account or security settings. Don't tap the top centre (Dynamic Island): it can stop mirroring."),
 )
@@ -240,6 +241,14 @@ def unlock(look: Look = "text") -> list:
     ok, msg = _quietly(cli.unlock_cmd)
     msg = msg.splitlines()[-1] if msg else msg
     return [msg if ok else f"error: {msg}"] + _screen(look)
+
+
+@server.tool(structured_output=False)
+def end_session() -> str:
+    """Call when your task on the phone is done: the user's view stops showing an
+    agent at work and their own mouse and keyboard reach the phone again at once.
+    (A session starts by itself with your first action.)"""
+    return _quietly(cli.agent_done)[1]
 
 
 @server.tool(structured_output=False)

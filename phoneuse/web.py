@@ -400,6 +400,12 @@ def app(mirror):
             asyncio.ensure_future(tab.ws.send_str(msg))
         return web.json_response({"ok": True})
 
+    async def agent_done(_req):
+        # The agent's session is over: control goes back to the page at once.
+        mirror.agent_until = 0.0
+        mirror.broadcast_state()
+        return web.json_response({"ok": True})
+
     async def agent_takeover(req):
         if not same_origin(req):
             return web.Response(status=403)
@@ -414,6 +420,7 @@ def app(mirror):
     a.router.add_post("/api/agent/act", agent_act)
     a.router.add_post("/api/agent/takeover", agent_takeover)
     a.router.add_post("/api/agent/cursor", agent_cursor)
+    a.router.add_post("/api/agent/done", agent_done)
     a.router.add_post("/api/keyboard", keyboard)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
     return a

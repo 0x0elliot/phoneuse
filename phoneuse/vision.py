@@ -115,7 +115,7 @@ def serve():
         threading.Thread(target=_client, args=(v, conn), daemon=True).start()
 
 
-def _client(v, conn):
+def _client(v, conn):  # requests: {"op": "text" | "find" | "ping", ...}
     with conn:
         try:
             req = json.loads(conn.makefile().readline())
