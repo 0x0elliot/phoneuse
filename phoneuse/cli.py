@@ -146,8 +146,13 @@ class AgentHid:
     def __init__(self, h):
         self.h = h
         self.url = f"http://127.0.0.1:{CFG['web_port']}/api/agent/cursor"
+        self.first_seq = None  # picture-change count just before the action's first command
 
     def cmd(self, line):
+        if self.first_seq is None and line != "status":
+            # Taken here, after any OCR or grounding lookup the action did first:
+            # changes during a lookup must not count as this action's result.
+            self.first_seq = frame_seq()
         r = self.h.cmd(line)
         if line.startswith("a "):
             try:
@@ -681,7 +686,7 @@ def main():
         return
     else:
         die(f"unknown command: {cmd} (phoneuse --help)")
-    acted(seq_before)
+    acted(h.first_seq if getattr(h, "first_seq", None) is not None else seq_before)
     print("\n".join(["ok"] + NOTES))
     if then_text:
         for x, y, t in screen_text():

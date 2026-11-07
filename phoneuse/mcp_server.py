@@ -72,7 +72,7 @@ def _act(action, look):
     def run():
         h = cli.hid()
         r = action(h)
-        cli.acted()
+        cli.acted(h.first_seq)
         return r if isinstance(r, str) else "ok"
     cli.NOTES.clear()
     ok, msg = _quietly(run)
