@@ -13,14 +13,15 @@ input goes in as a Bluetooth mouse and keyboard. Everything an agent does is a
 
 1. Run `airwisp status`. You need `HID service: active`, `connected=True`, and a
    line `Mirror window: [x, y] [w, h]` (not "none").
-2. No mirror window: check whether `airwisp up` is running (it lives in the user's tmux
-   session `mirror`, window 0). If it isn't, start it there with
-   `tmux send-keys -t mirror:0 'airwisp up' Enter`, not in the background, so the user
-   can see it. Then ask the user to start Screen Mirroring to "Linux" from the iPhone's
-   Control Center. You can't start mirroring from the PC.
-3. `connected=False`: run `airwisp status` again after a few seconds (the daemon
+2. No mirror window: check whether `airwisp up` is running. If it isn't, start it
+   somewhere the user can see it (a terminal or tmux window they use), not hidden in
+   the background. Then ask the user to start Screen Mirroring to "airwisp" from the
+   iPhone's Control Center. You can't start mirroring from the PC.
+3. The mirror window must be visible and uncovered: screenshots capture that area
+   of the screen, so another window on top of it is what you'd see.
+4. `connected=False`: run `airwisp status` again after a few seconds (the daemon
    reconnects), then ask the user to tap "airwisp" in the iPhone's Bluetooth settings.
-4. HID service not active: `airwisp install` (needs sudo) sets it up.
+5. HID service not active: `airwisp install` (needs sudo) sets it up.
 
 ## The loop
 
