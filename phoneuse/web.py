@@ -89,6 +89,9 @@ class Mirror:
         self.mirroring = False
         self.hub_live = False
         self.hid = None
+        self.taken_over = False
+        self.agent_until = 0.0
+        self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
 
     def get_hid(self):
         if self.hid is None:
@@ -97,6 +100,43 @@ class Mirror:
 
     def live(self):
         return self.mirroring and self.hub_live
+
+    def bluetooth_up(self):
+        try:
+            return "connected=True" in self.get_hid().cmd("status")
+        except Exception:
+            self.hid = None
+            return False
+
+    # ---- agent sessions: who is driving the phone ----
+    AGENT_IDLE = 20.0  # an agent session ends this long after its last action (s)
+
+    def agent(self):
+        """"driving" while an agent acts (the page shows it and takes no input),
+        "paused" after the user took over, else "idle"."""
+        if self.taken_over:
+            return "paused"
+        return "driving" if time.time() < self.agent_until else "idle"
+
+    def agent_acts(self):
+        """Called before every agent action (CLI or MCP). False while the user has
+        taken over: the agent must stop."""
+        if self.taken_over:
+            return False
+        was = self.agent()
+        self.agent_until = time.time() + self.AGENT_IDLE
+        if was != "driving":
+            self.broadcast_state()
+        return True
+
+    def take_over(self, take):
+        self.taken_over = take
+        self.agent_until = 0.0
+        self.broadcast_state()
+
+    def broadcast_state(self):
+        for tab in list(self.tabs):
+            tab.state()
 
     def _frame(self, data, key):
         self.loop.call_soon_threadsafe(self._send_frame, data, key)
@@ -122,10 +162,11 @@ class Mirror:
             except OSError:
                 joined, self.hub_live = False, False  # the hub is (re)starting
             mirroring = screen.airplay_mirroring()
-            changed = mirroring != self.mirroring
-            self.mirroring = mirroring
+            bt = await loop.run_in_executor(None, self.bluetooth_up)
+            changed = mirroring != self.mirroring or bt != self.bluetooth
+            self.mirroring, self.bluetooth = mirroring, bt
             for tab in list(self.tabs):
-                if changed or tab.told_live != self.live():
+                if changed or tab.told_live != self.live() or tab.told_agent != self.agent():
                     tab.state()
             await asyncio.sleep(0.5)
 
@@ -138,6 +179,7 @@ class Tab:
         self.synced = False  # has had a keyframe
         self.playing = False  # has shown a frame (the page says so)
         self.told_live = False
+        self.told_agent = None
         self.pointer = Pointer(mirror.get_hid, log)
         self.keys = Keys(mirror.get_hid)
         self.queue = asyncio.Queue(maxsize=8)
@@ -156,7 +198,9 @@ class Tab:
     def state(self):
         live = self.mirror.live()
         self.told_live = live
+        self.told_agent = self.mirror.agent()
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
+                          "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
                           "name": NAME, "screen": SCREEN_PT,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
@@ -174,7 +218,9 @@ class Tab:
             self.synced = False
             self.mirror.stream.keyframe()
             return
-        if t == "blur" or not (self.playing and self.mirror.live()):
+        # While an agent drives, the page's mouse and keyboard don't reach the phone
+        # (mixing in input would confuse the agent); the user takes over first.
+        if t == "blur" or not (self.playing and self.mirror.live()) or self.mirror.agent() == "driving":
             self.pointer.release()
             self.keys.release_all()
             return
@@ -327,11 +373,36 @@ def app(mirror):
             log("tab left;", len(mirror.tabs), "open")
         return sock
 
+    async def agent_act(_req):
+        # The CLI and MCP server call this before every agent action.
+        if mirror.agent_acts():
+            return web.json_response({"ok": True})
+        return web.json_response({"ok": False, "result": "The user took over the phone. Stop and wait; "
+                                  "continue only when they tell you to (they resume you on the page)."},
+                                 status=409)
+
+    async def agent_cursor(req):
+        # Where the agent points or touches, for the page's glowing dot.
+        b = await req.json()
+        msg = json.dumps({"type": "agent-cursor", "x": float(b["x"]), "y": float(b["y"]), "down": bool(b.get("down"))})
+        for tab in list(mirror.tabs):
+            asyncio.ensure_future(tab.ws.send_str(msg))
+        return web.json_response({"ok": True})
+
+    async def agent_takeover(req):
+        if not same_origin(req):
+            return web.Response(status=403)
+        mirror.take_over(bool((await req.json()).get("take")))
+        return web.json_response({"agent": mirror.agent()})
+
     a = web.Application()
     a.router.add_get("/", page)
     a.router.add_get("/ws", ws)
     a.router.add_route("*", "/api/passcode", passcode)
     a.router.add_post("/api/unlock", unlocks.ask)
+    a.router.add_post("/api/agent/act", agent_act)
+    a.router.add_post("/api/agent/takeover", agent_takeover)
+    a.router.add_post("/api/agent/cursor", agent_cursor)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
     return a
 
