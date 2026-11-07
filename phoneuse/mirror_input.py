@@ -32,7 +32,7 @@ EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 REL_HWHEEL, REL_WHEEL = 0x06, 0x08
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
-NOTCH_PT = 50  # phone points scrolled per wheel notch
+NOTCH_PT = 30  # phone points per wheel notch: a small swipe
 
 
 def log(*a):

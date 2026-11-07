@@ -12,10 +12,10 @@ button 1).
 Held: every 8 ms a relative report moves the touch by exactly what the pointer
 moved (sized from the measured table), button 0 on these reports.
 Release: absolute report, button 0, where the touch is.
-Scroll: iOS ignores the mouse wheel, so a wheel scroll becomes a drag: touch
-down where the pointer is, move the touch by the scrolled amount, and lift once
-the wheel has been still for a moment (the pause before lifting stops the
-content from flinging on).
+Scroll: iOS ignores the mouse wheel, so wheel scrolling becomes a short swipe
+at the pointer: touch down where the pointer is, move the touch by the scrolled
+amount, and lift as soon as the wheel stops. Further wheel steps that arrive
+before the lift extend the same swipe.
 
 Verified on a touch-event test page (touchlab/): this delivers one touch whose
 path matches the request (175 -> 175 pt, flicks 144 -> 141 pt). An absolute
@@ -28,7 +28,7 @@ import time
 from . import touch
 
 MIN_GAP = 1 / 250  # at most this many hover reports per second
-SCROLL_IDLE = 0.15  # lift the scroll touch after the wheel is still this long (s)
+SCROLL_IDLE = 0.05  # lift the scroll touch this soon after the wheel stops (s): a short swipe
 
 
 def clamp(v):
