@@ -1,6 +1,6 @@
 ---
 name: airwisp
-description: See and operate the user's iPhone from this Linux PC with the `airwisp` CLI (AirPlay mirror for the screen, Bluetooth mouse/keyboard for input). Use when a task needs the iPhone: open or use an app, read what is on the airwisp screen, tap, type, swipe, check a notification, change a airwisp setting, or test something on the device. Also use when the mirror or the Bluetooth link needs starting or fixing.
+description: See and operate the user's iPhone from this Linux PC with the `airwisp` CLI (AirPlay mirror for the screen, Bluetooth mouse/keyboard for input). Use when a task needs the iPhone: open or use an app, read what is on the phone screen, tap, type, swipe, check a notification, change a phone setting, or test something on the device. Also use when the mirror or the Bluetooth link needs starting or fixing.
 ---
 
 # Operating the iPhone with airwisp
@@ -103,13 +103,13 @@ leftover; close it, or `airwisp back` until you reach the app's main view.
   security setting, just as you would in a browser.
 - **Permission prompts** ("Allow notifications?" and the like) belong to the user.
   Leave them, or ask, unless the task is about that permission.
-- If the user is using the airwisp at the same time (the screen changes on its own), pause
+- If the user is using the phone at the same time (the screen changes on its own), pause
   and ask before continuing; both of you would be moving the same pointer.
 
 ## When something misbehaves
 
 - A tap or swipe seems to miss: take a fresh screenshot first. The mirror trails
-  the airwisp by about half a second, so an earlier screenshot may be stale.
+  the phone by about half a second, so an earlier screenshot may be stale.
 - The pointer isn't visible: `airwisp where` returns "not found". On the phone, under
   Accessibility → Pointer Control, the colour should be Orange (large) and
   Automatically Hide Pointer off.
