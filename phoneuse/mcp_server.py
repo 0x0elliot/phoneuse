@@ -74,10 +74,11 @@ def _act(action, look):
         r = action(h)
         cli.acted()
         return r if isinstance(r, str) else "ok"
+    cli.NOTES.clear()
     ok, msg = _quietly(run)
     if not ok:
         return [f"error: {msg}"]
-    return [msg] + _screen(look)
+    return ["\n".join([msg] + cli.NOTES)] + _screen(look)
 
 
 def _pt(x, y):

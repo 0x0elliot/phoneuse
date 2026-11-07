@@ -13,9 +13,7 @@ Setup and running:
 
 Agent commands. Coordinates are fractions (0..1) of the screenshot, or phone
 points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
-  phoneuse screenshot [PATH]    PNG of the phone screen; parks the pointer at the left
-                               edge first and waits for the mirror to catch up
-                               (--keep-pointer to leave the pointer where it is)
+  phoneuse screenshot [PATH]    PNG of the phone screen, once it has stopped changing
   phoneuse tap X Y              tap
   phoneuse longpress X Y [S]    press and hold (default 0.8 s)
   phoneuse swipe X0 Y0 X1 Y1 [S]  drag from one point to another over S seconds
@@ -58,10 +56,9 @@ ROOT = os.path.dirname(PKG)  # the repository checkout
 
 PT = SCREEN_PT
 LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-action")
-MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
 # UxPlay receives AirPlay and passes the phone's H.264 stream on as RTP to the
 # video hub (hub.py), which serves the mirror window and the browser mirror.
-MIRROR_ARGS = ["uxplay", "-p", "-n", NAME,
+MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-nh",  # -nh: no "@hostname" after the name
                "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! udpsink host=127.0.0.1 port={screen.HUB_RTP_PORT} sync=false",
                "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
@@ -92,9 +89,42 @@ def need_mirror():
             f"to {NAME} on the iPhone (Control Center > Screen Mirroring), then check `phoneuse status`.")
 
 
+LAST_SEEN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-seen")
+NOTES = []  # remarks for the agent, printed (CLI) or returned (MCP) with the action
+
+
+def agent_turn():
+    """Before an agent action: tell the browser mirror an agent is driving (it
+    glows and locks its own input), and stop if the user has taken over. Also
+    notes when the screen changed since the agent last looked without it acting
+    (the user may be using the phone, or something is animating)."""
+    import json
+    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act", data=b"{}", method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=2).close()
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            die(json.loads(e.read()).get("result", "the user took over the phone; stop and wait"))
+    except OSError:
+        pass  # no browser mirror running: nothing to tell
+    try:
+        seen_at = os.path.getmtime(LAST_SEEN)
+        acted_at = os.path.getmtime(LAST_ACTION) if os.path.exists(LAST_ACTION) else 0
+        # only when the agent looked after its own last action (else its own frames count)
+        if time.time() - seen_at < 600 and seen_at >= acted_at:
+            seen, now = int(open(LAST_SEEN).read()), frame_seq()
+            if now is not None and now > seen + 1:  # one late change is usually the end of an animation
+                NOTES.append("note: the screen changed since your last look without an action from you "
+                             "(someone may be using the phone, or it is animating); look before relying on it")
+    except (OSError, ValueError):
+        pass
+
+
 def hid():
     """The Bluetooth link, for commands that act on the phone."""
     need_mirror()
+    agent_turn()
     try:
         h = Hid()
     except OSError:
@@ -105,11 +135,63 @@ def hid():
             h.cmd("connect")
         except RuntimeError as e:
             die(f"iPhone not connected over Bluetooth ({e}). On the phone: Settings > Bluetooth > {NAME}.")
-    return h
+    return AgentHid(h)
 
 
-def acted():
-    open(LAST_ACTION, "w").close()
+class AgentHid:
+    """The Bluetooth link for agent actions: also shows where the agent points on
+    the browser mirror (a glowing dot), from the absolute pointer commands."""
+
+    def __init__(self, h):
+        self.h = h
+        self.url = f"http://127.0.0.1:{CFG['web_port']}/api/agent/cursor"
+
+    def cmd(self, line):
+        r = self.h.cmd(line)
+        if line.startswith("a "):
+            try:
+                _, x, y, b = line.split()[:4]
+                body = f'{{"x": {float(x)}, "y": {float(y)}, "down": {str(b != "0").lower()}}}'.encode()
+                req = urllib.request.Request(self.url, data=body, method="POST", headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=0.3).close()
+            except (OSError, ValueError):
+                pass  # the dot is a courtesy; never slow or fail the action
+        return r
+
+
+def frame_seq():
+    """The count of picture changes (frames service; None without it): taken
+    before an action, so a later read can wait for that action's result."""
+    try:
+        line, _ = screen.frames_request("status", timeout=1)
+        return int(line.split("seq=")[1].split()[0])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def acted(seq_before=None):
+    """Note that an action happened, and the frame count from before it."""
+    with open(LAST_ACTION, "w") as f:
+        f.write("" if seq_before is None else str(seq_before))
+
+
+def settle():
+    """Wait until the phone's screen is still: after a recent action, until its
+    first frame has arrived and frames have stopped; otherwise at once. Driven
+    by the hub's frame clock, no fixed delays."""
+    since = None
+    try:
+        if time.time() - os.path.getmtime(LAST_ACTION) < 5:
+            txt = open(LAST_ACTION).read().strip()
+            since = int(txt) if txt else None
+    except (FileNotFoundError, ValueError):
+        pass
+    try:
+        line, _ = screen.frames_request(f"settle {since}" if since is not None else "settle", timeout=6)
+        with open(LAST_SEEN, "w") as f:  # what the agent has now seen (see agent_turn)
+            f.write(line.split("seq=")[1].split()[0])
+    except (OSError, IndexError):
+        time.sleep(0.3)  # no hub (older setup): a short pause instead
 
 
 def key_combo(h, combo):
@@ -154,6 +236,21 @@ def scroll(h, direction, n=1.0):
     touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
 
 
+def step(h, command, quiet=0.1):
+    """Send one HID command and wait until the phone has shown its result (the
+    frames service), instead of a fixed pause. `quiet`: how long the picture
+    must stay still, longer where results stream in (search)."""
+    seq = frame_seq()
+    h.cmd(command)
+    if seq is None:
+        time.sleep(0.8)  # no frames service (older setup)
+        return
+    try:
+        screen.frames_request(f"settle {seq} {quiet}", timeout=6)
+    except OSError:
+        time.sleep(0.8)
+
+
 def refuse_if_locked():
     """Stop before typing into the lock screen: typed text and Enter there would
     go to the passcode field, and a submitted wrong passcode counts as a failed
@@ -165,11 +262,11 @@ def refuse_if_locked():
 
 
 def open_app(h, name):
-    h.cmd("key h gui"); time.sleep(0.8)  # also wakes a locked phone, showing the passcode screen
+    step(h, "key h gui")  # also wakes a locked phone, showing the passcode screen
     refuse_if_locked()
-    h.cmd("key space gui"); time.sleep(0.7)
-    h.cmd("type " + name); time.sleep(0.8)
-    h.cmd("key enter")
+    step(h, "key space gui")
+    step(h, "type " + name, quiet=0.35)  # search results arrive in waves
+    step(h, "key enter", quiet=0.3)  # wait for the app to come up
 
 
 def type_text(h, text):
@@ -183,21 +280,9 @@ def type_text(h, text):
 
 # ---------- screen ----------
 
-def screenshot(path, park=True):
+def screenshot(path):
     need_mirror()
-    if park:
-        try:
-            # move the pointer to the left edge so it doesn't cover text
-            Hid().cmd("a 0.0 0.62 0")
-            acted()
-        except (OSError, RuntimeError):
-            pass
-    try:
-        wait = MIRROR_LAG - (time.time() - os.path.getmtime(LAST_ACTION))
-        if wait > 0:
-            time.sleep(wait)
-    except FileNotFoundError:
-        pass
+    settle()
     try:
         png = screen.grab_png()
     except RuntimeError:
@@ -246,30 +331,12 @@ def vision(req, timeout=90):
     die("vision service didn't start; see $XDG_RUNTIME_DIR/phoneuse-vision.log")
 
 
-def fresh_screenshot(settle=True):
-    """A screenshot for reading, taken once the screen has stopped changing (apps
-    launching, pages sliding in): reading mid-animation gave stale or half-drawn
-    text. Waits at most about 3 s."""
+def fresh_screenshot():
+    """A screenshot for reading, once the screen has settled (see settle)."""
     path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"phoneuse-shot-{os.getpid()}.png")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         screenshot(path)
-    if not settle:
-        return path
-    import numpy as np
-    from PIL import Image
-
-    def small(png_path):
-        return np.asarray(Image.open(png_path).convert("L").resize((101, 219)), dtype=np.int16)
-    prev, deadline = small(path), time.time() + 3.0
-    while time.time() < deadline:
-        time.sleep(0.3)
-        with open(path, "wb") as f:
-            f.write(screen.grab_png())
-        cur = small(path)
-        if np.abs(cur - prev).mean() < 1.0:  # two frames 0.3 s apart agree
-            break
-        prev = cur
     return path
 
 
@@ -392,6 +459,18 @@ def up():
             time.sleep(1)
     threading.Thread(target=keep_hub, daemon=True).start()
 
+    def keep_frames():
+        # The frames service (frames.py): settle and screenshots for agents. It
+        # joins the hub as a viewer, so it restarts freely.
+        while not stop.is_set():
+            procs["frames"] = subprocess.Popen([sys.executable, "-m", "phoneuse.frames"], cwd=ROOT)
+            rc = procs["frames"].wait()
+            if stop.is_set():
+                break
+            print(time.strftime("%H:%M:%S"), f"frames service exited ({rc}); starting it again.", flush=True)
+            time.sleep(1)
+    threading.Thread(target=keep_frames, daemon=True).start()
+
     def keep_window():
         # The mirror window (window.py) outlives UxPlay restarts and phone
         # reconnects; it waits for the next stream by itself.
@@ -459,7 +538,7 @@ def up():
         stop.set()
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        for name in ("mirror", "window", "web", "hub"):
+        for name in ("mirror", "window", "web", "frames", "hub"):
             p = procs.get(name)
             if p and p.poll() is None:
                 p.terminate()
@@ -545,10 +624,10 @@ def main():
         print(f"{x:.3f} {y:.3f}")
         return
     if cmd == "screenshot":
-        keep = "--keep-pointer" in args
-        paths = [x for x in args if x != "--keep-pointer"]
-        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse.png"), park=not keep)
+        paths = [x for x in args if not x.startswith("--")]  # (--keep-pointer: now always)
+        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse.png"))
     h = hid()
+    seq_before = frame_seq()
     if cmd == "tap":
         touch.tap(h, *point(*args[:2]))
     elif cmd == "longpress":
@@ -576,8 +655,8 @@ def main():
         return
     else:
         die(f"unknown command: {cmd} (phoneuse --help)")
-    acted()
-    print("ok")
+    acted(seq_before)
+    print("\n".join(["ok"] + NOTES))
     if then_text:
         for x, y, t in screen_text():
             print(f"{x:.3f} {y:.3f}  {t}")
