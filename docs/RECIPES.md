@@ -60,6 +60,7 @@ points, which is plenty for scrolling and edge gestures.
 
 - Accessibility → Touch → AssistiveTouch: on; Dwell Control: off (otherwise a
   resting pointer taps on its own).
-- Accessibility → Pointer Control: colour Orange, large size, Automatically Hide
-  Pointer off (`airwisp where` finds the ring by colour).
+- Optional: Accessibility → Pointer Control colour Orange, large size, Automatically
+  Hide Pointer off. Only `airwisp where` and the telemetry tools use it, to find
+  the pointer in screenshots; gestures never need to locate the pointer.
 - Consider Display & Brightness → Auto-Lock: Never while an agent is working.

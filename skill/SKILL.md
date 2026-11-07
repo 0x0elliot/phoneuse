@@ -110,9 +110,9 @@ leftover; close it, or `airwisp back` until you reach the app's main view.
 ## When something misbehaves
 
 - A tap or swipe seems to miss: take a fresh screenshot first. The mirror trails
-  the phone by about half a second, so an earlier screenshot may be stale.
-- The pointer isn't visible: `airwisp where` returns "not found". On the phone, under
-  Accessibility → Pointer Control, the colour should be Orange (large) and
-  Automatically Hide Pointer off.
+  the phone slightly, so an earlier screenshot may be stale.
+- You never need to locate the pointer to act: taps and drags start from exact
+  positions. `airwisp where` (a debugging aid) finds it only if Pointer Control's
+  colour is Orange; "not found" otherwise is normal.
 - Taps happen on their own wherever the pointer rests: Dwell Control is on. Ask
   the user to turn it off (Accessibility → Touch → AssistiveTouch → Dwell Control).

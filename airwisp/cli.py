@@ -20,7 +20,8 @@ points if any value is > 1 (screen_points in ~/.config/airwisp/config.toml):
   airwisp open APP             open an app by name (search, type, Enter)
   airwisp type TEXT            type text (US layout); \\n presses Enter
   airwisp key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
-  airwisp where                where the pointer is (Pointer Control colour Orange)
+  airwisp where                debugging: where the pointer appears (needs Pointer
+                               Control colour Orange)
 
 Reading the screen without images (local models; a few hundred tokens instead
 of ~1,300 for a screenshot):
@@ -29,8 +30,7 @@ of ~1,300 for a screenshot):
                                ("clear search (X) button", "Settings app icon")
   airwisp tap-on WHAT          find it and tap it; prints where it tapped
 
-iPhone settings this relies on: AssistiveTouch on, Dwell Control off, Pointer
-Control colour Orange (large), Automatically Hide Pointer off.
+iPhone settings this relies on: AssistiveTouch on, Dwell Control off.
 """
 import os
 import subprocess
@@ -156,7 +156,7 @@ def type_text(h, text):
 def screenshot(path, park=True):
     if park:
         try:
-            # move the large orange pointer to the left edge so it doesn't cover text
+            # move the pointer to the left edge so it doesn't cover text
             Hid().cmd("a 0.0 0.62 0")
             acted()
         except (OSError, RuntimeError):

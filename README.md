@@ -52,8 +52,11 @@ attached: without it the signal can be too weak to pair reliably.
 4. **Set up the iPhone** under Settings → Accessibility:
    - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
      pointer taps by itself when it rests).
-   - Pointer Control: colour **Orange**, size large, Automatically Hide Pointer
-     **off**. Agents find the pointer by this colour.
+   - Optional, for the debugging tools: Pointer Control colour **Orange**, large,
+     with Automatically Hide Pointer off. `airwisp where` and the telemetry tools
+     find the pointer in screenshots by this colour. Agents don't need it: every
+     tap and drag starts from an exact position, so airwisp always knows where
+     the pointer is.
 
 5. **Pair**: on the iPhone, Settings → Bluetooth → tap **airwisp**. The first
    device to pair is trusted from then on (`/etc/airwisp/allowed`).
