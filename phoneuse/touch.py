@@ -88,7 +88,10 @@ class Touch:
         fx, fy = _clamp(fx), _clamp(fy)
         if self.pos is None or abs(self.pos[0] - fx) > 0.002 or abs(self.pos[1] - fy) > 0.002:
             self.hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
-            time.sleep(settle)
+            # A new Touch doesn't know where the pointer is: it may be parked at the
+            # left edge after a screenshot, a long jump. Taps right after such
+            # jumps were lost twice in 15 tries at 0.1 s; give unknown starts longer.
+            time.sleep(settle if self.pos is not None else max(settle, 0.2))
         self.hid.cmd(f"a {fx:.5f} {fy:.5f} 1")
         self.pos = self.target = (fx, fy)
         self.down = True

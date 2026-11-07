@@ -189,6 +189,27 @@ def _components(mask, cell=4):
     return out
 
 
+def find_switches(frame_rgb):
+    """On/off switches (iOS toggles) in a screenshot: [(x, y, on)], positions as
+    fractions. A toggle is a pill about 61 x 31 pt: green when on, grey when off
+    (dark-mode grey; light-mode toggles aren't detected). OCR can't read them."""
+    a = frame_rgb.astype(np.int16)
+    h, w = a.shape[:2]
+    pt = w / 402  # pixels per phone point (portrait)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    masks = {
+        True: (g > 170) & (r < 110) & (b < 140) & (g - r > 90),  # green track
+        False: (abs(r - 90) < 14) & (abs(g - r) < 6) & (abs(b - r) < 10),  # grey track
+    }
+    found = []
+    for on, mask in masks.items():
+        for n, xs, ys in _components(mask, cell=2):
+            bw, bh = xs.max() - xs.min(), ys.max() - ys.min()
+            if 48 * pt <= bw <= 72 * pt and 22 * pt <= bh <= 36 * pt and xs.mean() > 0.6 * w:  # toggles sit at the right
+                found.append((float(xs.mean() / w), float(ys.mean() / h), on))
+    return sorted(found, key=lambda t: t[1])
+
+
 def orange_mask(frame_rgb):
     r, g, b = (frame_rgb[..., i].astype(np.int16) for i in range(3))
     return (r > 200) & (g > 100) & (g < 185) & (b < 90) & (r - g > 60)

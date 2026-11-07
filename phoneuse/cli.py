@@ -25,9 +25,14 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse where                debugging: where the pointer appears (needs Pointer
                                Control colour Orange)
 
+Any action command can end with --text to print the screen as text afterwards
+(as `phoneuse text`), e.g. `phoneuse tap 0.3 0.5 --text`.
+
 Reading the screen without images (local models; a few hundred tokens instead
 of ~1,300 for a screenshot):
-  phoneuse text [--json]        every line of text on screen with its centre (x, y)
+  phoneuse text [--json] [--all] every line of text on screen with its centre (x, y), and
+                               on/off switches as [switch on] / [switch off]; --all keeps
+                               the status bar and stray icon glyphs
   phoneuse find WHAT            where an element is, from a plain description
                                ("clear search (X) button", "Settings app icon")
   phoneuse tap-on WHAT          find it and tap it; prints where it tapped
@@ -146,14 +151,26 @@ def scroll(h, direction, n=1.0):
     touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
 
 
+def refuse_if_locked():
+    """Stop before typing into the lock screen: typed text and Enter there would
+    go to the passcode field, and a submitted wrong passcode counts as a failed
+    attempt. Only the owner may unlock the phone."""
+    words = " ".join(t for _, _, t in screen_text()).lower()
+    if "passcode" in words or ("emergency" in words and "cancel" in words):
+        die("The phone is locked (passcode screen). Nothing was typed. Ask the owner to "
+            "unlock it; never enter a passcode.")
+
+
 def open_app(h, name):
-    h.cmd("key h gui"); time.sleep(0.8)
+    h.cmd("key h gui"); time.sleep(0.8)  # also wakes a locked phone, showing the passcode screen
+    refuse_if_locked()
     h.cmd("key space gui"); time.sleep(0.7)
     h.cmd("type " + name); time.sleep(0.8)
     h.cmd("key enter")
 
 
 def type_text(h, text):
+    refuse_if_locked()
     for i, chunk in enumerate(text.replace("\\n", "\n").split("\n")):
         if i:
             h.cmd("key enter")
@@ -226,26 +243,94 @@ def vision(req, timeout=90):
     die("vision service didn't start; see $XDG_RUNTIME_DIR/phoneuse-vision.log")
 
 
-def fresh_screenshot():
+def fresh_screenshot(settle=True):
+    """A screenshot for reading, taken once the screen has stopped changing (apps
+    launching, pages sliding in): reading mid-animation gave stale or half-drawn
+    text. Waits at most about 3 s."""
     path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"phoneuse-shot-{os.getpid()}.png")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         screenshot(path)
+    if not settle:
+        return path
+    import numpy as np
+    from PIL import Image
+
+    def small(png_path):
+        return np.asarray(Image.open(png_path).convert("L").resize((101, 219)), dtype=np.int16)
+    prev, deadline = small(path), time.time() + 3.0
+    while time.time() < deadline:
+        time.sleep(0.3)
+        with open(path, "wb") as f:
+            f.write(screen.grab_png())
+        cur = small(path)
+        if np.abs(cur - prev).mean() < 1.0:  # two frames 0.3 s apart agree
+            break
+        prev = cur
     return path
+
+
+STATUS_BAR = 0.055  # lines above this (time, signal, battery) are left out of `text`
+BACK_GLYPHS = {"く", "<", "‹", "〈", "〈"}  # how OCR reads the back chevron at the top left
+
+
+def screen_text(show_all=False):
+    """The screen as text lines [(x, y, text)]: OCR plus the state of on/off
+    switches, which OCR can't read. Drops the status bar and icon glyphs OCR
+    mistakes for text (lines without a letter or digit) unless show_all."""
+    import numpy as np
+    from PIL import Image
+    shot = fresh_screenshot()
+    r = vision({"op": "text", "image": shot})
+    rgb = np.asarray(Image.open(shot).convert("RGB"))
+    os.unlink(shot)
+    if "error" in r:
+        die(r["error"])
+    lines = [(ln["x"], ln["y"], "[back]" if ln["text"].strip() in BACK_GLYPHS and ln["x"] < 0.15 else ln["text"])
+             for ln in r["lines"]
+             if show_all or (ln["y"] >= STATUS_BAR and any(c.isalnum() for c in ln["text"]))]
+    lines += [(x, y, "[switch on]" if on else "[switch off]") for x, y, on in screen.find_switches(rgb)]
+    return sorted(lines, key=lambda t: (round(t[1] / 0.012), t[0]))  # rows top to bottom, then left to right
 
 
 def text_cmd(args):
     import json
-    shot = fresh_screenshot()
-    r = vision({"op": "text", "image": shot})
-    os.unlink(shot)
-    if "error" in r:
-        die(r["error"])
+    lines = screen_text("--all" in args)
     if "--json" in args:
-        print(json.dumps(r["lines"]))
+        print(json.dumps([{"x": x, "y": y, "text": t} for x, y, t in lines]))
         return
-    for ln in r["lines"]:
-        print(f"{ln['x']:.3f} {ln['y']:.3f}  {ln['text']}")
+    for x, y, t in lines:
+        print(f"{x:.3f} {y:.3f}  {t}")
+
+
+FILLER = {"row", "button", "icon", "link", "tab", "cell", "item", "the", "label", "option"}
+# Descriptions of things that aren't text; only these fall back to the grounding model.
+VISUAL = {"icon", "button", "image", "picture", "logo", "symbol", "glyph", "arrow", "switch",
+          "toggle", "avatar", "photo", "thumbnail", "chevron", "x", "plus", "+", "gear", "badge"}
+
+
+def text_target(what):
+    """Position of an on-screen text line matching `what` (ignoring words like
+    "row" or "button"), or None. Exact, unlike the grounding model, which always
+    answers even when the element isn't on screen."""
+    words = [w for w in what.lower().replace('"', "").split() if w not in FILLER]
+    if not words:
+        return None
+    want = " ".join(words)
+    lines = [(x, y, t.lower().strip()) for x, y, t in screen_text() if y >= STATUS_BAR]
+    exact = [(x, y) for x, y, t in lines if t == want]
+    if exact:
+        return exact[0]
+    starts = [(x, y) for x, y, t in lines if t.startswith(want)]
+    if len(starts) == 1:
+        return starts[0]
+    # OCR misreads a character now and then ("Message" for "iMessage" when the
+    # text cursor covers the i): take the single closest line if it is close.
+    import difflib
+    scored = sorted(((difflib.SequenceMatcher(None, want, t).ratio(), x, y) for x, y, t in lines), reverse=True)
+    if scored and scored[0][0] >= 0.85 and (len(scored) == 1 or scored[1][0] < scored[0][0] - 0.1):
+        return scored[0][1], scored[0][2]
+    return None
 
 
 def find(what):
@@ -387,6 +472,11 @@ def main():
         print(__doc__)
         return
     cmd, args = a[0], a[1:]
+    # `--text` at the end of an action: print the screen as text afterwards, saving
+    # a second call (only as the last argument, so `type` can still type it).
+    then_text = bool(args) and args[-1] == "--text" and cmd not in ("text", "find", "screenshot")
+    if then_text:
+        args = args[:-1]
     if cmd == "install":
         subprocess.run(["sudo", os.path.join(ROOT, "scripts", "install.sh")], check=True)
         if not os.path.exists(os.path.join(ROOT, ".venv-vision")):
@@ -433,22 +523,35 @@ def main():
     elif cmd == "key":
         key_combo(h, args[0])
     elif cmd == "tap-on":
-        x, y = find(" ".join(args))
-        # find always answers, even when the element isn't there; it then tends to
-        # point at the status bar. Never tap there: the Dynamic Island in its middle
-        # opens the Stop Mirroring popup.
-        if y < 0.06:
-            die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{' '.join(args)}' is probably not on screen")
+        what = " ".join(args)
+        hit = text_target(what)
+        if hit:
+            x, y = hit
+            how = "text"
+        elif not VISUAL.intersection(what.lower().replace('"', "").split()):
+            die(f"'{what}' isn't on screen as text, so nothing was tapped. Scroll to it, or describe "
+                "something visual (\"gear icon\", \"back button\") to use the grounding model.")
+        else:
+            x, y = find(what)
+            how = "grounding (check the result)"
+            # find always answers, even when the element isn't there; it then tends to
+            # point at the status bar. Never tap there: the Dynamic Island in its middle
+            # opens the Stop Mirroring popup.
+            if y < 0.06:
+                die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{what}' is probably not on screen")
         touch.tap(h, x, y)
-        print(f"tapped {x:.3f} {y:.3f}")
+        print(f"tapped {x:.3f} {y:.3f} by {how}")
     elif cmd == "where":
         p = screen.find_orange(screen.grab_rgb())
         print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")
         return
     else:
-        die(f"unknown command: {cmd} (phone --help)")
+        die(f"unknown command: {cmd} (phoneuse --help)")
     acted()
     print("ok")
+    if then_text:
+        for x, y, t in screen_text():
+            print(f"{x:.3f} {y:.3f}  {t}")
 
 
 if __name__ == "__main__":
