@@ -9,26 +9,20 @@ the button is held. Mouse buttons
 are read from /dev/input read-only; nothing is grabbed, so the PC's mouse and
 keyboard keep working normally everywhere.
 
-The mirror window is exactly the phone screen's shape, with squircle corners
-and a thick dark border as the phone's bezel. Pressing on the bezel starts the
-touch at the nearest screen edge (press the bottom bezel and drag up = swipe
-home; left bezel and drag right = back). The window's size is locked
-(min_size = max_size, plus a snap-back), so the border can't resize it.
+The mirror window (window.py) draws the phone screen inside a dark bezel.
+Pressing on the bezel starts the touch at the nearest screen edge (press the
+bottom bezel and drag up = swipe home; left bezel and drag right = back).
 
 iPhone settings: AssistiveTouch on, Dwell Control off.
 """
 import glob
-import json
 import os
 import select
-import socket
 import struct
-import subprocess
 import threading
 import time
 
 from . import touch
-from .config import PHONE_ASPECT, CFG
 from .hidclient import Hid
 from .screen import hypr, picture_rect, MIRROR_CLASS
 
@@ -36,17 +30,6 @@ EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit Linux
 EV_KEY, EV_REL, BTN_LEFT = 0x01, 0x02, 0x110
 IDLE_WAKE = 1 / 60  # also re-check this often when the mouse is still
 MIN_GAP = 1 / 250  # at most this many pointer reports per second
-FRAME = 30  # bezel: Hyprland border thickness (logical px); presses on it start edge touches
-STRIP = 0.0  # no letterbox strips: the window is exactly the phone screen's shape
-CORNER = 70  # screen corner radius (logical px, ~56 pt on the phone); squircle via rounding_power
-MIRROR_W = CFG["mirror_width"]  # logical px; height follows from the phone's aspect
-MIRROR_H = round(MIRROR_W / PHONE_ASPECT * (1 + 2 * STRIP))
-# min_size = max_size locks the window: resizing the GL window crashed uxplay.
-BEZEL_RULE = (
-    'hl.window_rule({ name = "phoneuse-mirror", match = { class = "^uxplay$" }, '
-    f'border_size = {FRAME}, rounding = {CORNER}, rounding_power = 3.0, border_color = "rgb(18181c) rgb(18181c)", '
-    f'min_size = {{ {MIRROR_W}, {MIRROR_H} }}, max_size = {{ {MIRROR_W}, {MIRROR_H} }} }})'
-)
 
 
 def log(*a):
@@ -99,35 +82,6 @@ class Buttons:
                                 else:
                                     self.dy += value
                         self.changed.set()
-
-
-def frame_window(client):
-    """Resize the mirror window to the locked size."""
-    a = client["address"]
-    if not hypr_eval(f"hl.dispatch(hl.dsp.window.resize({{ x = {MIRROR_W}, y = {MIRROR_H}, window = 'address:{a}' }}))"):
-        subprocess.run(["hyprctl", "dispatch", "resizewindowpixel", f"exact {MIRROR_W} {MIRROR_H},address:{a}"],
-                       capture_output=True)
-    log("framed mirror window", f"{MIRROR_W}x{MIRROR_H}")
-
-
-def hypr_eval(lua):
-    """Run Lua in Hyprland (Lua-config builds). Returns False when unsupported."""
-    r = subprocess.run(["hyprctl", "eval", lua], capture_output=True, text=True)
-    return r.returncode == 0 and "unknown request" not in r.stdout and not r.stdout.startswith("error")
-
-
-def apply_frame_rule():
-    """Phone-like frame and locked size for the mirror window. Lua-config Hyprland
-    first (tested); classic hyprlang keywords as a fallback (untested)."""
-    if hypr_eval(BEZEL_RULE):
-        return
-    m = "class:^(uxplay)$"
-    subprocess.run(["hyprctl", "--batch", " ; ".join([
-        f"keyword windowrule bordersize {FRAME}, {m}",
-        f"keyword windowrule rounding {CORNER}, {m}",
-        f"keyword windowrule minsize {MIRROR_W} {MIRROR_H}, {m}",
-        f"keyword windowrule maxsize {MIRROR_W} {MIRROR_H}, {m}",
-    ])], capture_output=True)
 
 
 # Linux evdev key codes -> USB HID usage codes (keyboard page)
@@ -231,11 +185,10 @@ def run(stop=None):
     as a click), and relative-only presses are ignored.
     Release: touch up.
     """
-    apply_frame_rule()
     shared = {"hid": None}  # (not "state": the hover code below uses that name)
     hover = {"pos": None}  # last absolute position sent while hovering = where the phone's pointer is
     touch_at = {"pos": None, "carry": [0.0, 0.0]}  # where the touch is during a drag
-    win = {"rect": None, "pic": None}
+    win = {"body": None, "pic": None}
 
     def hid():
         if shared["hid"] is None:
@@ -249,13 +202,14 @@ def run(stop=None):
             return False
 
     def cursor_fraction():
-        """(fx, fy, inside) for the cursor against the phone picture; the bezel counts as inside."""
-        if win["rect"] is None:
+        """(fx, fy, inside) for the cursor against the phone picture; the bezel counts
+        as inside (positions on it clamp to the nearest screen edge)."""
+        if win["body"] is None:
             return None
         cur = hypr("j/cursorpos")
-        (wx, wy), (ww, wh) = win["rect"]
+        bx, by, bw, bh = win["body"]
         x, y, w, h = win["pic"]
-        inside = (wx - FRAME <= cur["x"] <= wx + ww + FRAME) and (wy - FRAME <= cur["y"] <= wy + wh + FRAME)
+        inside = bx <= cur["x"] <= bx + bw and by <= cur["y"] <= by + bh
         fx = min(max((cur["x"] - x) / w, 0.0), 1.0)
         fy = min(max((cur["y"] - y) / h, 0.0), 1.0)
         return fx, fy, inside
@@ -345,14 +299,10 @@ def run(stop=None):
             now = time.time()
             if now - window_checked > 0.5:
                 client = next((c for c in hypr("j/clients") if c["class"] == MIRROR_CLASS), None)
-                if client and (abs(client["size"][0] - MIRROR_W) > 2 or abs(client["size"][1] - MIRROR_H) > 2) \
-                        and not buttons.dragging:
-                    frame_window(client)
-                    continue
-                win["rect"] = (client["at"], client["size"]) if client else None
+                win["body"] = (*client["at"], *client["size"]) if client else None
                 win["pic"] = picture_rect(client["at"], client["size"]) if client else None
                 window_checked = now
-            if buttons.dragging or win["rect"] is None:
+            if buttons.dragging or win["body"] is None:
                 continue
             if now - last_send < MIN_GAP:
                 continue

@@ -9,7 +9,7 @@ read the screen.
 
 ```
             AirPlay video (Wi-Fi)                      Bluetooth HID (mouse + keyboard)
- iPhone  ─────────────────────────▶  UxPlay window      ◀─────────────────────────  phoneuse-hid daemon
+ iPhone  ─────────────────────────▶  mirror window      ◀─────────────────────────  phoneuse-hid daemon
                                      (phoneuse up)                                      (root, systemd)
                                           │                                                 ▲
                          Hyprland IPC: where the window is, where the cursor is             │ command socket
@@ -35,17 +35,22 @@ devices in `/etc/phoneuse/allowed`, trusting the first device that pairs.
 would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".
 
-**`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay) and
-the mirror input handler, and restarts either when it exits. The mirror input
+**`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay), the
+mirror window and the mirror input handler, and restarts any of them that exits. The mirror input
 handler is a separate process that reloads when its code changes, so edits don't
 drop the AirPlay connection.
 
 **`phoneuse/mirror_input.py`** makes the mirror window behave like the phone's
 screen. It reads mouse buttons and keys from `/dev/input` read-only, so it never
 takes over the PC's mouse or keyboard, and gets the cursor position and window
-geometry from Hyprland's IPC socket, which answers in about 0.03 ms. It also
-gives the window its phone shape through a Hyprland window rule: rounded
-corners, a dark border as the bezel, and a locked size.
+geometry from Hyprland's IPC socket, which answers in about 0.03 ms.
+
+**`phoneuse/window.py`** is the mirror window, an ordinary GTK 4 window with
+Hyprland's own decorations. It fills itself with a dark bezel and draws the
+phone picture in the middle with the screen's rounded corners; presses on the
+bezel become touches at the nearest screen edge. A Hyprland rule floats it and
+keeps its aspect ratio when you resize it, and if it ends up another shape
+anyway, the picture stays aspect-fit and the bezel gets wider.
 
 **`phoneuse/touch.py`** holds the gesture code used by agents (tap, long press,
 swipe) and the measured table of how far iOS moves the pointer for each report
@@ -104,17 +109,18 @@ measurement won, and several early guesses were wrong.
 
 ## The mirror
 
-UxPlay renders the AirPlay stream with GStreamer. Two defaults made it unusable
-on this setup, and `phoneuse up` changes both:
+UxPlay receives the AirPlay stream and passes the H.264 video on, undecoded, as
+RTP over localhost (`-vrtp`, port 5600). The mirror window decodes it with
+GStreamer and draws each frame as soon as it is decoded (`sync=false`), on the
+GPU when NVDEC is available. Drawing in our own window lets the window be
+resized and styled freely; UxPlay's own GL window crashed when resized.
 
-- UxPlay converts frames to packed 24-bit RGB on Linux, which NVIDIA's EGL can't
-  import, giving a black window. phoneuse passes `-srgb no`.
-- iOS sends a frame only when the screen changes, and its stream doesn't declare
-  that frames never need reordering. A default H.264 decoder therefore keeps each
-  frame until the next one arrives, which GStreamer's latency tracer measured at
-  200 ms. `nvh264dec compliance=flexible` releases frames in about 1 ms, and the
-  software decoder does too. A pointer move now shows up in the mirror about
-  100 ms later, most of it the phone encoding and sending the video.
+iOS sends a frame only when the screen changes, and its stream doesn't declare
+that frames never need reordering. A default H.264 decoder therefore keeps each
+frame until the next one arrives, which GStreamer's latency tracer measured at
+200 ms. `nvh264dec compliance=flexible` releases frames in about 1 ms, and the
+software decoder does too. A pointer move now shows up in the mirror about
+100 ms later, most of it the phone encoding and sending the video.
 
 Audio comes along with the mirror. The playback buffer is kept at 40 ms instead
 of the sink's default of up to 200 ms.

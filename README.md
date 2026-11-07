@@ -25,6 +25,7 @@ only on features every iPhone has: Screen Mirroring and AssistiveTouch.
 | Hyprland | 0.56 | window geometry and the cursor come from Hyprland's IPC |
 | UxPlay (AirPlay receiver) | 1.73.7 | `uxplay` in Arch's AUR and most distros |
 | GStreamer | 1.28 | NVIDIA decoding used when available, software otherwise |
+| GTK 4 + `gtk4paintablesink` | 4.24 | the mirror window; the sink is in `gst-plugin-gtk4` |
 | Python 3.11+ | 3.14 | with `python-dbus`, `python-gobject`, `numpy`, `pillow` |
 | `grim` | | screenshots for agents |
 | `uv` | | only for the optional screen-reading models |

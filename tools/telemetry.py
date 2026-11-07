@@ -25,7 +25,6 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from phoneuse import screen as steer  # noqa: E402
 from phoneuse.screen import hypr  # noqa: E402
-from phoneuse.mirror_input import FRAME  # noqa: E402
 
 EVENT = struct.Struct("llHHi")
 
@@ -35,17 +34,17 @@ def record(d):
     stopfile = os.path.join(d, "STOP")
     if os.path.exists(stopfile):
         os.unlink(stopfile)
-    client = next(c for c in hypr("j/clients") if c["class"] == "uxplay")
+    client = steer.mirror_client()
     (wx, wy), (ww, wh) = client["at"], client["size"]
     pic = steer.picture_rect(client["at"], client["size"])
-    geom = f"{wx - FRAME},{wy - FRAME} {ww + 2 * FRAME}x{wh + 2 * FRAME}"
+    geom = f"{wx},{wy} {ww}x{wh}"
     btmon = subprocess.Popen(["sudo", "btmon", "-w", os.path.join(d, "hci.snoop")],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t_video = time.time()
     video = subprocess.Popen(["wf-recorder", "-g", geom, "-r", "60", "-c", "libx264",
                               "-p", "preset=ultrafast", "-p", "crf=18", "-y", "-f", os.path.join(d, "video.mp4")],
                              stdout=subprocess.DEVNULL, stderr=open(os.path.join(d, "wf-recorder.log"), "w"))
-    json.dump({"started": t_video, "window_at": [wx, wy], "window_size": [ww, wh], "frame": FRAME,
+    json.dump({"started": t_video, "window_at": [wx, wy], "window_size": [ww, wh],
                "picture": pic, "video_geom": geom}, open(os.path.join(d, "meta.json"), "w"), indent=1)
     stop = threading.Event()
 

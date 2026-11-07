@@ -16,7 +16,13 @@ from PIL import Image
 
 from .config import PHONE_ASPECT
 
-MIRROR_CLASS = "uxplay"  # window class of the AirPlay receiver
+MIRROR_CLASS = "phoneuse-mirror"  # window class (Wayland app id) of the mirror window, window.py
+RTP_PORT = 5600  # UxPlay sends the phone's video here (localhost RTP); window.py shows it
+
+# Bezel around the picture in the mirror window, in units of the screen's width.
+# Presses on the bezel start edge swipes (mirror_input.py).
+BEZEL = 30 / 498
+SCREEN_RADIUS = 70 / 498  # the screen's corners, ~56 pt on the phone (superellipse, n = 3)
 
 
 def _find_hyprland():
@@ -62,6 +68,12 @@ def hypr(cmd):
     return json.loads(data)
 
 
+def hypr_eval(lua):
+    """Run Lua in Hyprland (Lua-config builds). Returns False when unsupported."""
+    r = subprocess.run(["hyprctl", "eval", lua], capture_output=True, text=True)
+    return r.returncode == 0 and "unknown request" not in r.stdout and not r.stdout.startswith("error")
+
+
 def mirror_client():
     return next((c for c in hypr("j/clients") if c["class"] == MIRROR_CLASS), None)
 
@@ -73,14 +85,25 @@ def mirror_window():
     return c["at"], c["size"]
 
 
+def design_size():
+    """(width, height) of the window in screen-width units."""
+    return 1 + 2 * BEZEL, 1 / PHONE_ASPECT + 2 * BEZEL
+
+
+def window_size(screen_width):
+    dw, dh = design_size()
+    return round(dw * screen_width), round(dh * screen_width)
+
+
 def picture_rect(at, size):
-    """Where the phone picture sits inside the mirror window (centered, aspect-fit)."""
+    """Where the phone picture sits on screen, for a mirror window at `at` with
+    `size`. The rest of the window is bezel. The picture is aspect-fit and
+    centered, so a window of another shape gets a wider bezel on two sides, never
+    a squished picture."""
     (x, y), (w, h) = at, size
-    if w / h < PHONE_ASPECT:
-        pw, ph = w, w / PHONE_ASPECT
-    else:
-        pw, ph = h * PHONE_ASPECT, h
-    return x + (w - pw) / 2, y + (h - ph) / 2, pw, ph
+    dw, dh = design_size()
+    u = min(w / dw, h / dh)  # pixels per screen width
+    return x + (w - u) / 2, y + (h - u / PHONE_ASPECT) / 2, u, u / PHONE_ASPECT
 
 
 def grab_png():

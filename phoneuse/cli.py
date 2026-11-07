@@ -39,7 +39,7 @@ import threading
 import time
 
 from . import screen, touch
-from .config import NAME, SCREEN_PT, VISION_SOCKET, RUNTIME_DIR, decoder
+from .config import NAME, SCREEN_PT, VISION_SOCKET, RUNTIME_DIR
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
@@ -48,13 +48,11 @@ ROOT = os.path.dirname(PKG)  # the repository checkout
 PT = SCREEN_PT
 LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-action")
 MIRROR_LAG = 0.6  # seconds before the mirror shows an action's result
-# Decoder: frames must leave the decoder as soon as they're decoded. iOS only
-# sends a frame when the screen changes, and its streams don't declare "no
-# reordering", so a default H.264 decoder may hold a frame until the next one
-# pushes it out (measured: 200 ms median live). compliance=flexible releases them.
-DECODER = os.environ.get("PHONEUSE_DECODER") or decoder()
-MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-vd", DECODER,
-               "-vs", "glimagesink", "-srgb", "no", "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
+# UxPlay receives AirPlay and passes the phone's H.264 stream on as RTP to the
+# mirror window (window.py), which decodes and draws it inside its own bezel.
+MIRROR_ARGS = ["uxplay", "-p", "-n", NAME,
+               "-vrtp", f"config-interval=1 pt=96 mtu=60000 ! udpsink host=127.0.0.1 port={screen.RTP_PORT} sync=false",
+               "-vsync", "no", "-s", f"{SCREEN_PT[0] * 3}x{SCREEN_PT[1] * 3}@60", "-fps", "60",
                # audio: mirrored audio already plays unsynced (-vsync no); keep the sink's
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
                # plan for 0.1 s instead of 0.25 s
@@ -255,9 +253,21 @@ def up():
     stop = threading.Event()
     procs = {}
 
+    def keep_window():
+        # The mirror window (window.py) outlives UxPlay restarts and phone
+        # reconnects; it waits for the next stream by itself.
+        while not stop.is_set():
+            procs["window"] = subprocess.Popen([sys.executable, "-m", "phoneuse.window"], cwd=ROOT)
+            rc = procs["window"].wait()
+            if stop.is_set():
+                break
+            print(time.strftime("%H:%M:%S"), f"mirror window exited ({rc}); opening it again.", flush=True)
+            time.sleep(1)
+    threading.Thread(target=keep_window, daemon=True).start()
+
     def keep_mirror():
-        # uxplay can die (it crashed on a window resize); start it again so the
-        # phone can reconnect without restarting `phoneuse up`.
+        # If UxPlay dies, start it again so the phone can reconnect without
+        # restarting `phoneuse up`.
         while not stop.is_set():
             env = dict(os.environ)
             out = subprocess.DEVNULL
@@ -298,13 +308,14 @@ def up():
         stop.set()
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        mirror = procs.get("mirror")
-        if mirror and mirror.poll() is None:
-            mirror.terminate()
-            try:
-                mirror.wait(3)
-            except subprocess.TimeoutExpired:
-                mirror.kill()
+        for name in ("mirror", "window"):
+            p = procs.get(name)
+            if p and p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
 
 
 def status():
