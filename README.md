@@ -88,6 +88,12 @@ and keyboard working the same way. It listens on this computer only, and you can
 change the port with `web_port` (below). A current Chrome, Edge or Firefox
 decodes the video; it uses the GPU when the browser offers it.
 
+When the phone is locked, `phoneuse unlock` asks you first: an "Unlock the
+iPhone?" banner appears on the browser mirror and as a desktop notification,
+and only when you approve does phoneuse type the passcode, once. Save the
+passcode under the gear at the top right of the browser mirror; it is kept in
+`~/.config/phoneuse/passcode`, readable only by you.
+
 For agents and scripts, every action is a subcommand. `phoneuse --help` lists
 them; a typical loop looks like this:
 

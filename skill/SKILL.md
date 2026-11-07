@@ -114,9 +114,12 @@ leftover; close it, or `phoneuse back` until you reach the app's main view.
 
 ## Rules
 
-- **Passcode screen:** if a screenshot shows the lock screen asking for a passcode
-  (Emergency / Cancel), stop and ask the user to unlock the phone. Never type a
-  passcode or try to guess one.
+- **Lock screen:** run `phoneuse unlock`. It asks the owner, who approves on the
+  browser mirror page or in a desktop notification; only then does phoneuse type
+  the passcode they saved (you never see it), once. If it answers anything but
+  "unlocked", stop and ask the owner to unlock the phone. Never type a passcode
+  yourself, never guess one, and never click Unlock on the page yourself: that
+  answer belongs to the owner.
 - **Don't tap the top centre** (the Dynamic Island, roughly x 0.35–0.65, y < 0.06):
   it opens the Screen Mirroring popup, whose Stop Mirroring button cuts the screen
   feed.

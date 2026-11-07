@@ -10,6 +10,7 @@ failure and does not retry, so a wrong code can't pile up failed attempts.
 The passcode never reaches the agent, its output, or the logs.
 """
 import os
+import re
 import time
 
 from .config import config_path
@@ -64,9 +65,15 @@ def _read():
 
 
 def locked(screen_text):
-    """True when the screen shows the lock screen or its passcode prompt."""
-    words = " ".join(t for _, _, t in screen_text()).lower()
-    return "passcode" in words or ("emergency" in words and "cancel" in words) or "swipe up to open" in words
+    """True when the screen shows the lock screen (its big clock under the date)
+    or the passcode prompt."""
+    lines = screen_text()
+    words = " ".join(t for _, _, t in lines).lower()
+    if "passcode" in words or ("emergency" in words and "cancel" in words):
+        return True
+    clock = [y for x, y, t in lines if re.fullmatch(r"\d{1,2}:\d{2}", t.strip()) and 0.1 < y < 0.32 and 0.3 < x < 0.7]
+    date = [y for x, y, t in lines if re.match(r"(mon|tue|wed|thu|fri|sat|sun)", t.strip().lower()) and y < 0.2]
+    return bool(clock and date and min(date) < max(clock))
 
 
 def unlock(screen_text):
