@@ -232,6 +232,8 @@ def run(stop=None):
     """
     subprocess_eval(BEZEL_RULE)
     shared = {"hid": None}  # (not "state": the hover code below uses that name)
+    hover = {"pos": None}  # last absolute position sent while hovering = where the phone's pointer is
+    touch_at = {"pos": None, "carry": [0.0, 0.0]}  # where the touch is during a drag
     win = {"rect": None, "pic": None}
 
     def hid():
@@ -261,8 +263,14 @@ def run(stop=None):
         c = cursor_fraction()
         if not c or not c[2]:
             return
-        fx, fy, _ = c
-        hid().cmd(f"a {fx:.5f} {fy:.5f} 1")  # touch down right where the pointer is
+        # Touch down exactly where the phone's pointer already is (the last hover
+        # report), not at the cursor: a press that also changes the absolute position
+        # makes iOS end the touch after ~90 ms (drags die, clicks get flaky). Any gap
+        # between that spot and the cursor is sent as ordinary drag motion.
+        fx, fy = hover["pos"] if hover["pos"] else (c[0], c[1])
+        hid().cmd(f"a {fx:.5f} {fy:.5f} 1")
+        touch_at["pos"] = [fx, fy]
+        touch_at["carry"] = [(c[0] - fx) * touch.SCREEN_PT[0], (c[1] - fy) * touch.SCREEN_PT[1]]
         buttons.take_motion()
         buttons.dragging = True  # only now may motion reports follow
         log("down", f"({fx:.3f}, {fy:.3f})")
@@ -271,9 +279,10 @@ def run(stop=None):
         if not buttons.dragging:
             return
         buttons.dragging = False
-        c = cursor_fraction()
-        fx, fy = (c[0], c[1]) if c else (0.5, 0.5)
+        # lift where the touch is, so the release carries no position change
+        fx, fy = touch_at["pos"] or (0.5, 0.5)
         hid().cmd(f"a {fx:.5f} {fy:.5f} 0")  # touch up
+        hover["pos"] = (fx, fy)
         log("up", f"({fx:.3f}, {fy:.3f})")
 
     buttons = Buttons(on_press, on_release)
@@ -298,6 +307,7 @@ def run(stop=None):
                 continue
             if last is None:
                 last = cur
+                carry[:] = touch_at["carry"]
                 continue
             x, y, w, h = win["pic"]
             carry[0] += (cur["x"] - last["x"]) / w * touch.SCREEN_PT[0]
@@ -318,6 +328,10 @@ def run(stop=None):
                 moved = touch.points_for(mag)
                 carry[0] -= moved * ux / mag
                 carry[1] -= moved * uy / mag
+                p = touch_at["pos"]
+                if p:
+                    p[0] = min(max(p[0] + moved * ux / mag / touch.SCREEN_PT[0], 0.0), 1.0)
+                    p[1] = min(max(p[1] + moved * uy / mag / touch.SCREEN_PT[1], 0.0), 1.0)
     threading.Thread(target=motion_sender, daemon=True).start()
 
     sent = None
@@ -347,6 +361,7 @@ def run(stop=None):
                 if state != sent:
                     hid().cmd(f"a {state[0]:.5f} {state[1]:.5f} 0")
                     sent = state
+                    hover["pos"] = state
                     last_send = now
         except Exception as e:
             log("error:", e)
