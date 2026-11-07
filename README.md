@@ -66,14 +66,14 @@ attached: without it the signal can be too weak to pair reliably.
      tap and drag starts from an exact position, so phoneuse always knows where
      the pointer is.
 
-5. **Pair**: on the iPhone, Settings → Bluetooth → tap **phoneuse**. The first
+5. **Pair**: on the iPhone, Settings → Bluetooth → tap **PhoneUse**. The first
    device to pair is trusted from then on (`/etc/phoneuse/allowed`).
 
 6. **Start it**:
    ```sh
    phoneuse up
    ```
-   Then on the iPhone: Control Center → Screen Mirroring → **phoneuse**. A
+   Then on the iPhone: Control Center → Screen Mirroring → **PhoneUse**. A
    phone-shaped window appears on your desktop.
 
 ## Using it
@@ -125,7 +125,7 @@ claude mcp add --scope user phoneuse ~/phoneuse/bin/phoneuse-mcp
 Optional, in `~/.config/phoneuse/config.toml`:
 
 ```toml
-name = "phoneuse"              # Bluetooth device and AirPlay receiver name
+name = "PhoneUse"              # Bluetooth device and AirPlay receiver name
 screen_points = [402, 874]    # your iPhone's screen size in points
 decoder = "auto"              # GStreamer H.264 decoder
 mirror_width = 498            # mirror window width in logical pixels

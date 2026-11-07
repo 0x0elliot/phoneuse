@@ -18,7 +18,7 @@ the full list.
 2. No mirror window: check whether `phoneuse up` is running. If it isn't, start it
    somewhere the user can see it (a terminal or tmux window they use), not hidden in
    the background. "not mirroring" (or no window): ask the user to start Screen
-   Mirroring to "phoneuse" from the iPhone's Control Center. You can't start
+   Mirroring to "PhoneUse" from the iPhone's Control Center. You can't start
    mirroring from the PC, and every input command refuses until it runs.
 3. **Show the user the phone** before your first action, so they can watch what
    you do: open http://localhost:8777 (`phoneuse view --print` prints the address).
@@ -28,7 +28,7 @@ the full list.
    is for the user to watch: act through `phoneuse` commands, never by clicking in
    the page.
 4. `connected=False`: run `phoneuse status` again after a few seconds (the daemon
-   reconnects), then ask the user to tap "phoneuse" in the iPhone's Bluetooth settings.
+   reconnects), then ask the user to tap "PhoneUse" in the iPhone's Bluetooth settings.
 5. HID service not active: `phoneuse install` (needs sudo) sets it up.
 
 ## MCP or CLI
@@ -73,14 +73,12 @@ checking a layout, or when `find` lands somewhere surprising.
 ```bash
 phoneuse screenshot $SCRATCH/s1.png   # then look at the image with the Read tool
 phoneuse tap 0.5 0.35                 # fractions of the screenshot (x, y)
-phoneuse screenshot $SCRATCH/s2.png   # waits out the ~0.5 s mirror lag by itself
+phoneuse screenshot $SCRATCH/s2.png   # waits until the screen has settled
 ```
 
 Write screenshots into your own scratch directory with a new name each time,
 so you never read a stale image. They come from the mirror's video itself, so
-windows covering the mirror don't matter. `phoneuse screenshot` moves the pointer to
-the left edge first so it doesn't cover text (`--keep-pointer` to see where the
-pointer is). The grey AssistiveTouch button near the lower right stays on screen
+windows covering the mirror don't matter. The grey AssistiveTouch button near the lower right stays on screen
 and can hide what is under it; scroll a little if you need that spot.
 
 Coordinates are fractions of the screenshot from 0 to 1, or iPhone points when
@@ -106,6 +104,12 @@ try is enough.
 
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read
 it before inventing a new gesture with `phoneuse swipe`.
+
+## When the user takes over
+
+If an action fails with "The user took over the phone", stop and wait. Continue
+only when the user tells you to. A note that the screen changed without your
+action means someone may be using the phone: look again before acting.
 
 ## Typing
 

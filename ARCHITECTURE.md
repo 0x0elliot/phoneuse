@@ -38,7 +38,8 @@ would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".
 
 **`phoneuse up`** (`phoneuse/cli.py`) starts the AirPlay receiver (UxPlay), the
-video hub, the mirror window, the browser mirror and the mirror input handler,
+video hub, the frames service, the mirror window, the browser mirror and the
+mirror input handler,
 and restarts any of them that exits. The mirror input
 handler is a separate process that reloads when its code changes, so edits don't
 drop the AirPlay connection.
@@ -61,25 +62,35 @@ mouse input" below. The mirror window's input handler and the browser
 mirror both use it, so both behave the same.
 
 **`phoneuse/hub.py`** is the video hub. UxPlay sends the phone's stream to it,
-and it serves the mirror window and the browser mirror. iOS sends a full
-keyframe only when mirroring starts (a measured minute of use had none), so
-anything that starts later couldn't decode the phone's own stream. The hub
-decodes the stream once, keeps the last frame, and encodes it again with NVENC
-(x264 without an NVIDIA GPU): no B-frames, keyframes only on request. When a
-viewer joins, including a mirror window or browser server that just restarted,
-the hub encodes its last frame again as a keyframe, so the viewer shows the
-phone at once. It also hands out that frame as a PNG for `phoneuse screenshot`,
-so screenshots don't depend on the mirror window being uncovered. NVDEC copies
-each frame into system memory here: in CUDA output mode it hands out its own
-decode surfaces, which iOS's long reference chains reuse while the hub still
-holds the last one, and that smeared green over the picture.
+and it serves every viewer. iOS sends a full keyframe only when mirroring starts
+(a measured minute of use had none), so anything that starts later couldn't
+decode the phone's own stream. The hub decodes the stream once, keeps the last
+frame, and encodes it again with NVENC (x264 without an NVIDIA GPU): no
+B-frames, keyframes only on request. When a viewer joins, the hub encodes its
+last frame again as a keyframe, so the viewer shows the phone at once and can
+restart at any time. Only a hub restart needs Screen Mirroring restarted, so the
+hub does nothing else. NVDEC copies each frame into system memory there: in CUDA
+output mode it hands out its own decode surfaces, which iOS's long reference
+chains reuse while the hub still holds the last one, smearing green over the
+picture.
+
+**`phoneuse/frames.py`** is the frames service, a hub viewer that watches the
+picture for agents. It counts meaningful changes (a coarse luma thumbnail per
+frame; the pointer moving or a caret blinking doesn't count) and answers
+`settle`: return as soon as an action's result has appeared and the picture has
+stopped changing, or at once when nothing is happening. No fixed delays. It
+also hands out screenshots of the current picture, so they don't depend on the
+mirror window being uncovered.
 
 **`phoneuse/web.py`** is the browser mirror at http://localhost:8777. It takes
 the hub's stream and passes the encoded frames to each tab over a WebSocket,
 asking the hub for a keyframe when a tab joins. Tabs decode with WebCodecs
 (`phoneuse/web/index.html`) and send pointer and key events back. The server
 listens on 127.0.0.1 only and accepts input only while the phone is mirroring
-and the tab is showing it.
+and the tab is showing it. While an agent acts (every CLI or MCP action checks
+in), the page glows, shows where the agent points, and takes no input from the
+page; Take over makes the agent's next action fail with a stop message until
+the user resumes it. A pill shows when the Bluetooth link is down.
 
 ## The mirror
 

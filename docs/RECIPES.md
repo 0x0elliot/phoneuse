@@ -1,7 +1,7 @@
 # Operating the iPhone with `phoneuse`
 
 `phoneuse up` runs the AirPlay mirror and mouse control together; on the iPhone,
-start Control Center → Screen Mirroring → phoneuse. Agents then use the commands
+start Control Center → Screen Mirroring → PhoneUse. Agents then use the commands
 below and look at `phoneuse screenshot`, which waits for the mirror to catch up
 after the last action, so it always shows the result.
 

@@ -31,7 +31,7 @@ from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from .config import HID_SOCKET as SOCK_PATH, ALLOWED_FILE as ALLOW_FILE
-DEVICE_NAME = os.environ.get("PHONEUSE_NAME", "phoneuse")  # what the phone sees in Bluetooth settings
+DEVICE_NAME = os.environ.get("PHONEUSE_NAME", "PhoneUse")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
 PROFILE_PATH = "/io/phoneuse/hid/profile"
