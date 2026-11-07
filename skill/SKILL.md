@@ -33,7 +33,7 @@ the full list.
 
 ## MCP or CLI
 
-If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`,
+If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`,
 `type_text`, `open_app`, `navigate`, `wait`, `unlock`, ...), use them. Every action
 returns, in the same call, frames from just after it (0.1, 0.4 and 0.8 s; frames
 that didn't change are dropped, so a still screen is one frame) plus the last
@@ -95,7 +95,8 @@ try is enough.
 | Open an app | `phoneuse open Settings` (Cmd+H, Cmd+Space, type the name, Enter) |
 | Tap / long press | `phoneuse tap X Y` · `phoneuse longpress X Y [seconds]` |
 | Swipe or drag | `phoneuse swipe X0 Y0 X1 Y1 [seconds]` |
-| Scroll | `phoneuse scroll down [N]` · `phoneuse scroll up [N]` (N half-screens) |
+| Scroll | `phoneuse scroll down [N]` · `phoneuse scroll up [N]` (N half-screens; stops where the drag ends, no fling) |
+| Scroll an exact amount | `phoneuse scroll-by DY` (screen fraction or points; positive shows what is below). MCP: `scroll_by` |
 | Back | `phoneuse back` (finger sliding in from the very left edge) |
 | Home | `phoneuse home` |
 | App switcher | `phoneuse switcher` |

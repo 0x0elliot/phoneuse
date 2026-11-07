@@ -26,13 +26,24 @@ points, which is plenty for scrolling and edge gestures.
 | Control Center | `phoneuse control-center` | slow (0.6 s) swipe down from the top-right corner |
 | Notification Center | `phoneuse notifications` | slow swipe down from the top-left |
 | Close an overlay | `phoneuse dismiss` | fast, long swipe up from the very bottom; closes Control Center, Notification Center and the switcher |
-| Scroll | `phoneuse scroll down [N]` / `up` | drags the content by N half-screens |
+| Scroll | `phoneuse scroll down [N]` / `up` | drags the content by N half-screens, slowing down before the lift: no fling |
+| Scroll exactly | `phoneuse scroll-by DY [X]` | the same drag by DY (screen fraction, or points above 1); lands within ~5-8% |
 | Open an app | `phoneuse open Settings` | Cmd+H, Cmd+Space, type the name, Enter |
 | Type | `phoneuse type "hello\n"` | US layout; `\n` presses Enter |
 | Keys | `phoneuse key cmd+space` | modifiers: cmd, shift, alt, ctrl |
 
 ## Things that don't work, or bite
 
+- **Flings.** iOS keeps scrolling after the lift when the touch's last moves
+  were fast, and resting before the lift doesn't stop it (a resting touch sends
+  no moves, so the fast ones stay the last): a 0.45 drag at full speed to the
+  end moved 0.65-0.67 of the screen even with a 0.4 s rest, and one ending at
+  one unit per tick (~450 pt/s) still moved 0.65-0.73. Scroll drags slow down
+  further instead (`touch.scroll_drag`): the last 60 pt at one unit per tick,
+  the last 20 pt one unit every 3 ticks (~150 pt/s), then 0.15 s still and
+  lift. Eight 0.45 scrolls in a row then moved 0.426-0.439. The mirror's wheel
+  uses the same profile (`pointer.py`) and never grips for less than 15 pt,
+  since a shorter press-and-move reads as a tap.
 - Avoid tapping the top centre of the screen: it hits the Dynamic Island, which
   opens the Screen Mirroring popup with a Stop Mirroring button.
 - Cmd+H doesn't close Control Center or Notification Center; use `phoneuse dismiss`.

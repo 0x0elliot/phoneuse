@@ -188,8 +188,17 @@ def swipe(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.3, look
 
 @server.tool(structured_output=False)
 def scroll(direction: Literal["up", "down"] = "down", amount: float = 1.0, look: Look = "strip") -> list:
-    """Scroll the content by `amount` half-screens."""
+    """Scroll the content by `amount` half-screens. It stops where the drag ends
+    (no fling)."""
     return _act(lambda h: cli.scroll(h, direction, amount), look)
+
+
+@server.tool(structured_output=False)
+def scroll_by(dy: float, x: float = 0.5, look: Look = "strip") -> list:
+    """Scroll exactly `dy`: a fraction of the screen height, or phone points if
+    above 1. Positive shows what is below, negative what is above. For lining
+    something up: move it by its distance from where you want it."""
+    return _act(lambda h: cli.scroll_by(h, dy, x), look)
 
 
 @server.tool(structured_output=False)

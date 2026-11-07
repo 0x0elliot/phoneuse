@@ -19,6 +19,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse longpress X Y [S]    press and hold (default 0.8 s)
   phoneuse swipe X0 Y0 X1 Y1 [S]  drag from one point to another over S seconds
   phoneuse scroll up|down [N]   scroll the content by N half-screens (default 1)
+  phoneuse scroll-by DY [X]     scroll exactly DY: a screen fraction, or phone points if above 1;
+                                positive shows what is below, negative what is above (X: column, default 0.5)
   phoneuse home | back | switcher | control-center | notifications | dismiss
   phoneuse open APP             open an app by name (search, type, Enter)
   phoneuse type [--append] TEXT  type text (US layout); \\n presses Enter. Replaces what
@@ -248,12 +250,23 @@ def dismiss(h):
 
 
 def scroll(h, direction, n=1.0):
-    """Drag the content by n half-screens. (Resting the finger before lifting
-    didn't stop iOS's fling, and the pause read as a settled screen: a stale
-    read. Settle waits out the fling instead, ~1 s.)"""
-    d = 0.4 * n
-    y0, y1 = (0.3, 0.3 + d) if direction == "up" else (0.7, 0.7 - d)
-    touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
+    """Scroll the content by n half-screens (0.45 of the screen height each)."""
+    scroll_by(h, 0.45 * n if direction == "down" else -0.45 * n)
+
+
+def scroll_by(h, dy, x=0.5):
+    """Scroll exactly dy (screen fraction, or phone points if |dy| > 1): positive
+    shows what is below. A drag that slows down before it lifts, so iOS doesn't
+    fling and the content stops where the finger lifts; long scrolls take
+    several drags."""
+    if abs(dy) > 1:
+        dy /= SCREEN_PT[1]
+    left = abs(dy)
+    while left > 0.005:
+        d = min(left, 0.7)
+        y0, y1 = (0.85, 0.85 - d) if dy > 0 else (0.15, 0.15 + d)
+        touch.scroll_drag(h, x, y0, x, y1)
+        left -= d
 
 
 def steplog(*a):
@@ -703,6 +716,8 @@ def main():
         touch.swipe(h, x0, y0, x1, y1, duration=float(args[4]) if len(args) > 4 else 0.3)
     elif cmd == "scroll":
         scroll(h, args[0] if args else "down", float(args[1]) if len(args) > 1 else 1.0)
+    elif cmd == "scroll-by":
+        scroll_by(h, float(args[0]), float(args[1]) if len(args) > 1 else 0.5)
     elif cmd in ("home", "back", "switcher", "dismiss", "notifications"):
         globals()[cmd](h)
     elif cmd == "control-center":

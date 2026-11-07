@@ -128,6 +128,50 @@ def _clamp(v):
     return min(max(float(v), 0.0), 1.0)
 
 
+# ---------- scrolling: drag, slow down, release (no fling) ----------
+# iOS flings when the touch is still fast in its last moves before the lift;
+# resting before lifting doesn't help (a resting touch sends no moves, so the
+# fast ones are still the last). So scroll drags slow down instead: the last
+# SCROLL_TAIL points go at one unit per tick (3.6 pt per 8 ms, ~450 pt/s), and
+# the content stops where the finger lifts.
+SCROLL_TAIL = 60.0
+SCROLL_SHARE = 0.12  # before the tail: this share of the remaining distance per tick...
+SCROLL_MAX = 30.0  # ...at most this many points
+SCROLL_CRAWL = 20.0  # the very last points go one unit every SCROLL_CRAWL_TICKS ticks
+SCROLL_CRAWL_TICKS = 3  # (~150 pt/s)
+SCROLL_HOLD = 0.15  # rest before lifting (s)
+
+
+def scroll_step(remaining):
+    """Points to move this tick when `remaining` points are left of a scroll drag."""
+    if remaining <= SCROLL_TAIL:
+        return min(remaining, DRAG_PTS[0][1])
+    return min(max(remaining * SCROLL_SHARE, DRAG_PTS[0][1]), SCROLL_MAX)
+
+
+def scroll_drag(hid, fx0, fy0, fx1, fy1):
+    """Drag from (fx0, fy0) to (fx1, fy1), slowing down at the end, and lift: the
+    content moves exactly as far as the finger, with no fling."""
+    t = Touch(hid)
+    t.press(fx0, fy0)
+    time.sleep(0.02)
+    dx, dy = (fx1 - fx0) * SCREEN_PT[0], (fy1 - fy0) * SCREEN_PT[1]
+    total = (dx * dx + dy * dy) ** 0.5
+    done = 0.0
+    while done < total - 0.5:
+        done = min(total, done + scroll_step(total - done))
+        k = done / total
+        t.target = (fx0 + (fx1 - fx0) * k, fy0 + (fy1 - fy0) * k)
+        t.step()
+        time.sleep(TICK * (SCROLL_CRAWL_TICKS if total - done < SCROLL_CRAWL else 1))
+    for _ in range(10):  # finish any remainder below one report
+        if t.step() < 1.0:
+            break
+        time.sleep(TICK)
+    time.sleep(SCROLL_HOLD)
+    t.release()
+
+
 # ---------- scripted gestures (for agents) ----------
 
 def tap(hid, fx, fy, hold=0.06):
