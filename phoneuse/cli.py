@@ -191,6 +191,8 @@ def settle():
         line, _ = screen.frames_request(f"settle {since}" if since is not None else "settle", timeout=6)
         with open(LAST_SEEN, "w") as f:  # what the agent has now seen (see agent_turn)
             f.write(line.split("seq=")[1].split()[0])
+        if since is not None:  # this action's result has been waited for: later reads needn't wait again
+            acted(None)
     except (OSError, IndexError):
         time.sleep(0.3)  # no hub (older setup): a short pause instead
 
@@ -232,22 +234,33 @@ def dismiss(h):
 
 
 def scroll(h, direction, n=1.0):
+    """Drag the content by n half-screens. (Resting the finger before lifting
+    didn't stop iOS's fling, and the pause read as a settled screen: a stale
+    read. Settle waits out the fling instead, ~1 s.)"""
     d = 0.4 * n
     y0, y1 = (0.3, 0.3 + d) if direction == "up" else (0.7, 0.7 - d)
     touch.swipe(h, 0.5, y0, 0.5, min(max(y1, 0.05), 0.95), duration=0.35)
 
 
-def step(h, command, quiet=0.1, change=1.0):
+def steplog(*a):
+    if os.environ.get("PHONEUSE_STEPLOG"):
+        print(f"{time.time():.3f}", *a, file=sys.stderr, flush=True)
+
+
+def step(h, command, quiet=0.1, change=0.6):
     """Send one HID command and wait until the phone has shown its result (the
     frames service), instead of a fixed pause. `quiet`: how long the picture
     must stay still, longer where results stream in (search)."""
     seq = frame_seq()
+    steplog("send", command)
     h.cmd(command)
     if seq is None:
         time.sleep(0.8)  # no frames service (older setup)
         return
     try:
         screen.frames_request(f"settle {seq} {quiet} {change}", timeout=6)
+        acted(None)  # settled: reads in the same command needn't wait for a change again
+        steplog("settled", command)
     except OSError:
         time.sleep(0.8)
 

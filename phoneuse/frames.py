@@ -42,6 +42,7 @@ class Frames:
         self.frame_at = 0.0  # when the last meaningful change arrived
         self.ref = None  # luma thumbnail at the last meaningful change
         self.cv = threading.Condition()
+        self.history = []  # (time, change vs last counted frame, change vs previous frame)
         self.shot_lock = threading.Lock()
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
         # System memory: NVDEC's own CUDA surfaces get reused while we hold the last one.
@@ -93,13 +94,23 @@ class Frames:
                 buf.unmap(m)
         except Exception:
             return True
-        if self.ref is None or self.ref.shape != thumb.shape or (np.abs(thumb - self.ref) > 12).mean() > 0.004:
+        frac = 1.0 if self.ref is None or self.ref.shape != thumb.shape else float((np.abs(thumb - self.ref) > 12).mean())
+        prev = getattr(self, "prev_thumb", None)
+        step = 1.0 if prev is None or prev.shape != thumb.shape else float((np.abs(thumb - prev) > 12).mean())
+        self.prev_thumb = thumb
+        self.history.append((time.time(), round(frac, 4), round(step, 4)))  # for studying settle
+        del self.history[:-3000]
+        if frac > 0.004:
             self.ref = thumb
             return True
         return False
 
-    def settle(self, since=None, change=1.0, quiet=0.1, limit=4.0):
-        """Wait until the picture is still. With `since` (the change count before
+    def settle(self, since=None, change=0.6, quiet=0.1, limit=4.0):
+        """Wait until the picture is still. Measured (history, PHONEUSE_STEPLOG):
+        an action's first visible change comes ~0.1-0.15 s after the input ends,
+        animations run 0.4-0.7 s (scroll flings ~1-2.5 s), and frames during an
+        animation are <50 ms apart, so 0.1 s without a meaningful change means
+        it ended; 0.6 s without any change means the action changed nothing. With `since` (the change count before
         an action), first wait for that action's first visible change, up to
         `change` seconds (an action may change nothing). Then wait until nothing
         meaningful has changed for `quiet` seconds. At once when nothing happens."""
@@ -167,8 +178,12 @@ class Frames:
                         a = arg.split()
                         since = int(a[0]) if a and a[0] != "-" else None
                         quiet = float(a[1]) if len(a) > 1 else 0.1
-                        change = float(a[2]) if len(a) > 2 else 1.0
+                        change = float(a[2]) if len(a) > 2 else 0.6
                         conn.sendall(f"ok seq={self.settle(since, change=change, quiet=quiet)}\n".encode())
+                    elif cmd == "history":  # history SINCE_EPOCH: frames after that time, as JSON
+                        import json
+                        t0 = float(arg or 0)
+                        conn.sendall((json.dumps([h for h in self.history if h[0] >= t0]) + "\n").encode())
                     elif cmd == "shot":
                         png = self.screenshot()
                         conn.sendall(b"err not mirroring\n" if png is None else f"ok {len(png)}\n".encode() + png)
