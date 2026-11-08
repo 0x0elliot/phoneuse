@@ -53,6 +53,28 @@ final class CompanionCryptoTests: XCTestCase {
         let s = try JSONDecoder().decode(AgentActivityAttributes.ContentState.self, from: Data(json.utf8))
         XCTAssertEqual(s.steps, 12)
         XCTAssertEqual(s.startDate, Date(timeIntervalSince1970: 1794153854))
+        XCTAssertNil(s.phase)
+    }
+
+    func testContentStatePhase() throws {
+        let json = #"{"state": "driving", "phase": "reading", "action": "Opening Gmail", "steps": 12, "startedAt": 1794153854}"#
+        var s = try JSONDecoder().decode(AgentActivityAttributes.ContentState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.currentPhase, "reading")
+        s.state = "paused"
+        XCTAssertEqual(s.currentPhase, "paused")
+    }
+
+    func testStateDecodesSession() throws {
+        let json = #"""
+        {"pc": {"id": "x", "name": "pc"}, "mirroring": true, "bluetooth": {"connected": true},
+         "agent": {"state": "idle"}, "awake": true, "audio": {"on": true},
+         "session": {"ask": true, "pending": {"id": "s9", "since": 1794153854, "action": "Opening Gmail"}},
+         "unlock": {"passcode_saved": false, "pending": null}, "bridge": null}
+        """#
+        let s = try JSONDecoder().decode(PCState.self, from: Data(json.utf8))
+        XCTAssertEqual(s.session?.ask, true)
+        XCTAssertEqual(s.session?.pending?.id, "s9")
+        XCTAssertEqual(s.session?.pending?.action, "Opening Gmail")
     }
 
     func testStateDecodes() throws {

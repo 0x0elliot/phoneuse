@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -30,7 +31,7 @@ final class AppModel: ObservableObject {
         error = nil
         Task {
             await refresh()
-            await PushRegistrar.shared.pairingChanged()
+            await PushRegistrar.shared.resendAll()
         }
     }
 
@@ -98,6 +99,12 @@ final class AppModel: ObservableObject {
         if await run("agent", "POST", "/v1/agent/resume", [:]) != nil { await setActivitiesState("driving") }
     }
 
+    func setSessionAsk(_ on: Bool) async { await run("sessionAsk", "POST", "/v1/session/ask", ["on": on]) }
+
+    func answerSession(id: String, approve: Bool) async {
+        await run("session", "POST", "/v1/session/answer", ["id": id, "approve": approve])
+    }
+
     func answerUnlock(id: String, approve: Bool) async {
         await run("unlock", "POST", "/v1/unlock/answer", ["id": id, "approve": approve])
     }
@@ -146,12 +153,47 @@ final class AppModel: ObservableObject {
 
     // MARK: Live Activity preview
 
+    /// Ids of activities started with "Test Live Activity", which the PC knows nothing about.
+    private var testActivities: Set<String> = []
+
+    /// When the app comes to the foreground: if the PC says no agent is running, end the PC's activities that are
+    /// still up, in case the PC's end push never arrived.
+    func endFinishedActivities() async {
+        await refresh()
+        guard reachable, state?.agent.state == "idle" else { return }
+        for a in Activity<AgentActivityAttributes>.activities where !testActivities.contains(a.id) {
+            Logger(subsystem: "co.lxe.phoneuse", category: "activity")
+                .info("the PC is idle; ending activity \(a.id, privacy: .public)")
+            await a.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    /// Walks the test activity through the phases, one every 3 seconds, the way a PC's pushes would.
+    private func cyclePhases(_ activity: Activity<AgentActivityAttributes>) {
+        Task {
+            let phases = ["reading", "thinking", "acting"]
+            for n in 0..<12 {
+                try? await Task.sleep(for: .seconds(3))
+                guard activity.activityState == .active else { return }
+                var c = activity.content.state
+                guard !c.paused else { continue }
+                c.phase = phases[n % 3]
+                if c.phase == "acting" { c.steps += 1 }
+                c.action = ["Reading the inbox", "Choosing a message", "Opening Gmail"][n % 3]
+                await activity.update(ActivityContent(state: c, staleDate: nil))
+            }
+        }
+    }
+
     func startTestActivity() {
         let state = AgentActivityAttributes.ContentState(
-            state: "driving", action: "Opening Gmail", steps: 12, startedAt: Date().timeIntervalSince1970 - 95)
+            state: "driving", phase: "thinking", action: "Opening Gmail", steps: 12,
+            startedAt: Date().timeIntervalSince1970 - 95)
         do {
-            _ = try Activity.request(attributes: AgentActivityAttributes(pcName: pairing?.name ?? "PC"),
+            let a = try Activity.request(attributes: AgentActivityAttributes(pcName: pairing?.name ?? "PC"),
                                      content: ActivityContent(state: state, staleDate: nil), pushType: .token)
+            testActivities.insert(a.id)
+            cyclePhases(a)
         } catch {
             self.error = "The Live Activity didn't start: \(error.localizedDescription)"
         }

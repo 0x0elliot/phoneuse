@@ -9,7 +9,7 @@ settings:
     DEVELOPMENT_TEAM: 9592R2Q8PP
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "2"
+    CURRENT_PROJECT_VERSION: "3"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
@@ -23,6 +23,8 @@ targets:
       path: App/PhoneUse.entitlements
       properties:
         aps-environment: development
+        # Session requests break through Focus (docs/COMPANION.md, "Asking before an agent session").
+        com.apple.developer.usernotifications.time-sensitive: true
         # com.apple.security.application-groups: [group.co.lxe.phoneuse]  (see README: add once the group exists)
     info:
       path: App/Info.plist

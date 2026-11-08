@@ -45,6 +45,15 @@ final class SettingsUITests: XCTestCase {
         app.buttons["resume"].tap()
         XCTAssertTrue(app.buttons["takeover"].waitForExistence(timeout: 6))
 
+        // Ask before an agent session, and allow the pending request.
+        let ask = value("sessionAsk")
+        flip("sessionAsk")
+        waitFor("value != '\(ask)'", app.switches["sessionAsk"])
+        XCTAssertTrue(app.staticTexts["sessionRequest"].exists || app.otherElements["sessionRequest"].exists
+                      || app.buttons["allowSession"].exists)
+        app.buttons["allowSession"].tap()
+        waitFor("exists == false", app.buttons["allowSession"])
+
         // A pending unlock request: approve it.
         app.buttons["approveUnlock"].tap()
         waitFor("exists == false", app.buttons["approveUnlock"])

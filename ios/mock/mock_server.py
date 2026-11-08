@@ -36,6 +36,7 @@ def initial_state():
         "agent": {"state": "driving", "action": "Opening Gmail", "since": now - 95, "steps": 12},
         "awake": False,
         "audio": {"on": True, "needs_remirror": False},
+        "session": {"ask": False, "pending": {"id": "s1", "since": now - 3, "action": "Opening Gmail"}},
         "unlock": {"passcode_saved": False, "pending": {"id": "u1", "since": now - 5}},
         "bridge": {"saved": True, "id": "bridge-01", "ip": "192.168.0.51", "ssid": "Giraffe IoT", "use": True,
                    "online": True, "rtt_ms": 15},
@@ -139,6 +140,18 @@ class Handler(BaseHTTPRequestHandler):
         if route == ("POST", "/v1/agent/resume"):
             s["agent"]["state"] = "driving"
             return ok()
+        if route == ("POST", "/v1/session/ask"):
+            on = need_bool()
+            if on is None:
+                return
+            s["session"]["ask"] = on
+            return ok()
+        if route == ("POST", "/v1/session/answer"):
+            pending = s["session"]["pending"]
+            if not pending or pending["id"] != body.get("id") or not isinstance(body.get("approve"), bool):
+                return self.error(400, "There is no such session request.", logged)
+            s["session"]["pending"] = None
+            return ok("allowed" if body["approve"] else "denied")
         if route == ("POST", "/v1/unlock/answer"):
             pending = s["unlock"]["pending"]
             if not pending or pending["id"] != body.get("id") or not isinstance(body.get("approve"), bool):
@@ -216,12 +229,15 @@ def main():
     ap.add_argument("--key", help="pairing key, base64url (default: random)")
     ap.add_argument("--cursor-delay", type=float, default=3.0, help="seconds POST /v1/cursor takes")
     ap.add_argument("--open", action="store_true", help="open the pairing link in the booted simulator")
+    ap.add_argument("--agent", default="driving", choices=["idle", "driving", "paused"],
+                    help="the agent's state at start")
     ap.add_argument("--bonjour", action="store_true", help="advertise _phoneuse._tcp with dns-sd")
     args = ap.parse_args()
 
     from companion_crypto import b64url_decode
     key = b64url_decode(args.key) if args.key else secrets.token_bytes(32)
     Handler.mock = Mock(key, args.cursor_delay)
+    Handler.mock.state["agent"]["state"] = args.agent
     link = "phoneuse://pair?" + urllib.parse.urlencode(
         {"id": PC_ID, "name": PC_NAME, "host": args.host, "port": args.port, "key": b64url_encode(key)},
         quote_via=urllib.parse.quote)

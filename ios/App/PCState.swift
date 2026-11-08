@@ -10,7 +10,9 @@ struct PCState: Decodable, Equatable {
         var needsRemirror: Bool?
         enum CodingKeys: String, CodingKey { case on, needsRemirror = "needs_remirror" }
     }
-    struct Pending: Decodable, Equatable { var id: String; var since: Double? }
+    struct Pending: Decodable, Equatable { var id: String; var since: Double?; var action: String? }
+    /// Asking the owner before an agent session. Older PCs don't send it.
+    struct Session: Decodable, Equatable { var ask: Bool; var pending: Pending? }
     struct Unlock: Decodable, Equatable {
         var passcodeSaved: Bool
         var pending: Pending?
@@ -34,6 +36,7 @@ struct PCState: Decodable, Equatable {
     var agent: Agent
     var awake: Bool
     var audio: Audio
+    var session: Session?
     var unlock: Unlock
     var bridge: Bridge?
 }

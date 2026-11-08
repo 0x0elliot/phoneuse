@@ -129,6 +129,22 @@ struct SettingsView: View {
                                                      : s.agent.state == "driving" ? "cursorarrow.rays" : "moon.zzz")
             }
             .accessibilityIdentifier("agentState")
+            if let pending = s.session?.pending {
+                Label("An agent wants to start\(pending.action.map { ": \($0)" } ?? "")", systemImage: "person.badge.clock")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("sessionRequest")
+                HStack {
+                    Button("Allow") { Task { await model.answerSession(id: pending.id, approve: true) } }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("allowSession")
+                    Button("Deny", role: .destructive) {
+                        Task { await model.answerSession(id: pending.id, approve: false) }
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("denySession")
+                    if model.busy.contains("session") { Spacer(); ProgressView() }
+                }
+            }
             if s.agent.state == "driving" {
                 Button(role: .destructive) { Task { await model.takeOver() } } label: {
                     row("Take Over", "hand.raised", busy: "agent")
@@ -137,6 +153,12 @@ struct SettingsView: View {
             } else if s.agent.state == "paused" {
                 Button { Task { await model.resume() } } label: { row("Resume", "play", busy: "agent") }
                     .accessibilityIdentifier("resume")
+            }
+            if let session = s.session {
+                Toggle(isOn: binding(session.ask) { on in await model.setSessionAsk(on) }) {
+                    Label("Ask before agent starts", systemImage: "hand.raised.square")
+                }
+                .accessibilityIdentifier("sessionAsk")
             }
         }
     }

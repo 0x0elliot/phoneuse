@@ -21,12 +21,15 @@ struct AgentLiveActivity: Widget {
             let s = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(s.paused ? "Paused" : "Agent", systemImage: icon(s))
-                        .font(.caption)
-                        .foregroundStyle(s.paused ? .orange : .cyan)
+                    HStack(spacing: 4) {
+                        PhaseIcon(state: s)
+                        Text(phaseName(s)).contentTransition(.opacity)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(phaseColor(s))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text("\(s.steps) steps").font(.caption).monospacedDigit()
+                    Text("\(s.steps) steps").font(.caption).monospacedDigit().contentTransition(.numericText())
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(s.action).font(.headline).lineLimit(1)
@@ -40,18 +43,57 @@ struct AgentLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: icon(s)).foregroundStyle(s.paused ? .orange : .cyan)
+                PhaseIcon(state: s)
             } compactTrailing: {
-                Text("\(s.steps)").monospacedDigit()
+                Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
             } minimal: {
-                Image(systemName: icon(s)).foregroundStyle(s.paused ? .orange : .cyan)
+                PhaseIcon(state: s)
             }
         }
     }
 }
 
-private func icon(_ s: AgentActivityAttributes.ContentState) -> String {
-    s.paused ? "pause.circle.fill" : "cursorarrow.rays"
+/// The icon for what the agent is doing. A Live Activity can't loop an animation, so the icon changes with a
+/// symbol transition on each update (the PC sends one every few seconds while the phase changes), and bounces
+/// when the step count goes up.
+struct PhaseIcon: View {
+    var state: AgentActivityAttributes.ContentState
+
+    var body: some View {
+        Image(systemName: phaseSymbol(state))
+            .foregroundStyle(phaseColor(state))
+            .contentTransition(.symbolEffect(.replace))
+            .symbolEffect(.bounce, value: state.steps)
+    }
+}
+
+func phaseSymbol(_ s: AgentActivityAttributes.ContentState) -> String {
+    switch s.currentPhase {
+    case "paused": return "pause.circle.fill"
+    case "thinking": return "rays"  // a spinner
+    case "reading": return "eye.fill"
+    case "acting": return "cursorarrow.click.2"  // a pointer with a tap ripple
+    default: return "cursorarrow.rays"  // a PC that doesn't send the phase
+    }
+}
+
+func phaseColor(_ s: AgentActivityAttributes.ContentState) -> Color {
+    switch s.currentPhase {
+    case "paused": return .orange
+    case "thinking": return .purple
+    case "reading": return .mint
+    default: return .cyan
+    }
+}
+
+func phaseName(_ s: AgentActivityAttributes.ContentState) -> String {
+    switch s.currentPhase {
+    case "paused": return "Paused"
+    case "thinking": return "Thinking"
+    case "reading": return "Reading"
+    case "acting": return "Acting"
+    default: return "Agent"
+    }
 }
 
 struct LockScreenView: View {
@@ -60,18 +102,20 @@ struct LockScreenView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon(state))
+            PhaseIcon(state: state)
                 .font(.title)
-                .foregroundStyle(state.paused ? .orange : .cyan)
+                .frame(width: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.paused ? "Paused" : state.action).font(.headline).lineLimit(1)
+                    .contentTransition(.opacity)
                 HStack(spacing: 4) {
-                    Text("\(state.steps) steps ·").fixedSize()
+                    Text("\(state.steps) steps ·").fixedSize().contentTransition(.numericText())
                     Text(timerInterval: state.startDate...Date.distantFuture, countsDown: false)
                         .frame(width: 72, alignment: .leading)
                 }
                 .font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-                Text(pcName).font(.caption).foregroundStyle(.secondary)
+                Text(state.currentPhase == nil || state.paused ? pcName : "\(phaseName(state)) · \(pcName)")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             ControlButton(paused: state.paused)

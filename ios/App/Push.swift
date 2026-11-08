@@ -1,10 +1,15 @@
 import ActivityKit
 import Foundation
+import OSLog
 import UIKit
 import UserNotifications
 
 /// Collects the APNs device token, the Live Activity push-to-start token and each activity's push token, and
 /// sends them to the PC with POST /v1/push (docs/COMPANION.md, "Push").
+///
+/// iOS launches the app in the background when the PC's push-to-start creates an activity, and suspends it soon
+/// after, so each send runs in a background task. A send that fails anyway is logged and retried when the app
+/// next becomes active, which also re-sends every current token.
 actor PushRegistrar {
     static let shared = PushRegistrar()
 
@@ -14,46 +19,99 @@ actor PushRegistrar {
     static let env = "production"
     #endif
 
-    private var tokens: [String: Any] = [:]
+    private let log = Logger(subsystem: "co.lxe.phoneuse", category: "push")
+    private var device: String?
+    private var pushToStart: String?
     private var watched: Set<String> = []
+    private var started = false
 
-    func set(_ field: String, _ value: Any) async {
-        tokens[field] = value
-        await send(["bundle_id": Bundle.main.bundleIdentifier ?? "co.lxe.phoneuse", "env": Self.env, field: value])
+    private var base: [String: Any] {
+        ["bundle_id": Bundle.main.bundleIdentifier ?? "co.lxe.phoneuse", "env": Self.env]
     }
 
-    /// After pairing, the new PC gets every token the app has.
-    func pairingChanged() async {
-        guard !tokens.isEmpty else { return }
-        var body: [String: Any] = ["bundle_id": Bundle.main.bundleIdentifier ?? "co.lxe.phoneuse", "env": Self.env]
-        body.merge(tokens) { $1 }
-        await send(body)
+    func setDevice(_ token: Data) async {
+        device = CompanionCrypto.hex(token)
+        await send(["device": device!], what: "device token")
     }
 
-    private func send(_ body: [String: Any]) async {
-        guard let client = try? CompanionClient.paired() else { return }
-        _ = try? await client.send("POST", "/v1/push", json: body)
+    /// Re-sends every token: after pairing, and whenever the app becomes active.
+    func resendAll() async {
+        startWatching()
+        var body: [String: Any] = [:]
+        if let device { body["device"] = device }
+        if let pushToStart { body["push_to_start"] = pushToStart }
+        if !body.isEmpty { await send(body, what: "device and push-to-start tokens") }
+        for activity in Activity<AgentActivityAttributes>.activities {
+            watch(activity)
+            if let token = activity.pushToken { await sendActivity(activity.id, token) }
+        }
     }
 
+    /// Starts once, at launch (including background launches for push-to-start).
     func startWatching() {
+        guard !started else { return }
+        started = true
         Task {
             for await data in Activity<AgentActivityAttributes>.pushToStartTokenUpdates {
-                await set("push_to_start", CompanionCrypto.hex(data))
+                pushToStart = CompanionCrypto.hex(data)
+                await send(["push_to_start": pushToStart!], what: "push-to-start token")
             }
         }
+        for activity in Activity<AgentActivityAttributes>.activities { watch(activity) }
         Task {
-            for activity in Activity<AgentActivityAttributes>.activities { watch(activity) }
             for await activity in Activity<AgentActivityAttributes>.activityUpdates { watch(activity) }
         }
     }
 
     private func watch(_ activity: Activity<AgentActivityAttributes>) {
         guard watched.insert(activity.id).inserted else { return }
+        log.info("watching activity \(activity.id, privacy: .public)")
+        if let token = activity.pushToken { Task { await sendActivity(activity.id, token) } }
         Task {
-            for await data in activity.pushTokenUpdates {
-                await set("activity", ["id": activity.id, "token": CompanionCrypto.hex(data)])
-            }
+            for await data in activity.pushTokenUpdates { await sendActivity(activity.id, data) }
         }
+    }
+
+    private func sendActivity(_ id: String, _ token: Data) async {
+        await send(["activity": ["id": id, "token": CompanionCrypto.hex(token)]], what: "activity \(id) token")
+    }
+
+    private func send(_ fields: [String: Any], what: String) async {
+        let client: CompanionClient
+        do { client = try CompanionClient.paired() } catch {
+            log.info("not paired; \(what, privacy: .public) not sent")
+            return
+        }
+        var body = base
+        body.merge(fields) { $1 }
+        let task = await BackgroundTask.begin("push tokens")
+        defer { Task { await BackgroundTask.end(task) } }
+        do {
+            _ = try await client.send("POST", "/v1/push", json: body, timeout: 10)
+            log.info("sent \(what, privacy: .public)")
+        } catch {
+            log.error("sending \(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+}
+
+/// Asks iOS for time to finish a request when the app is in the background.
+@MainActor
+enum BackgroundTask {
+    private static var open: Set<UIBackgroundTaskIdentifier> = []
+
+    static func begin(_ name: String) -> UIBackgroundTaskIdentifier {
+        let id = UIApplication.shared.beginBackgroundTask(withName: name) {
+            // iOS calls this on the main thread when the time runs out.
+            MainActor.assumeIsolated { for id in open { end(id) } }
+        }
+        if id != .invalid { open.insert(id) }
+        return id
+    }
+
+    static func end(_ id: UIBackgroundTaskIdentifier) {
+        guard open.remove(id) != nil else { return }
+        UIApplication.shared.endBackgroundTask(id)
     }
 }
 
@@ -64,8 +122,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         center.delegate = self
         let unlock = UNNotificationAction(identifier: "UNLOCK", title: "Unlock", options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: "DENY", title: "Deny", options: [.destructive])
-        center.setNotificationCategories([UNNotificationCategory(identifier: "UNLOCK", actions: [unlock, deny],
-                                                                 intentIdentifiers: [])])
+        let allow = UNNotificationAction(identifier: "ALLOW", title: "Allow", options: [])
+        let denySession = UNNotificationAction(identifier: "DENY", title: "Deny", options: [.destructive])
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: "UNLOCK", actions: [unlock, deny], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "SESSION", actions: [allow, denySession], intentIdentifiers: []),
+        ])
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         application.registerForRemoteNotifications()
         Task { await PushRegistrar.shared.startWatching() }
@@ -73,10 +135,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Task { await PushRegistrar.shared.set("device", CompanionCrypto.hex(deviceToken)) }
+        Task { await PushRegistrar.shared.setDevice(deviceToken) }
     }
 
-    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {}
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        Logger(subsystem: "co.lxe.phoneuse", category: "push").error("APNs registration failed: \(String(describing: error), privacy: .public)")
+    }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
@@ -85,14 +149,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
-        guard let id = info["unlock_id"] as? String else { return }
         let approve: Bool
         switch response.actionIdentifier {
-        case "UNLOCK": approve = true
+        case "UNLOCK", "ALLOW": approve = true
         case "DENY": approve = false
         default: return  // Tapping the notification opens the app, which shows the request.
         }
-        _ = try? await CompanionClient.paired().send("POST", "/v1/unlock/answer", json: ["id": id, "approve": approve])
+        let path: String, id: String
+        if let unlock = info["unlock_id"] as? String {
+            (path, id) = ("/v1/unlock/answer", unlock)
+        } else if let session = info["session_id"] as? String {
+            (path, id) = ("/v1/session/answer", session)
+        } else {
+            return
+        }
+        let task = BackgroundTask.begin("answer")
+        do {
+            _ = try await CompanionClient.paired().send("POST", path, json: ["id": id, "approve": approve])
+        } catch {
+            Logger(subsystem: "co.lxe.phoneuse", category: "push")
+                .error("\(path, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        }
+        BackgroundTask.end(task)
         await AppModel.shared.refresh()
     }
 }

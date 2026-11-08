@@ -12,7 +12,15 @@ struct PhoneUseApp: App {
                 .environmentObject(model)
                 .onOpenURL { model.pair(from: $0) }
                 .onChange(of: phase, initial: true) { _, phase in
-                    if phase == .active { model.startPolling() } else { model.stopPolling() }
+                    if phase == .active {
+                        model.startPolling()
+                        Task {
+                            await PushRegistrar.shared.resendAll()
+                            await model.endFinishedActivities()
+                        }
+                    } else {
+                        model.stopPolling()
+                    }
                 }
         }
     }
