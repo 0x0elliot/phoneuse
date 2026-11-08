@@ -427,7 +427,7 @@ function showAgent() {
   phone.classList.toggle("driving", a === "driving");
   takeover.hidden = a === "idle";
   takeover.classList.toggle("paused", a === "paused");
-  takeoverLabel.textContent = a === "paused" ? "Resume agent" : "Take over";
+  takeoverLabel.textContent = a === "paused" ? "You have the phone · Resume agent" : "Agent driving · Take over";
 }
 takeover.onclick = () => fetch("/api/agent/takeover", {
   method: "POST", headers: { "Content-Type": "application/json" },

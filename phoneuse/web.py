@@ -136,7 +136,15 @@ class Mirror:
         self.agent_until = time.time() + self.AGENT_IDLE
         if was != "driving":
             self.broadcast_state()
+        # Tell the pages when the session runs out, so none keeps showing (and
+        # obeying) a session that is over.
+        if self.loop:
+            self.loop.call_soon_threadsafe(self.loop.call_later, self.AGENT_IDLE + 0.1, self._agent_expired)
         return True
+
+    def _agent_expired(self):
+        if self.agent() == "idle":
+            self.broadcast_state()
 
     def take_over(self, take):
         self.taken_over = take
