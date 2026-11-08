@@ -139,6 +139,11 @@ struct StateIcon: View {
                     .rotationEffect(.degrees(Double(frame) * 45))
                     .animation(.linear(duration: 1), value: frame)
             }
+            if look == .driving {
+                // The robot: an 8-step loop per phase on frame % 8, each step eased over 0.9 s (Shared/Robot.swift).
+                RobotView(pose: .pose(phase: state.phase, frame: frame), size: size * 0.58, color: look.color(state))
+                    .animation(RobotPose.animation, value: frame)
+            } else {
             Image(systemName: look.symbol(state))
                 .font(.system(size: pointSize(look), weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
@@ -147,6 +152,7 @@ struct StateIcon: View {
                 .contentTransition(.identity)
                 .transition(.identity)
                 .transaction { $0.animation = nil }  // no system update animation on the icon
+            }
         }
         .frame(width: size, height: size)
     }

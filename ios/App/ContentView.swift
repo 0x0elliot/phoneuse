@@ -148,7 +148,12 @@ struct SettingsView: View {
                 }
             } icon: {
                 if s.agent.state == "driving" {
-                    SpinningRing(color: s.agent.phase == "thinking" ? .purple : .blue)
+                    let color: Color = s.agent.phase == "thinking" ? .purple : .blue
+                    ZStack {
+                        SpinningRing(color: color)
+                        RobotView(pose: .pose(phase: s.agent.phase, frame: 0), size: 13, color: color)
+                    }
+                    .frame(width: 24, height: 24)
                 } else {
                     Image(systemName: s.agent.state == "paused" ? "pause.circle.fill" : "person.fill")
                         .font(.system(size: 17, weight: .semibold))
@@ -457,7 +462,7 @@ struct SpinningRing: View {
         Circle()
             .trim(from: 0.1, to: 0.8)
             .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-            .frame(width: 18, height: 18)
+            .frame(width: 24, height: 24)
             .rotationEffect(.degrees(turning ? 360 : 0))
             .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
             .onAppear { turning = true }
