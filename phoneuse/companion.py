@@ -26,6 +26,7 @@ from .config import RUNTIME_DIR, config_path
 
 PORT = 8778
 STORE = os.path.join(os.path.dirname(config_path()), "companion.json")
+HEARTBEAT = 2.8  # seconds between Live Activity refreshes while an agent drives (the ring runs 3 s)
 START_RETRY = 600  # seconds between Live Activity start pushes to a device that sent no activity token back
 AUDIO_OFF = os.path.join(os.path.dirname(config_path()), "audio-off")  # exists while the mirror's audio is off
 UXPLAY_PID = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.pid")  # written by `phoneuse up`
@@ -407,7 +408,10 @@ class Companion:
                 continue
             want = self._activity_state()
             urgent = bool(want and self.sent and want[0] != self.sent[0])  # a new state goes out at once
-            if want == self.sent and not self._needs_start(want):
+            # while an agent drives, a quiet refresh every few seconds restarts the app's
+            # progress ring, so the Dynamic Island keeps moving for the whole session
+            heartbeat = bool(want and want[0] == "driving" and time.time() - self.sent_at > HEARTBEAT)
+            if want == self.sent and not heartbeat and not self._needs_start(want):
                 continue
             if not urgent and want and self.sent and time.time() - self.sent_at < 1.0:
                 continue
