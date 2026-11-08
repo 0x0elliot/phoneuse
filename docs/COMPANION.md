@@ -56,7 +56,8 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 | `DELETE /v1/passcode` | | Forgets the passcode |
 | `POST /v1/awake` | `{"on": bool}` | Keep the screen awake or not |
 | `POST /v1/keyboard` | `{}` | Shows or hides the on-screen keyboard (the Eject key) |
-| `POST /v1/cursor` | `{"on": bool}` | Turns the pointer (AssistiveTouch) on or off through Siri; takes up to 15 s |
+| `GET /v1/cursor` | | `{"pointer": "on" \| "off" \| "unknown"}`: whether the pointer (AssistiveTouch) works; the pointer hops between two spots for ~2 s to find out |
+| `POST /v1/cursor` | `{"on": bool}` | Turns the pointer on or off by asking Siri out loud through the PC's speakers; up to ~15 s, the phone unlocked and in earshot. An action, not a setting: show it as a row that confirms first |
 | `POST /v1/bridge/use` | `{"on": bool}` | Sends input through the bridge, or through the PC's own Bluetooth |
 | `GET /v1/bridge/networks` | | `{"networks": [{"ssid", "rssi", "secure"}]}` that the bridge sees |
 | `POST /v1/bridge/network` | `{"ssid", "sealed"}` (field `password`) | Moves the bridge to that Wi-Fi network |

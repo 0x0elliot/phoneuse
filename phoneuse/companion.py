@@ -284,11 +284,28 @@ class Companion:
         return web.json_response({"ok": r.startswith("ok")} if r.startswith("ok") else {"error": r}, status=200)
 
     async def cursor(self, req):
-        on = "on" if req["json"].get("on") else "off"
-        r = await self.run(lambda: subprocess.run([os.path.join(_root(), "bin", "phoneuse"), "cursor", on],
-                                                  capture_output=True, text=True, timeout=40))
-        out = (r.stdout or r.stderr).strip().splitlines()
-        return web.json_response({"result": out[-1] if out else ""}, status=200 if r.returncode == 0 else 502)
+        """The pointer (AssistiveTouch). GET: whether it works now ("on", "off" or
+        "unknown"; the pointer hops between two spots for about 2 s to find out).
+        POST {"on": bool}: turn it on or off by asking Siri out loud through the PC's
+        speakers (up to ~15 s; the phone must be unlocked and in earshot). Runs here,
+        as the owner's own action: an agent session or approval isn't involved."""
+        from . import cli
+        h = self.mirror.get_hid()
+
+        def run(fn):
+            try:
+                return fn()
+            except SystemExit as e:  # cli helpers exit with a message on failure
+                return f"error: {e}"
+            except Exception as e:
+                return f"error: {e}"
+        if req.method == "GET":
+            state = await self.run(lambda: run(lambda: cli.cursor_state(h)))
+            return web.json_response({"pointer": state})
+        on = bool(req["json"].get("on"))
+        result = await self.run(lambda: run(lambda: cli.cursor_set(h, on)))
+        ok = not str(result).startswith("error")
+        return web.json_response({"result": str(result)}, status=200 if ok else 502)
 
     async def bridge_use(self, req):
         from .bridge_web import use_bridge
@@ -573,7 +590,7 @@ class Companion:
         r.add_route("DELETE", "/v1/passcode", self.passcode)
         r.add_post("/v1/awake", self.awake)
         r.add_post("/v1/keyboard", self.keyboard)
-        r.add_post("/v1/cursor", self.cursor)
+        r.add_route("*", "/v1/cursor", self.cursor)
         r.add_post("/v1/bridge/use", self.bridge_use)
         r.add_get("/v1/bridge/networks", self.bridge_networks)
         r.add_post("/v1/bridge/network", self.bridge_network)
