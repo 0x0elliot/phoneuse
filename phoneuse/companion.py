@@ -486,7 +486,7 @@ class Companion:
                     aps.update({"event": "end", "content-state": content(before or ("idle", "idle", "", 0, "")),
                                 "dismissal-date": int(time.time())})
                 r = self._send(dev, "activity", act["token"], {"aps": aps}, topic, "liveactivity",
-                               priority=10 if (alert or not want or (before and want[0] != before[0])) else 5)
+                               priority=10)  # every frame at high priority: iOS held back priority-5 frames
                 if r[0] == 410 or (r[0] == 400 and "BadDeviceToken" in r[1]):  # that activity is gone
                     d = load()
                     for v in d["devices"].values():
