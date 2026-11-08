@@ -34,6 +34,11 @@ from .config import CFG, NAME, SCREEN_PT, config_path  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
 
+# Where the pointer rests after Bluetooth (re)connects, and where keep-awake nudges
+# it until someone moves it: the bottom middle, above the home bar, where a resting
+# pointer covers nothing and touches nothing.
+PARK = (0.5, 0.94)
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 PAGE = os.path.join(HERE, "web", "index.html")
 PORT = int(CFG.get("web_port", 8777))
@@ -96,7 +101,7 @@ class Mirror:
         self.last_input_at = 0.0  # when the page or an agent last sent input
         self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
-        self.hover_at = (0.5, 0.5)  # where the page's pointer last was (screen fractions)
+        self.hover_at = PARK  # where the page's pointer last was (screen fractions)
 
     def get_hid(self):
         if self.hid is None:
@@ -241,6 +246,14 @@ class Mirror:
             mirroring = screen.airplay_mirroring()
             bt = await loop.run_in_executor(None, self.bluetooth_up)
             changed = mirroring != self.mirroring or bt != self.bluetooth
+            if bt and not self.bluetooth:  # (re)connected: rest the pointer where it touches nothing
+                self.hover_at = PARK
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self.get_hid().cmd, f"a {PARK[0]} {PARK[1]} 0")
+                    log("Bluetooth back: pointer parked at the bottom middle")
+                except Exception:
+                    self.hid = None
             self.mirroring, self.bluetooth = mirroring, bt
             for tab in list(self.tabs):
                 if changed or tab.told_live != self.live() or tab.told_agent != self.agent():
