@@ -249,7 +249,9 @@ class Pointer:
                             self.log("scroll up", f"({self.touch[0]:.3f}, {self.touch[1]:.3f})",
                                      f"left {self.wheel[0]:.0f},{self.wheel[1]:.0f} pt")
                             continue
-                    self.hid().cmd(f"m {ux} {uy} 0 0")
+                    r = self.hid().cmd(f"md {ux} {uy} 0 0")
+                    if "dropped" in r:  # the radio is behind: keep the motion for the next tick
+                        continue
                     if ux or uy:
                         mag = (ux * ux + uy * uy) ** 0.5
                         moved = touch.points_for(mag)
