@@ -1,131 +1,114 @@
 # phoneuse
 
 > [!WARNING]
-> **Under heavy construction.** This is a technology demo, built quickly for my
-> own setup: one iPhone 17 Pro, Arch Linux, Hyprland and an NVIDIA GPU. Other
-> setups will probably need fixes, and things may change or break without notice.
-> Enjoy it as it is.
+> **Under heavy construction.** A technology demo, tested on one setup (iPhone 17
+> Pro, Arch Linux, Hyprland, NVIDIA). Other setups will likely need fixes.
 
-phoneuse lets a Linux PC see and operate an unmodified iPhone. The phone's screen
-arrives over AirPlay as a window on your desktop, and your PC acts as a Bluetooth
-mouse and keyboard for the phone. You can use the mirror window like the phone
-itself (hover, click to tap, drag to swipe, type), and agents can drive the phone
-through a command line: take a screenshot or read the screen as text, then tap,
-swipe, type or open apps.
+phoneuse lets a Linux PC see and operate an unmodified iPhone. The screen arrives
+over AirPlay; input goes in as a Bluetooth mouse and keyboard, either from the PC
+itself or from a small ESP32 bridge next to the phone. Use the mirror like the
+phone, or let agents drive it from the command line or over MCP.
 
-No jailbreak, developer account, cable or app on the phone is needed. It relies
-only on features every iPhone has: Screen Mirroring and AssistiveTouch.
+No jailbreak, developer account, cable or app on the phone: only Screen Mirroring
+and AssistiveTouch.
 
 ## What you need
 
-| | Tested with | Notes |
-|---|---|---|
-| iPhone | iPhone 17 Pro, iOS 26 | other models: set `screen_points` (below) |
-| Linux with BlueZ | Arch Linux, BlueZ 5.87 | the Bluetooth adapter must be in range of the phone |
-| Hyprland | 0.56 | window geometry and the cursor come from Hyprland's IPC |
-| UxPlay (AirPlay receiver) | 1.73.7 | `uxplay` in Arch's AUR and most distros |
-| GStreamer | 1.28 | NVIDIA decoding used when available, software otherwise |
-| GTK 4 + `gtk4paintablesink` | 4.24 | the mirror window; the sink is in `gst-plugin-gtk4` |
-| Python 3.11+ | 3.14 | with `python-dbus`, `python-gobject`, `numpy`, `pillow`, `aiohttp` |
-| `grim` | | screenshots for agents |
-| `uv` | | only for the optional screen-reading models |
+| | Tested with |
+|---|---|
+| iPhone | iPhone 17 Pro, iOS 26 (other models: set `screen_points`) |
+| Linux with BlueZ | Arch Linux, BlueZ 5.87 |
+| Hyprland | 0.56 |
+| UxPlay | 1.73.7 |
+| GStreamer, GTK 4, `gtk4paintablesink` | 1.28, 4.24 |
+| Python 3.11+ | `python-dbus`, `python-gobject`, `numpy`, `pillow`, `aiohttp` |
+| `grim` | screenshots for agents |
+| `uv` (optional) | the screen-reading models |
+| For the bridge (optional) | LilyGO T-Display (ESP32), ESP-IDF v6.1, `python-bleak`, `python-cryptography`, `python-pyserial` |
 
-The phone and the PC must be on the same network for AirPlay, and the PC's
-Bluetooth must reach the phone. A built-in Wi-Fi/Bluetooth card needs its antenna
-attached: without it the signal can be too weak to pair reliably.
+The phone and the PC must be on the same network. If you run a firewall, open TCP
+7000, 7001, 7100 and UDP 6000, 6001, 7011 for AirPlay, and UDP 47700 for the bridge.
 
 ## Setup
 
-1. **Get the code** and put the command on your path:
+1. **Install:**
    ```sh
    git clone https://github.com/lxe/phoneuse.git ~/phoneuse
    ln -s ~/phoneuse/bin/phoneuse ~/.local/bin/phoneuse
+   phoneuse install   # sudo: the HID daemon as the phoneuse-hid service
    ```
+   This turns off bluetoothd's own input plugin, so the PC stops accepting
+   Bluetooth keyboards and mice. `sudo scripts/install.sh --uninstall` undoes it.
 
-2. **Install the Bluetooth side** (and, if `uv` is present, the screen-reading
-   models):
-   ```sh
-   phoneuse install
-   ```
-   This needs sudo. It configures bluetoothd so the PC can act as a mouse and
-   keyboard (it disables bluetoothd's own input and hostname plugins, so this PC
-   stops accepting Bluetooth keyboards and mice of its own), and runs the HID
-   daemon as the `phoneuse-hid` service. `sudo scripts/install.sh --uninstall`
-   undoes it.
-
-3. **Open the firewall for AirPlay**, if you run one. UxPlay uses TCP 7000, 7001,
-   7100 and UDP 6000, 6001, 7011.
-
-4. **Set up the iPhone** under Settings → Accessibility:
-   - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
-     pointer taps by itself when it rests). Once the phone is mirroring and
-     paired, `phoneuse cursor on` can do the first part for you: it holds the
-     Siri key and asks Siri out loud, through this PC's speakers. The first time a
-     phone's pointer is on, phoneuse measures how far it moves (about 13 s of
-     hovering; `phoneuse calibrate` reruns it), since drags depend on that speed.
-   - Optional, for the debugging tools: Accessibility → Accessories → Pointer
-     Control colour **Orange**, large,
-     with Automatically Hide Pointer off. `phoneuse where` and the telemetry tools
-     find the pointer in screenshots by this colour. Agents don't need it: every
-     tap and drag starts from an exact position, so phoneuse always knows where
-     the pointer is.
-
-5. **Pair**: on the iPhone, Settings → Bluetooth → tap **PhoneUse**. Any paired
-   iPhone can connect; the latest one to connect takes over the link.
-
-6. **Start it**:
+2. **Start it:**
    ```sh
    phoneuse up
    ```
-   Then on the iPhone: Control Center → Screen Mirroring → **PhoneUse**. A
-   phone-shaped window appears on your desktop.
+   On the iPhone: Control Center › Screen Mirroring › **PhoneUse**.
+
+3. **Connect the input**, one of:
+   - **This PC's Bluetooth:** on the iPhone, Settings › Bluetooth › **PhoneUse**.
+   - **The bridge:** see [The Bluetooth bridge](#the-bluetooth-bridge) below.
+
+4. **Turn on the pointer** (AssistiveTouch), one of:
+   - `phoneuse cursor on`: asks Siri out loud through this PC's speakers.
+   - On the iPhone: Settings › Accessibility › Touch › AssistiveTouch.
+
+   Keep Dwell Control off, or the pointer taps wherever it rests. The first time a
+   phone's pointer is on, phoneuse measures its speed for drags (about 13 s;
+   `phoneuse calibrate` reruns it).
+
+## The Bluetooth bridge
+
+An ESP32 board the iPhone pairs with as its keyboard and mouse. phoneuse reaches
+it over Wi-Fi, so it can sit by the phone on a battery or any charger, and the
+PC's Bluetooth is out of the path.
+
+1. **Flash it** once, over USB. Install ESP-IDF, then build and flash:
+   ```sh
+   git clone -b v6.1 --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v6.1
+   ~/esp/esp-idf-v6.1/install.sh esp32
+   phoneuse bridge flash
+   ```
+2. **Set it up** from the browser mirror: Settings › Bluetooth bridge › Set Up
+   Bridge. Compare the code on its screen, pick a 2.4 GHz network, type the
+   password. No cable needed.
+3. **Pair**: on the iPhone, Settings › Bluetooth › **PhoneUse Bridge**.
+
+`phoneuse bridge status` shows its address, phone and round trip. The phone
+reconnects to it by itself. [docs/BRIDGE.md](docs/BRIDGE.md) covers the protocol.
 
 ## Using it
 
-Over the mirror window, the phone's pointer follows your cursor. Click to tap,
-drag to swipe, scroll with the wheel or trackpad, and press on the dark bezel to start a swipe from the very edge
-of the screen (from the bottom bezel upward goes home). While the mirror window
-has focus, your keyboard types on the phone, and Super acts as Cmd. The iPhone
-hides its own keyboard while phoneuse's is connected; `phoneuse keyboard` (or
-the keyboard button on the browser mirror) shows or hides it. After updating
-phoneuse from a version without that key, forget PhoneUse in the iPhone's
-Bluetooth settings and pair again, so the phone reads the new key.
+**Mirror window:** the phone's pointer follows your cursor. Click to tap, drag to
+swipe, scroll to scroll, press on the bezel to swipe in from an edge (bottom bezel
+upward goes home). With the window focused, your keyboard types on the phone;
+Super is Cmd.
 
-The same mirror also runs in your browser at http://localhost:8777, with mouse
-and keyboard working the same way. It listens on this computer only, and you can
-change the port with `web_port` (below). A current Chrome, Edge or Firefox
-decodes the video; it uses the GPU when the browser offers it.
+**Browser mirror:** the same at http://localhost:8777 (this computer only). Its
+settings hold the passcode, the bridge and "Keep screen awake".
 
-When the phone is locked, `phoneuse unlock` asks you first: an "Unlock the
-iPhone?" banner appears on the browser mirror and as a desktop notification,
-and only when you approve does phoneuse type the passcode, once. Save the
-passcode under the gear at the top right of the browser mirror; it is kept in
-`~/.config/phoneuse/passcode`, readable only by you.
+**Unlocking:** `phoneuse unlock` asks you first, on the browser mirror and as a
+desktop notification, and types the saved passcode only after you approve.
 
-For agents and scripts, every action is a subcommand. `phoneuse --help` lists
-them; a typical loop looks like this:
+**Agents:** every action is a subcommand (`phoneuse --help`):
 
 ```sh
 phoneuse open Settings
-phoneuse text                 # the screen as text lines with positions
-phoneuse tap-on "Wi-Fi"       # find an element by description and tap it
-phoneuse screenshot shot.png  # when text isn't enough
-phoneuse back
+phoneuse text                 # the screen as text with positions
+phoneuse tap-on "Wi-Fi"       # tap an element by description
+phoneuse screenshot shot.png
+phoneuse done                 # hand the phone back
 ```
 
-### As an MCP server
-
-`bin/phoneuse-mcp` serves the same actions over MCP (stdio). Every action returns
-the phone's screen once it has settled: a small screenshot and the screen as
-text with positions, so an agent needs one call per step. Set it up once:
+**MCP:** the same actions, each returning the settled screen:
 
 ```sh
-scripts/setup-mcp.sh                                   # MCP SDK in .venv-mcp
+scripts/setup-mcp.sh
 claude mcp add --scope user phoneuse ~/phoneuse/bin/phoneuse-mcp
 ```
 
-`docs/RECIPES.md` lists the gestures that work, the ones that don't, and why.
-`skill/SKILL.md` is a ready-made skill for Claude Code agents: link it into
+[skill/SKILL.md](skill/SKILL.md) is a ready-made Claude Code skill; link it into
 `~/.claude/skills/phoneuse`.
 
 ## Configuration
@@ -133,19 +116,18 @@ claude mcp add --scope user phoneuse ~/phoneuse/bin/phoneuse-mcp
 Optional, in `~/.config/phoneuse/config.toml`:
 
 ```toml
-name = "PhoneUse"              # Bluetooth device and AirPlay receiver name
-screen_points = [402, 874]    # your iPhone's screen size in points
+name = "PhoneUse"             # Bluetooth and AirPlay name (rerun phoneuse install after changing)
+screen_points = [402, 874]    # the iPhone's screen in points
 decoder = "auto"              # GStreamer H.264 decoder
-mirror_width = 498            # mirror window width in logical pixels
-web_port = 8777               # browser mirror: http://localhost:8777
+mirror_width = 498            # mirror window width
+web_port = 8777               # browser mirror port
 ```
 
-After changing `name`, rerun `phoneuse install`.
+## More
 
-## How it works
-
-`ARCHITECTURE.md` walks through the pieces and the iOS behaviour they were built
-around, measured on a real phone.
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the pieces fit, and the iOS behaviour they rely on
+- [docs/RECIPES.md](docs/RECIPES.md): gestures that work, and why
+- [docs/BRIDGE.md](docs/BRIDGE.md): the ESP32 bridge
 
 ## License
 
