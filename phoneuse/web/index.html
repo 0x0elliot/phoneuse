@@ -92,7 +92,6 @@
                 letter-spacing: .12em; }
   .item input::placeholder { letter-spacing: 0; color: rgba(235, 235, 245, .35); }
   .item input, .item input:focus, .item input:focus-visible { outline: none; box-shadow: none; }
-  #ask span { white-space: nowrap; }
   .link { color: #0a84ff; font-weight: 500; }
   .link:disabled { color: rgba(235, 235, 245, .3); cursor: default; }
   .danger { color: #ff453a; }
@@ -110,10 +109,30 @@
   #bridge .item input { letter-spacing: 0; }
   #settings { max-height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: none; }
   #settings::-webkit-scrollbar { display: none; }
-  #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); border-radius: 16px;
-         padding: 10px 10px 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
-  #ask .btn { padding: 6px 12px; border-radius: 99px; background: rgba(255, 255, 255, .1); font-weight: 500; }
-  #ask .btn.primary { background: #0a84ff; color: #fff; }
+  /* an agent asks the owner (to start a session, or to unlock): an amber toast that needs an answer */
+  #ask { position: fixed; z-index: 30; top: 64px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100vw - 32px));
+         box-sizing: border-box; border-radius: 20px; padding: 14px 14px 16px; display: grid; overflow: hidden;
+         grid-template-columns: 40px 1fr; gap: 4px 12px; align-items: center; color: #1c1300;
+         background: linear-gradient(135deg, #ffd60a, #ff9f0a); box-shadow: 0 0 0 1px rgba(255, 214, 10, .6),
+         0 18px 50px rgba(0, 0, 0, .55), 0 0 40px rgba(255, 159, 10, .45);
+         animation: askin .35s cubic-bezier(.2, .9, .3, 1.2), askglow 2s ease-in-out .35s infinite; }
+  @keyframes askin { from { opacity: 0; transform: translate(-50%, -16px) scale(.96); } }
+  @keyframes askglow { 50% { box-shadow: 0 0 0 1px rgba(255, 214, 10, .6), 0 18px 50px rgba(0, 0, 0, .55),
+                                         0 0 64px rgba(255, 159, 10, .75); } }
+  #ask .ico { grid-row: span 2; width: 40px; height: 40px; border-radius: 12px; background: rgba(28, 19, 0, .14);
+              display: grid; place-items: center; }
+  #askTitle { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  #askText { font-size: 14px; line-height: 1.3; opacity: .78; white-space: normal; }
+  #ask .btns { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 10px; }
+  #ask .btn { flex: 1; height: 38px; border-radius: 12px; font-weight: 600; font-size: 15px;
+              background: rgba(28, 19, 0, .14); color: #1c1300; }
+  #ask .btn:hover { background: rgba(28, 19, 0, .22); }
+  #ask .btn.primary { background: #1c1300; color: #ffd60a; }
+  #ask .btn.primary:hover { background: #000; }
+  #ask .timer { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(28, 19, 0, .12); }
+  #ask .timer i { display: block; height: 100%; background: rgba(28, 19, 0, .55); transform-origin: left;
+                  animation: asktime 120s linear forwards; }
+  @keyframes asktime { to { transform: scaleX(0); } }
 </style>
 </head>
 <body>
@@ -150,11 +169,12 @@
   <button class="destructive" id="pcRemove" hidden>Remove Passcode</button>
   <p class="foot danger" id="pcError" hidden></p>
 </div>
-<div id="ask" class="glass" hidden role="alertdialog" aria-label="Unlock request">
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.7"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
-  <span id="askText">An agent wants to unlock the iPhone</span>
-  <button class="btn" id="deny">Deny</button>
-  <button class="btn primary" id="approve">Unlock</button>
+<div id="ask" hidden role="alertdialog" aria-labelledby="askTitle" aria-describedby="askText">
+  <div class="ico" id="askIcon"></div>
+  <div id="askTitle">An agent wants control of your iPhone</div>
+  <div id="askText"></div>
+  <div class="btns"><button class="btn" id="deny">Deny</button><button class="btn primary" id="approve">Allow</button></div>
+  <div class="timer"><i id="askTimer"></i></div>
 </div>
 <div id="phone">
   <div id="screen">
@@ -553,13 +573,25 @@ function bridgePassword(n, error) {
 // is on): the owner answers here ----
 const ask = document.getElementById("ask");
 let askId = null, askKind = "unlock";
+const ICONS = {
+  session: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
+  unlock: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>',
+};
 function showAsk(id, kind, action) {
   if (!id && kind !== askKind) return;  // the other request ended
+  const fresh = id && id !== askId;
   askId = id; askKind = kind; ask.hidden = !id;
   if (!id) return;
+  document.getElementById("askIcon").innerHTML = ICONS[kind];
+  document.getElementById("askTitle").textContent = kind === "session"
+    ? "An agent wants control of your iPhone" : "An agent wants to unlock your iPhone";
   document.getElementById("askText").textContent = kind === "session"
-    ? `An agent wants to use the iPhone${action ? ` (${action})` : ""}` : "An agent wants to unlock the iPhone";
+    ? (action ? `First step: ${action}. Allow it to use the phone until it's done?` : "Allow it to use the phone until it's done?")
+    : "Allow it to enter your saved passcode once?";
   document.getElementById("approve").textContent = kind === "session" ? "Allow" : "Unlock";
+  if (fresh) {  // restart the 2-minute countdown and the entrance
+    for (const el of [ask, document.getElementById("askTimer")]) { el.style.animation = "none"; void el.offsetWidth; el.style.animation = ""; }
+  }
 }
 async function answer(approve) {
   if (!askId) return;
