@@ -107,6 +107,7 @@ try is enough.
 | Keep the screen from locking | `phoneuse awake on` / `off` (a few-pixel pointer nudge each second while nobody uses the phone; also the page's settings) |
 | Does the pointer work? | `phoneuse cursor` (on / off / unknown). Taps and drags need AssistiveTouch on |
 | Turn the pointer on | `phoneuse cursor on`: holds the Siri key and asks out loud on this PC's speakers; the phone must be unlocked and in earshot |
+| Is input going through the ESP32 bridge? | `phoneuse bridge status` (address, phone, round trip). Setup is in the browser mirror's settings; docs/BRIDGE.md |
 | Drags or scrolls fall short | `phoneuse calibrate` (~13 s of hovering, nothing tapped): measures this phone's pointer speed for drags. Runs by itself the first time a phone's pointer is on; rerun after changing Tracking Speed |
 | Where is the pointer | `phoneuse where` |
 

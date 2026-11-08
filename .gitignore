@@ -5,3 +5,8 @@ __pycache__/
 allowed
 telemetry-sessions/
 .venv-mcp/
+bridge/build/
+bridge/sdkconfig
+bridge/sdkconfig.old
+bridge/managed_components/
+bridge/dependencies.lock

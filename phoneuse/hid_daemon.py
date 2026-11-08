@@ -92,6 +92,12 @@ CHARS["\t"] = (43, 0)
 BUTTONS = {"left": 1, "right": 2, "middle": 4}
 
 
+# While set, input goes through the ESP32 bridge (phoneuse/bridge.py) over Wi-Fi
+# instead of this PC's Bluetooth: the iPhone pairs with the bridge.
+bridge_link = [None]
+bridge_phone = [False]
+
+
 class HID:
     def __init__(self):
         self.ctrl = None
@@ -103,9 +109,35 @@ class HID:
 
     @property
     def connected(self):
+        if bridge_link[0]:
+            return bridge_phone[0]
         return self.intr is not None
 
+    def _bridge(self, report_id, payload, skippable=False):
+        r = bridge_link[0].report(report_id, payload, skippable)
+        bridge_phone[0] = r != "no phone"
+        if r == "no phone":
+            raise RuntimeError("no iPhone connected to the bridge (pair it with PhoneUse Bridge)")
+        return r == "sent"
+
+    def send_skippable(self, report_id, payload):
+        """Send a hover or motion report unless earlier ones still wait to go out
+        (then the sender keeps the motion for its next report). True if sent."""
+        if bridge_link[0]:
+            if self._bridge(report_id, payload, True):
+                return True
+            busy.note(0, bridge_link[0].waiting)
+            return False
+        if self.backlog() or inflight.n >= 2:
+            busy.note(self.backlog(), inflight.n)
+            return False
+        self.send(report_id, payload)
+        return True
+
     def send(self, report_id, payload):
+        if bridge_link[0]:
+            self._bridge(report_id, payload)
+            return
         with self.lock:
             if not self.intr:
                 reconnect_now.set()
@@ -390,6 +422,8 @@ last_use = [0.0]  # when a command last sent real input (not a hover)
 
 def connect_out():
     """Page each paired iPhone once and open the HID channels."""
+    if bridge_link[0]:
+        return "input goes through the bridge"
     with connect_lock:
         released.clear()
         if hid.connected:
@@ -634,13 +668,49 @@ def release(idle):
         return "released"
 
 
+def set_bridge(args):
+    """Switch input to the bridge (its address and control key) or back to this PC."""
+    if args[:1] == ["off"] or not args:
+        bridge_link[0] = None
+        released.clear()
+        reconnect_now.set()
+        log("bridge off: input goes through this PC's Bluetooth again")
+        return "bridge off"
+    from .bridge import Link
+    link = Link({"ip": args[0], "key": args[1]})
+    link.hello()  # raises if it doesn't answer or the key is wrong
+    st = link.status()
+    bridge_link[0] = link
+    bridge_phone[0] = bool(st.get("connected"))
+    released.set()  # this PC's own link to the phone would be a second keyboard: drop it
+    if hid.intr:
+        hid.drop("input goes through the bridge now")
+    log(f"bridge on: {args[0]}, phone {st.get('phone') or 'not paired'}")
+    threading.Thread(target=watch_bridge, args=(link,), daemon=True).start()
+    return f"bridge {args[0]} phone={st.get('phone')!r} connected={st.get('connected')}"
+
+
+def watch_bridge(link):
+    """Keep the bridge's phone state current (it pairs and reconnects on its own)."""
+    while bridge_link[0] is link:
+        time.sleep(2)
+        try:
+            bridge_phone[0] = bool(link.status().get("connected"))
+        except Exception as e:
+            bridge_phone[0] = False
+            log("bridge: no answer:", e)
+
+
 def run_command(line):
     parts = line.strip().split(" ", 1)
     cmd, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
     args = rest.split()
     if cmd == "status":
+        via = f" bridge={bridge_link[0].addr[0]}" if bridge_link[0] else ""
         return (f"ok connected={hid.connected} released={released.is_set()} peer={hid.peer} "
-                f"paired={paired_devices()} mirror={mirror_name[0]!r}")
+                f"paired={paired_devices()} mirror={mirror_name[0]!r}{via}")
+    if cmd == "bridge":  # bridge IP KEYHEX | bridge off: send input through the ESP32 bridge
+        return "ok " + set_bridge(args)
     if cmd == "connect":
         return "ok " + connect_out()
     if cmd == "mirror":  # mirror NAME: the phone that is screen mirroring
@@ -654,7 +724,7 @@ def run_command(line):
             return "ok released"
     else:
         last_use[0] = time.time()
-        if released.is_set() and not hid.connected:
+        if released.is_set() and not hid.connected and not bridge_link[0]:
             try:
                 log("reconnect on use:", connect_out())
             except Exception:
@@ -684,26 +754,25 @@ def run_command(line):
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
         buttons = int(args[2]) if len(args) > 2 else 0
-        if not buttons and not hid.buttons and (hid.backlog() or inflight.n >= 2):
-            # A hover while earlier reports still wait to go out (in the socket or
-            # the controller): skip it, so the
-            # pointer jumps to the newest position instead of trailing a queue.
-            # The sender sends its newest position again on its next tick.
-            busy.note(hid.backlog(), inflight.n)
-            return "ok dropped"
+        if not buttons and not hid.buttons:
+            # A hover while earlier reports still wait to go out (in the socket, the
+            # controller, or the bridge): skip it, so the pointer jumps to the newest
+            # position instead of trailing a queue. The sender sends its newest
+            # position again on its next tick.
+            return "ok" if hid.send_skippable(3, absolute(args[0], args[1], 0)) else "ok dropped"
         hid.send(3, absolute(args[0], args[1], buttons))
         return "ok"
     if cmd in ("m", "md"):  # raw mouse report: m DX DY [WHEEL [BUTTONS]], for live input
         # md: the same, but skipped while earlier reports still wait to go out
         # (a slow radio); the sender keeps the motion and sends it in its next
         # report, so the touch jumps to the newest position instead of trailing.
-        if cmd == "md" and (hid.backlog() or inflight.n >= 2):
-            busy.note(hid.backlog(), inflight.n)
-            return "ok dropped"
         dx, dy = (max(-127, min(127, int(v))) for v in args[:2])
         wheel = max(-127, min(127, int(args[2]))) if len(args) > 2 else 0
         if len(args) > 3:
             hid.buttons = int(args[3]) & 0x07
+        if cmd == "md":
+            sent = hid.send_skippable(2, [hid.buttons, dx & 0xFF, dy & 0xFF, wheel & 0xFF])
+            return "ok" if sent else "ok dropped"
         hid.mouse(dx, dy, wheel)
         return "ok"
     if cmd == "k":  # raw keyboard report: k MODS [CODE...], up to 6 held keys

@@ -24,13 +24,13 @@
   #gear:hover, #gear[aria-expanded="true"] { color: #fff; }
   #kbd { position: fixed; z-index: 10; top: 14px; left: 14px; height: 34px; padding: 0 8px 0 12px; border-radius: 99px;
          display: flex; align-items: center; gap: 9px; font-size: 14px; color: rgba(255, 255, 255, .85); }
-  #awake .sw, #kbd .sw { width: 34px; height: 20px; border-radius: 99px; background: rgba(120, 120, 128, .4); position: relative;
+  #awake .sw, #kbd .sw, #bUse .sw { width: 34px; height: 20px; border-radius: 99px; background: rgba(120, 120, 128, .4); position: relative;
              transition: background .2s; }
-  #awake .sw::after, #kbd .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  #awake .sw::after, #kbd .sw::after, #bUse .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
                     background: #fff; transition: transform .2s; }
-  #awake .sw { flex: none; }
-  #awake[aria-checked="true"] .sw, #kbd[aria-checked="true"] .sw { background: #30d158; }
-  #awake[aria-checked="true"] .sw::after, #kbd[aria-checked="true"] .sw::after { transform: translateX(14px); }
+  #awake .sw, #bUse .sw { flex: none; }
+  #awake[aria-checked="true"] .sw, #kbd[aria-checked="true"] .sw, #bUse[aria-checked="true"] .sw { background: #30d158; }
+  #awake[aria-checked="true"] .sw::after, #kbd[aria-checked="true"] .sw::after, #bUse[aria-checked="true"] .sw::after { transform: translateX(14px); }
   #takeover { position: fixed; z-index: 10; top: 14px; right: 58px; height: 34px; padding: 0 14px; border-radius: 99px;
               font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 7px; }
   #takeover[hidden] { display: none; }
@@ -68,6 +68,16 @@
                  font-weight: 500; color: #ff453a; background: rgba(255, 69, 58, .14); }
   .destructive:hover { background: rgba(255, 69, 58, .2); }
   .foot { font-size: 12px; line-height: 1.45; color: rgba(235, 235, 245, .5); margin: 8px 6px 0; }
+  #bridge .item { width: 100%; text-align: left; box-sizing: border-box; }
+  #bridge button.item:hover { background: rgba(255, 255, 255, .05); }
+  #bridge .sub { display: block; font-size: 12px; color: rgba(235, 235, 245, .55); margin-top: 2px; }
+  #bridge .code { font-size: 30px; font-weight: 600; letter-spacing: .08em; text-align: center; padding: 14px 0 6px;
+                  font-variant-numeric: tabular-nums; }
+  #bridge .dim { color: rgba(235, 235, 245, .55); }
+  #bridge .ok { color: #30d158; }
+  #bridge .item input { letter-spacing: 0; }
+  #settings { max-height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: none; }
+  #settings::-webkit-scrollbar { display: none; }
   #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); border-radius: 16px;
          padding: 10px 10px 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
   #ask .btn { padding: 6px 12px; border-radius: 99px; background: rgba(255, 255, 255, .1); font-weight: 500; }
@@ -90,6 +100,11 @@
       <span class="grow">Keep screen awake</span><span class="sw"></span>
     </button>
   </div>
+  <div class="label">Bluetooth bridge</div>
+  <div class="group" id="bridge"></div>
+  <p class="foot" id="bridgeFoot" hidden></p>
+  <button class="destructive" id="bForget" hidden>Forget Bridge</button>
+  <div style="height: 14px"></div>
   <div class="label">Passcode</div>
   <div class="group">
     <form class="item" id="pcForm" autocomplete="off">
@@ -384,7 +399,7 @@ function openSettings(open) {
   settings.hidden = !open;
   gear.setAttribute("aria-expanded", open);
   pcInput.value = ""; pcSave.disabled = true;
-  if (open) { passcode("GET"); pcInput.focus(); }
+  if (open) { passcode("GET"); bridgeShow(); pcInput.focus(); }
 }
 gear.onclick = () => openSettings(settings.hidden);
 addEventListener("pointerdown", (e) => { if (!settings.hidden && !settings.contains(e.target) && !gear.contains(e.target)) openSettings(false); });
@@ -396,6 +411,109 @@ document.getElementById("pcForm").onsubmit = (e) => {
   pcInput.value = ""; pcSave.disabled = true;
 };
 pcRemove.onclick = () => passcode("DELETE");
+
+
+// ---- Bluetooth bridge: an ESP32 the iPhone pairs with, driven over Wi-Fi ----
+// Setup: find it over BLE, compare the code on its screen, pick a network it
+// sees, type the password. The server holds the BLE conversation between steps.
+const bridgeBox = document.getElementById("bridge"), bridgeFoot = document.getElementById("bridgeFoot");
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+async function bapi(path, body) {
+  const r = await fetch("/api/bridge" + path, { method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  return r.json();
+}
+function bview(html, foot) {
+  bridgeBox.innerHTML = html;
+  bForget.hidden = true;
+  bridgeFoot.hidden = !foot; bridgeFoot.innerHTML = foot || "";
+  bridgeFoot.className = "foot" + (foot && foot.startsWith("!") ? " danger" : "");
+  if (foot && foot.startsWith("!")) bridgeFoot.innerHTML = foot.slice(1);
+}
+const on = (sel, fn) => { const el = bridgeBox.querySelector(sel); if (el) el.onclick = fn; };
+const bForget = document.getElementById("bForget");
+bForget.onclick = async () => { await fetch("/api/bridge", { method: "DELETE" }); bridgeShow(); };
+async function bridgeShow() {
+  const j = await bapi("");
+  if (!j.saved) {
+    bview(`<button class="item" id="bSetup"><span class="grow link">Set Up Bridge…</span></button>`,
+          "A LilyGO T-Display the iPhone pairs with as its keyboard and mouse. phoneuse reaches it over Wi-Fi.");
+    on("#bSetup", bridgeFind);
+    return;
+  }
+  const st = j.status || {}, sv = j.saved;
+  const phone = st.error ? `<span class="danger">Not answering</span>`
+    : st.connected ? `<span class="ok">${esc(st.phone || "iPhone")}</span>`
+    : `Pair on the iPhone: Bluetooth › PhoneUse Bridge`;
+  bview(`<div class="item"><span class="grow">Bridge ${esc(sv.id.slice(-4))}<span class="sub">${esc(sv.ssid)} · ${esc(sv.ip)}</span>
+           <span class="sub">${phone}</span></span></div>
+         <button class="item" id="bUse" role="switch" aria-checked="${!!sv.use}"><span class="grow">Send input through bridge</span><span class="sw"></span></button>
+         <button class="item" id="bChange"><span class="grow link">Change Network…</span></button>`,
+        st.error ? "!" + esc(st.error) : "");
+  const use = bridgeBox.querySelector("#bUse");
+  use.onclick = async () => { await bapi("/use", { on: !sv.use }); bridgeShow(); };
+  on("#bChange", async () => {
+    const r = await bapi("/change", {});
+    if (r.error) return bview(bridgeBox.innerHTML, "!" + esc(r.error));
+    bridgeFind();
+  });
+  bForget.hidden = false;
+}
+async function bridgeFind() {
+  bview(`<div class="item dim">Looking for bridges…</div>`);
+  const j = await bapi("/find", {});
+  if (j.error) return bview(`<button class="item" id="bAgain"><span class="grow link">Try Again</span></button>`, "!" + esc(j.error)), on("#bAgain", bridgeFind);
+  if (!j.bridges.length) {
+    bview(`<button class="item" id="bAgain"><span class="grow link">Look Again</span></button>
+           <button class="item" id="bBack"><span class="grow link">Cancel</span></button>`,
+          "No bridge is waiting for setup. A new one waits by itself; a set-up one does after you hold its lower button for 3 seconds.");
+    on("#bAgain", bridgeFind); on("#bBack", bridgeShow);
+    return;
+  }
+  bview(j.bridges.map((b, i) => `<button class="item" data-i="${i}"><span class="grow">${esc(b.name)}</span><span class="dim">${b.rssi} dBm</span></button>`).join(""));
+  bridgeBox.querySelectorAll("[data-i]").forEach((el) => el.onclick = () => bridgePair(j.bridges[+el.dataset.i]));
+}
+async function bridgePair(b) {
+  bview(`<div class="item dim">Connecting to ${esc(b.name)}…</div>`);
+  const j = await bapi("/pair", { address: b.address });
+  if (j.error) return bview(`<button class="item" id="bAgain"><span class="grow link">Try Again</span></button>`, "!" + esc(j.error)), on("#bAgain", bridgeFind);
+  bview(`<div class="code">${esc(j.code)}</div>
+         <button class="item" id="bSame"><span class="grow link">The Bridge Shows This Code</span></button>
+         <button class="item" id="bDiff"><span class="grow link">It Shows Another Code</span></button>`,
+        "Compare with the bridge's screen. A different code means something else answered; stop there.");
+  on("#bSame", bridgeNetworks);
+  on("#bDiff", async () => { await bapi("/cancel", {}); bridgeShow(); });
+}
+async function bridgeNetworks() {
+  bview(`<div class="item dim">The bridge is looking for Wi-Fi networks…</div>`);
+  const j = await bapi("/networks", {});
+  if (j.error) return bview(`<button class="item" id="bAgain"><span class="grow link">Start Again</span></button>`, "!" + esc(j.error)), on("#bAgain", bridgeFind);
+  const lock = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="opacity:.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+  bview(j.networks.map((n, i) => `<button class="item" data-i="${i}"><span class="grow">${esc(n.s)}</span>${n.l ? lock : ""}<span class="dim">${n.r}</span></button>`).join("") +
+        `<button class="item" id="bRescan"><span class="grow link">Scan Again</span></button>`,
+        "Networks the bridge sees. It needs 2.4 GHz Wi-Fi, on the same network as this PC.");
+  bridgeBox.querySelectorAll("[data-i]").forEach((el) => el.onclick = () => bridgePassword(j.networks[+el.dataset.i]));
+  on("#bRescan", bridgeNetworks);
+}
+function bridgePassword(n, error) {
+  bview(`<form class="item" id="bForm" autocomplete="off">
+           <input type="password" id="bPass" placeholder="Password for ${esc(n.s)}" autocomplete="off" aria-label="Wi-Fi password">
+           <button class="link" type="submit" id="bJoin">Join</button></form>
+         <button class="item" id="bOther"><span class="grow link">Other Network</span></button>`, error ? "!" + esc(error) : "");
+  const pass = bridgeBox.querySelector("#bPass");
+  if (!n.l) { pass.value = ""; pass.placeholder = "Open network: no password"; pass.disabled = true; }
+  pass.focus();
+  on("#bOther", bridgeNetworks);
+  bridgeBox.querySelector("#bForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const pw = pass.value;
+    bview(`<div class="item dim">Joining ${esc(n.s)}…</div>`);
+    const j = await bapi("/join", { ssid: n.s, password: pw });
+    if (j.error && j.retry) return bridgePassword(n, j.error);
+    if (j.error) return bview(`<button class="item" id="bAgain"><span class="grow link">Start Again</span></button>`, "!" + esc(j.error)), on("#bAgain", bridgeFind);
+    bridgeShow();
+  };
+}
 
 // ---- unlock requests from agents: the owner answers here ----
 const ask = document.getElementById("ask");

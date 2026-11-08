@@ -31,6 +31,9 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                 while nobody uses the phone (also in the page's settings)
   phoneuse cursor [on|off]      whether the pointer works (AssistiveTouch); on/off asks
                                 Siri out loud on this PC's speakers to switch it
+  phoneuse bridge [status|setup|find|flash|log]
+                                the ESP32 Bluetooth bridge: the phone pairs with it,
+                                phoneuse drives it over Wi-Fi (setup is over BLE)
   phoneuse calibrate            measure how far the pointer moves on this phone (~10 s;
                                 runs by itself the first time a phone's pointer is on)
   phoneuse where                debugging: where the pointer appears (needs Pointer
@@ -824,6 +827,11 @@ def up():
     threading.Thread(target=keep_mirror, daemon=True).start()
     try:
         h = Hid()
+        from . import bridge, bridge_web
+        if bridge.saved() and bridge.saved().get("use", True):  # input through the ESP32 bridge
+            found = bridge.resolve()
+            print("Bridge:", bridge_web.use_bridge(found).replace("ok ", "") if found
+                  else "set up, but not answering on this network", flush=True)
         print("Bluetooth:", h.cmd("status").replace("ok ", ""))
         print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
         print(f"Browser mirror: http://localhost:{CFG['web_port']}")
@@ -941,6 +949,9 @@ def main():
         return unlock_cmd()
     if cmd == "done":
         return agent_done()
+    if cmd == "bridge":  # the ESP32 Bluetooth bridge: setup, status, firmware
+        from . import bridge
+        return bridge.main(args)
     if cmd == "awake":  # awake [on|off]: keep the screen awake (the page server nudges the pointer)
         return print(awake_cmd(args[0] if args else None))
     if cmd == "view":

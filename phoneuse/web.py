@@ -524,6 +524,8 @@ def app(mirror):
     a.router.add_post("/api/agent/done", agent_done)
     a.router.add_post("/api/keyboard", keyboard)
     a.router.add_route("*", "/api/awake", awake)
+    from .bridge_web import BridgeRoutes
+    BridgeRoutes(same_origin).add(a)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
     return a
 
