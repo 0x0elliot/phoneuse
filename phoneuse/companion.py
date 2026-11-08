@@ -481,7 +481,11 @@ class Companion:
             topic = dev["bundle_id"] + ".push-type.liveactivity"
             # iOS ignores an update whose timestamp isn't newer than the last one it applied
             self.last_ts = max(int(time.time()), self.last_ts + 1)
-            aps = {"timestamp": self.last_ts}
+            # The same high relevance every time: with several Live Activities on the phone
+            # (Screen Mirroring, a screen recording), iOS picks which one the Dynamic Island
+            # shows by relevance; a constant top score keeps ours in place instead of being
+            # swapped in and out on every 1 s frame.
+            aps = {"timestamp": self.last_ts, "relevance-score": 100}
             act = dev.get("activity") or {}
             if want and not act.get("token"):
                 # one start, then wait for the app to send the new activity's token: starting
