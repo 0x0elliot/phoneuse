@@ -18,6 +18,8 @@
 //   0x07 JOIN nonce(12) sealed -> 0x87, then it changes network; sealed =
 //        AES-GCM(HMAC(control key, "phoneuse wifi change"), "ssid\0password").
 //        Back on the old network if the new one fails (STATUS "err" says why).
+//   0x08 TUNE what value     -> 0x88 esp_err (experiments): what 1 = coexistence
+//        preference (0 Wi-Fi, 1 Bluetooth, 2 balance), 2 = Wi-Fi TX power (0.25 dBm)
 // Packets after HELLO carry its session and a rising seq; an old seq is dropped,
 // the same seq again gets the same answer again (a lost reply), nothing is redone.
 #include <stdio.h>
@@ -26,7 +28,9 @@
 #include "bridge.h"
 #include "settings.h"
 #include "crypto.h"
+#include "esp_coexist.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -192,6 +196,14 @@ static void link_task(void *arg) {
                 wifi_switch(ssid, pass);
             }
             continue;
+        } else if (type == 0x08 && bn >= 2) {
+            int32_t e = -1;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+            if (body[0] == 1) e = esp_coex_preference_set((esp_coex_prefer_t)body[1]);
+#pragma GCC diagnostic pop
+            if (body[0] == 2) e = esp_wifi_set_max_tx_power((int8_t)body[1]);
+            m = reply(out, 0x88, sid, seq, &e, 4, true);
         } else if (type == 0x05) {
             setup_ble_open(true);
             m = reply(out, 0x85, sid, seq, "", 0, true);

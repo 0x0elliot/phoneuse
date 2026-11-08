@@ -298,7 +298,7 @@ class Link:
     """
 
     TIMEOUT = 0.06   # first wait for an answer; doubles on each retry
-    CREDIT = 3       # unanswered async reports allowed at once
+    CREDIT = 5       # unanswered async reports allowed at once (measured: 6 -> 107/s)
     EXPIRE = 0.25    # an async report unanswered this long counts as lost
 
     def __init__(self, cfg=None):
