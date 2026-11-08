@@ -150,7 +150,7 @@ struct SettingsView: View {
                 if s.agent.state == "driving" {
                     SpinningRing(color: s.agent.phase == "thinking" ? .purple : .blue)
                 } else {
-                    Image(systemName: s.agent.state == "paused" ? "pause.circle.fill" : "person.fill.checkmark")
+                    Image(systemName: s.agent.state == "paused" ? "pause.circle.fill" : "person.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(s.agent.state == "paused" ? Color.orange : Color.gray)

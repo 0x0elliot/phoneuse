@@ -69,7 +69,7 @@ enum Look {
 
     func symbol(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
-        case .idle: return "person.fill.checkmark"
+        case .idle: return "person.fill"
         case .asking: return "hand.raised.fill"
         case .paused: return "pause.circle.fill"
         case .driving:
