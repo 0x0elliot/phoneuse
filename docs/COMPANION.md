@@ -116,7 +116,9 @@ from Control Center. iOS doesn't let apps start Screen Mirroring.
 
 ## Push
 
-The app sends its tokens whenever iOS gives it new ones:
+The app sends its tokens whenever iOS gives it new ones, and all of them again at every launch and whenever it
+becomes active, so the PC always has the current build's tokens and `env` (a TestFlight build is `production`, a
+development build `sandbox`):
 
 ```json
 {"bundle_id": "…", "env": "sandbox | production",
@@ -143,12 +145,20 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
 - **Unlock request** (topic `<bundle id>`, push type `alert`), to the device token: an alert with category
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
+- **Request over** (topic `<bundle id>`, push type `background`, priority 5), to the device token, when a session
+  or unlock request ends without the app answering it (answered elsewhere, timed out, or the agent gave up or ended
+  its session): `{"aps": {"content-available": 1}, "request_over": {"kind": "session" | "unlock", "id": "…"}}`.
+  The app removes the delivered notifications for that request and refreshes the state. Whenever the app refreshes
+  the state, it also removes any delivered request notification whose id isn't pending any more.
 
 `content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "deadline": <unix seconds or null>, "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>, "frame": n}`.
 
 While an agent drives, the PC refreshes the activity every second (priority 10: iOS held back priority-5 frames), with `frame` counting up by one
 each time; the app draws one animation frame per value (a rotation or a different icon), so the icon keeps moving
-for as long as the agent drives. `updatedAt` makes each refresh new content.
+for as long as the agent drives. `updatedAt` makes each refresh new content. Timer-driven views (a timer
+ProgressView) don't move in the compact Dynamic Island, so these frames are what keep it moving. The app shows one
+look per `state`, uses `phase` only while driving, and fills in any missing field, so a payload without one still
+updates the activity.
 
 The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends when mirroring stops.
 `idle` means the owner is in control. `asking` means an agent waits for the owner's answer to a session request:
