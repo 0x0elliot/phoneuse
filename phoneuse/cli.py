@@ -66,7 +66,7 @@ import urllib.error
 import urllib.request
 
 from . import calibrate, phones, screen, touch
-from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
+from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET, config_path
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
@@ -214,14 +214,21 @@ def agent_turn():
     req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act",
                                  data=json.dumps({"action": ACTION}).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
+    # With "ask before agent starts" on, the action may only go ahead after the server
+    # says yes: every failure to get that answer stops the agent (fail closed).
+    asks = os.path.exists(os.path.join(os.path.dirname(config_path()), "ask-before-session"))
     try:
         # up to 2 minutes when the owner asked to approve each agent session (SessionRequests in web.py)
         urllib.request.urlopen(req, timeout=130).close()
     except urllib.error.HTTPError as e:
         if e.code == 409:
             die(json.loads(e.read()).get("result", "the user took over the phone; stop and wait"))
-    except OSError:
-        pass  # no browser mirror running: nothing to tell
+        if asks:
+            die(f"Couldn't get the owner's approval for this session (the server answered {e.code}). Nothing was done.")
+    except OSError as e:
+        if asks:
+            die(f"Couldn't get the owner's approval for this session ({e}). Nothing was done.")
+        # else: no browser mirror running, nothing to tell
     try:
         seen_at = os.path.getmtime(LAST_SEEN)
         acted_at = os.path.getmtime(LAST_ACTION) if os.path.exists(LAST_ACTION) else 0
