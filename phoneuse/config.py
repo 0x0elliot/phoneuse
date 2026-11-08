@@ -23,7 +23,6 @@ DEFAULTS = {
 
 # Runtime paths shared by the daemon (root) and the user-side tools.
 HID_SOCKET = "/run/phoneuse-hid.sock"
-ALLOWED_FILE = "/etc/phoneuse/allowed"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 VISION_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-vision.sock")
 HUB_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-hub.sock")

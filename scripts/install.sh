@@ -15,9 +15,6 @@ if [ -f /etc/systemd/system/airwisp-hid.service ]; then
   systemctl disable --now airwisp-hid.service 2>/dev/null || true
   rm -f /etc/systemd/system/airwisp-hid.service /etc/systemd/system/bluetooth.service.d/airwisp.conf
   sed -i '/^# airwisp$/{N;d}' "$CONF"
-  if [ -f /etc/airwisp/allowed ] && [ ! -s /etc/phoneuse/allowed ]; then
-    mkdir -p /etc/phoneuse && cp /etc/airwisp/allowed /etc/phoneuse/allowed
-  fi
 fi
 
 if [ -f /etc/systemd/system/iphone-hid.service ]; then
@@ -32,7 +29,7 @@ if [ "$1" = "--uninstall" ]; then
   sed -i '/^# phoneuse$/{N;d}' "$CONF"
   systemctl daemon-reload
   systemctl restart bluetooth
-  echo "removed (the allow list in /etc/phoneuse/ is kept)"
+  echo "removed"
   exit 0
 fi
 
@@ -51,11 +48,7 @@ EOC
 # 2. Device class: peripheral, keyboard + pointing device.
 grep -q '^# phoneuse$' "$CONF" || sed -i '/^\[General\]/a # phoneuse\nClass = 0x0025C0' "$CONF"
 
-# 3. Allow list: empty means "trust the first device that pairs".
-mkdir -p /etc/phoneuse
-touch /etc/phoneuse/allowed
-
-# 4. The daemon. Its command socket is writable by the "wheel" group.
+# 3. The daemon. Its command socket is writable by the "wheel" group.
 GID=$(getent group wheel | cut -d: -f3)
 cat > "$UNIT" <<EOC
 [Unit]

@@ -33,7 +33,7 @@ import dbus.service
 from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-from .config import HID_SOCKET as SOCK_PATH, ALLOWED_FILE as ALLOW_FILE
+from .config import HID_SOCKET as SOCK_PATH
 DEVICE_NAME = os.environ.get("PHONEUSE_NAME", "PhoneUse")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
 HID_UUID = "00001124-0000-1000-8000-00805f9b34fb"
@@ -267,10 +267,6 @@ def accept_loop():
     log("listening on PSM 17/19")
     while True:
         c, addr = sc.accept()
-        if not allowed(addr[0]):
-            log("rejected HID connection from", addr[0], "(not in", ALLOW_FILE + ")")
-            c.close()
-            continue
         if released.is_set():
             log("declined HID connection from", addr[0], "(released until phoneuse is used)")
             c.close()
@@ -396,10 +392,7 @@ class Agent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
-        addr = str(device).rsplit("dev_", 1)[-1].replace("_", ":")
-        if not allowed(addr):
-            log("rejected service", uuid, "for", addr)
-            raise dbus.exceptions.DBusException("not allowed", name="org.bluez.Error.Rejected")
+        pass
 
     @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
@@ -432,22 +425,6 @@ class Agent(dbus.service.Object):
 
 
 
-def allowed(addr):
-    """Only listed devices may use the HID channels. Trust on first use: while the
-    list is empty, the first device to connect is added to it."""
-    try:
-        allow = {l.split("#")[0].strip().upper() for l in open(ALLOW_FILE)} - {""}
-    except FileNotFoundError:
-        allow = set()
-    if not allow:
-        os.makedirs(os.path.dirname(ALLOW_FILE), exist_ok=True)
-        with open(ALLOW_FILE, "a") as f:
-            f.write(f"{addr.upper()}  # first device to pair\n")
-        log("allow list was empty; trusting", addr)
-        return True
-    return addr.upper() in allow
-
-
 def open_pairing(seconds):
     a = adapter()
     a.Set("org.bluez.Adapter1", "PairableTimeout", dbus.UInt32(seconds))
@@ -477,8 +454,8 @@ def setup_dbus():
     bus.add_signal_receiver(on_device_changed, "PropertiesChanged",
                             "org.freedesktop.DBus.Properties", "org.bluez", path_keyword="path")
     log("profile + agent registered")
-    # Always discoverable and pairable, so the iPhone can (re)pair any time.
-    # The allow list keeps other devices off the HID channels.
+    # Always discoverable and pairable, so any iPhone can (re)pair any time. Any
+    # paired device may connect; a new connection replaces the current one.
     open_pairing(0)
 
 

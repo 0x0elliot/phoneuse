@@ -31,8 +31,8 @@ registers a classic Bluetooth HID profile with BlueZ (the SDP record in
 relative mouse and an absolute pointer. Other programs send it one-line commands
 on `/run/phoneuse-hid.sock`: `a X Y BUTTON` for the absolute pointer, `m DX DY
 WHEEL BUTTON` for the relative mouse, `k MODS KEYS` and `type TEXT` for the
-keyboard. It also keeps the Bluetooth link responsive (below) and only talks to
-devices in `/etc/phoneuse/allowed`, trusting the first device that pairs.
+keyboard. It also keeps the Bluetooth link responsive (below). Any paired device
+may connect, and a new connection replaces the current one.
 `scripts/install.sh` reconfigures bluetoothd so this can work: the input plugin
 would otherwise claim the HID channels, and the hostname plugin would reset the
 device class from "keyboard and mouse" to "computer".

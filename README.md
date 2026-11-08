@@ -66,8 +66,8 @@ attached: without it the signal can be too weak to pair reliably.
      tap and drag starts from an exact position, so phoneuse always knows where
      the pointer is.
 
-5. **Pair**: on the iPhone, Settings → Bluetooth → tap **PhoneUse**. The first
-   device to pair is trusted from then on (`/etc/phoneuse/allowed`).
+5. **Pair**: on the iPhone, Settings → Bluetooth → tap **PhoneUse**. Any paired
+   iPhone can connect; the latest one to connect takes over the link.
 
 6. **Start it**:
    ```sh
