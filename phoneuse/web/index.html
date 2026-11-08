@@ -111,14 +111,10 @@
   #bridge .item input { letter-spacing: 0; }
   #settings { max-height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: none; }
   #settings::-webkit-scrollbar { display: none; }
-  .seg { padding: 4px; gap: 4px; }
-  .seg button { flex: 1; height: 30px; border-radius: 8px; font-size: 13px; color: rgba(235, 235, 245, .7); }
-  .seg button[aria-checked="true"] { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 600; }
-  #startSeconds { flex: 1; accent-color: #ff9f0a; letter-spacing: 0; }
-  .notice { color: rgba(235, 235, 245, .7); font-size: 14px; }
-  .secs { width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
   #startSecondsRow[hidden] { display: none; }
-  #startHint { margin: 7px 6px 14px; }
+  .pick { font: inherit; font-size: 15px; color: rgba(235, 235, 245, .6); background: none; border: 0; text-align: right;
+          cursor: pointer; padding: 0; }
+  .pick option { color: #000; }
   /* an agent asks the owner (to start a session, or to unlock): a page-wide toast rising from the
      bottom of the window, over the phone, so it reads as this page asking, not the phone */
   #ask { position: fixed; z-index: 30; inset: 0; pointer-events: none; }
@@ -171,20 +167,19 @@
       <span class="grow">Keep screen awake</span><span class="sw"></span>
     </button>
   </div>
-  <div class="label">Agent control</div>
-  <div class="group" id="startMode">
-    <div class="item seg" role="radiogroup" aria-label="Agent control">
-      <button role="radio" data-mode="auto">Instant</button>
-      <button role="radio" data-mode="countdown">Delayed</button>
-      <button role="radio" data-mode="ask">Approval</button>
-    </div>
-    <div class="item" id="startSecondsRow" hidden>
-      <span class="notice">Notice</span>
-      <input type="range" id="startSeconds" min="5" max="30" step="1" value="10" aria-label="Notice in seconds">
-      <span id="startSecondsLabel" class="secs">10 s</span>
-    </div>
+  <div class="group" id="startMode" style="margin-bottom: 14px">
+    <label class="item"><span class="grow">Agent access</span>
+      <select id="startModeSel" class="pick">
+        <option value="auto">Always</option>
+        <option value="countdown">After a notice</option>
+        <option value="ask">Ask every time</option>
+      </select></label>
+    <label class="item" id="startSecondsRow" hidden><span class="grow">Notice</span>
+      <select id="startSecondsSel" class="pick">
+        <option value="5">5 s</option><option value="10">10 s</option>
+        <option value="15">15 s</option><option value="30">30 s</option>
+      </select></label>
   </div>
-  <p class="foot" id="startHint"></p>
   <div class="label">Bluetooth bridge</div>
   <div class="group" id="bridge"></div>
   <p class="foot" id="bridgeFoot" hidden></p>
@@ -672,32 +667,20 @@ const awakeSw = document.getElementById("awake");
 awakeSw.onclick = () => fetch("/api/awake", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ on: awakeSw.getAttribute("aria-checked") !== "true" }) });
 
-// Agent control: instant, delayed (a countdown the owner can cancel), or approval.
-const START_HINTS = {
-  auto: "An agent can take control at any time.",
-  countdown: (n) => `An agent takes control after a ${n}-second countdown, unless you cancel it.`,
-  ask: "An agent takes control only with your approval.",
-};
-const startSeconds = document.getElementById("startSeconds");
+// Agent access: always, after a notice (a countdown the owner can cancel), or ask every time.
+const modeSel = document.getElementById("startModeSel"), secsSel = document.getElementById("startSecondsSel");
 function showStart(st) {
-  for (const b of document.querySelectorAll("#startMode .seg button")) b.setAttribute("aria-checked", b.dataset.mode === st.mode);
-  startSeconds.value = st.seconds;
-  document.getElementById("startSecondsLabel").textContent = `${st.seconds} s`;
+  modeSel.value = st.mode;
+  secsSel.value = [5, 10, 15, 30].includes(st.seconds) ? st.seconds : 10;
   document.getElementById("startSecondsRow").hidden = st.mode !== "countdown";
-  const h = START_HINTS[st.mode];
-  document.getElementById("startHint").textContent = typeof h === "function" ? h(st.seconds) : h;
 }
 async function setStart(body) {
   const r = await fetch("/api/session/ask", { method: "POST", headers: { "Content-Type": "application/json" },
                                               body: JSON.stringify(body) });
   if (r.ok) showStart(await r.json());
 }
-for (const b of document.querySelectorAll("#startMode .seg button")) b.onclick = () => setStart({ mode: b.dataset.mode });
-startSeconds.oninput = () => {
-  document.getElementById("startSecondsLabel").textContent = `${startSeconds.value} s`;
-  document.getElementById("startHint").textContent = START_HINTS.countdown(startSeconds.value);
-};
-startSeconds.onchange = () => setStart({ seconds: Number(startSeconds.value) });
+modeSel.onchange = () => setStart({ mode: modeSel.value });
+secsSel.onchange = () => setStart({ seconds: Number(secsSel.value) });
 function loadAskSetting() {
   fetch("/api/session/ask").then((r) => r.json()).then(showStart).catch(() => {});
 }
