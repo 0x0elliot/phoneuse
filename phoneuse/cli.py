@@ -198,7 +198,7 @@ def agent_phase(phase):
     try:
         urllib.request.urlopen(urllib.request.Request(
             f"http://127.0.0.1:{CFG['web_port']}/api/agent/phase", data=json.dumps({"phase": phase}).encode(),
-            method="POST", headers={"Content-Type": "application/json"}), timeout=1).close()
+            method="POST", headers={"Content-Type": "application/json"}), timeout=0.5).close()
     except OSError:
         pass
 
@@ -351,9 +351,11 @@ def frame_seq():
 
 
 def acted(seq_before=None):
-    """Note that an action happened, and the frame count from before it."""
+    """Note that an action happened, and the frame count from before it. The input
+    has gone out: from here the agent reads the screen (the Live Activity's phase)."""
     with open(LAST_ACTION, "w") as f:
         f.write("" if seq_before is None else str(seq_before))
+    agent_phase("reading")
 
 
 def settle():

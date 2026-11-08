@@ -329,6 +329,8 @@ class Companion:
         for k in ("bundle_id", "env", "device", "push_to_start", "activity"):
             if b.get(k) and b[k] != dev.get(k):
                 dev[k] = b[k]
+                if k == "push_to_start":
+                    self.start_tried.pop(req["device"], None)  # a new token may start an activity at once
                 dev.get("token_env", {}).pop(k, None)  # a new token: its environment is the app's
         save(d)
         return web.json_response({"ok": True})
@@ -420,7 +422,7 @@ class Companion:
             return ("asking", "asking", p["action"] or "An agent", 0, p["id"])
         a = m.agent()
         if a == "driving":
-            return ("driving", m.agent_phase, m.agent_action or "Working", m.agent_steps, "")
+            return ("driving", m.current_phase(), m.agent_action or "Working", m.agent_steps, "")
         if a == "paused":
             return ("paused", "paused", m.agent_action, m.agent_steps, "")
         return ("idle", "idle", "", 0, "")

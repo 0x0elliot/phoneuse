@@ -104,6 +104,7 @@ class Mirror:
         self.hover_at = PARK  # where the page's pointer last was (screen fractions)
         self.agent_action = ""  # what the agent is doing, for the companion app's Live Activity
         self.agent_phase = "thinking"  # acting (sending input), reading (the screen) or thinking (between actions)
+        self.phase_at = 0.0  # when agent_phase last changed
         self.agent_steps = 0  # actions in this agent session
         self.agent_started = 0.0  # when this agent session started
         self.unlocks = None
@@ -194,6 +195,15 @@ class Mirror:
             return "paused"
         return "driving" if time.time() < self.agent_until else "idle"
 
+    THINK_AFTER = 3.0  # an agent quiet this long after acting or reading is thinking
+
+    def current_phase(self):
+        """What the agent does now: acting, reading, or thinking once it has been quiet
+        for THINK_AFTER seconds (no tool call tells us when its model starts thinking)."""
+        if self.agent_phase in ("acting", "reading") and time.time() - self.phase_at > self.THINK_AFTER:
+            return "thinking"
+        return self.agent_phase
+
     def agent_acts(self, action="", phase="acting"):
         """Called before every agent action (CLI or MCP). False while the user has
         taken over: the agent must stop."""
@@ -204,7 +214,7 @@ class Mirror:
             self.agent_started, self.agent_steps = time.time(), 0
         self.agent_steps += 1
         self.agent_action = action or self.agent_action
-        self.agent_phase = phase
+        self.agent_phase, self.phase_at = phase, time.time()
         msg = json.dumps({"type": "agent-action", "action": self.agent_action, "steps": self.agent_steps})
         for tab in list(self.tabs):
             asyncio.ensure_future(tab.ws.send_str(msg))
@@ -679,7 +689,7 @@ def app(mirror):
         except ValueError:
             phase = None
         if mirror.agent() == "driving" and phase in ("reading", "thinking"):
-            mirror.agent_phase = phase
+            mirror.agent_phase, mirror.phase_at = phase, time.time()
         return web.json_response({"ok": True})
 
     async def keyboard(req):
