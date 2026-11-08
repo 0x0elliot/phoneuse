@@ -457,7 +457,7 @@ class UnlockRequests:
         try:
             p["notice"] = await asyncio.create_subprocess_exec(
                 "notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "unlock=Unlock", "-A", "deny=Deny",
-                "Unlock the iPhone?", f"An agent asks to enter your saved passcode. Answer here or at "
+                "Unlock the iPhone?", f"Agent asks to enter your saved passcode. Answer here or at "
                 f"http://localhost:{PORT}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await p["notice"].communicate()
             answer = out.decode().strip()
@@ -603,7 +603,7 @@ class SessionRequests:
         try:
             p["notice"] = await asyncio.create_subprocess_exec(
                 "notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "allow=Allow", "-A", "deny=Deny",
-                "Let an agent use the iPhone?", f"{p['action'] or 'An agent'} wants to start. Answer here or at "
+                "Let agent use the iPhone?", f"Agent wants to start: {p['action'] or 'using the phone'}. Answer here or at "
                 f"http://localhost:{PORT}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await p["notice"].communicate()
             choice = out.decode().strip()

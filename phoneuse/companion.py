@@ -378,8 +378,8 @@ class Companion:
             return
         for dev in self._devices():
             if dev.get("device") and not (dev.get("activity") or {}).get("token"):
-                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Let an agent use your phone?",
-                                                                 "body": f"{action or 'An agent'} wants to start."},
+                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Let agent use your phone?",
+                                                                 "body": f"Agent wants to start: {action or 'using the phone'}."},
                                                        "category": "SESSION", "sound": "default",
                                                        "interruption-level": "time-sensitive"},
                                               "session_id": rid},
@@ -392,7 +392,7 @@ class Companion:
         for dev in self._devices():
             if dev.get("device"):
                 r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Unlock the iPhone?",
-                                                                 "body": "An agent asks to enter your saved passcode."},
+                                                                 "body": "Agent asks to enter your saved passcode."},
                                                        "category": "UNLOCK", "sound": "default"},
                                               "unlock_id": rid},
                               dev["bundle_id"], "alert")
@@ -426,7 +426,7 @@ class Companion:
             return None
         p = m.sessions.pending if m.sessions else None
         if p:
-            return ("asking", "asking", p["action"] or "An agent", 0, p["id"])
+            return ("asking", "asking", p["action"] or "Using the phone", 0, p["id"])
         a = m.agent()
         if a == "driving":
             return ("driving", m.current_phase(), m.agent_action or "Working", m.agent_steps, "")
@@ -456,7 +456,7 @@ class Companion:
 
         alert = None
         if want and want[0] == "asking" and (not before or before[0] != "asking"):
-            alert = {"title": "An agent wants control of your iPhone", "body": f"First step: {want[2]}",
+            alert = {"title": "Agent wants control of your iPhone", "body": f"First step: {want[2]}",
                      "sound": "default"}
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
@@ -472,7 +472,7 @@ class Companion:
                 self.start_tried[i] = time.time()
                 aps.update({"event": "start", "content-state": content(want),
                             "attributes-type": "AgentActivityAttributes", "attributes": {"pcName": pc_name()},
-                            "alert": alert or {"title": "PhoneUse", "body": "Mirroring to " + pc_name()}})
+                            "alert": alert or {"title": "Phone Use", "body": "Mirroring to " + pc_name()}})
                 r = self._send(dev, "push_to_start", dev["push_to_start"], {"aps": aps}, topic, "liveactivity")
             elif act.get("token"):
                 if want:
