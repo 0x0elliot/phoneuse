@@ -174,9 +174,14 @@ static int send_report(uint8_t id, const uint8_t *data, int len) {
     return 0;
 }
 
+// Busy while a report still waits in the link's queue: ESP_GATTS_CONF_EVT only says a
+// notification reached that queue, so ask the stack how much of it is free. One report
+// waits at most, so a hover is never more than one connection interval old.
 static bool busy(void) {
-    if (in_lower > 0 && xTaskGetTickCount() - in_lower_since > pdMS_TO_TICKS(100)) in_lower = 0;  // a lost count
-    return congested || in_lower > 0;
+    if (congested) return true;
+    if (phone_conn == 0xFFFF) return false;
+    uint16_t total = esp_ble_get_sendable_packets_num(), free_ = esp_ble_get_cur_sendable_packets_num(phone_conn);
+    return total > free_;
 }
 
 // Typing: the PC sends a whole string's keys in one packet; this task presses and
