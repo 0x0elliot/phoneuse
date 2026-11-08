@@ -26,7 +26,7 @@ from .config import RUNTIME_DIR, config_path
 
 PORT = 8778
 STORE = os.path.join(os.path.dirname(config_path()), "companion.json")
-HEARTBEAT = 2.8  # seconds between Live Activity refreshes while an agent drives (the ring runs 3 s)
+HEARTBEAT = 1.0  # seconds between Live Activity refreshes while an agent drives: each one is an animation frame
 START_RETRY = 600  # seconds between Live Activity start pushes to a device that sent no activity token back
 AUDIO_OFF = os.path.join(os.path.dirname(config_path()), "audio-off")  # exists while the mirror's audio is off
 UXPLAY_PID = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.pid")  # written by `phoneuse up`
@@ -121,6 +121,7 @@ class Companion:
         self.sent_at = 0.0
         self.activity_started = 0.0
         self.last_ts = 0  # the last Live Activity timestamp sent
+        self.frame = 0
         self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
         self._mirror_since = 0.0
 
@@ -448,10 +449,12 @@ class Companion:
     def _send_activity(self, want):
         m, before = self.mirror, self.sent
         self.sent, self.sent_at = want, time.time()
+        self.frame = (self.frame + 1) % 1000
 
         def content(st):
             return {"state": st[0], "phase": st[1], "action": st[2], "steps": st[3], "requestId": st[4],
                     "updatedAt": round(time.time(), 2),  # every refresh differs, and restarts the ring
+                    "frame": self.frame,  # counts up with each refresh: the app draws one animation frame per value
                     "startedAt": int(m.agent_started if st[0] in ("driving", "paused") else self.mirror_since())}
 
         alert = None

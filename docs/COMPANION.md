@@ -130,8 +130,9 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
 
 `content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>}`.
 
-While an agent drives, the PC refreshes the activity every 2.8 s (priority 5); `updatedAt` makes each refresh new
-content, and the app restarts its progress ring from it.
+While an agent drives, the PC refreshes the activity every second (priority 5), with `frame` counting up by one
+each time; the app draws one animation frame per value (a rotation or a different icon), so the icon keeps moving
+for as long as the agent drives. `updatedAt` makes each refresh new content.
 
 The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends when mirroring stops.
 `idle` means the owner is in control. `asking` means an agent waits for the owner's answer to a session request:
