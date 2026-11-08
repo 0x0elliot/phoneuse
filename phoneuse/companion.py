@@ -27,6 +27,7 @@ from .config import RUNTIME_DIR, config_path
 PORT = 8778
 STORE = os.path.join(os.path.dirname(config_path()), "companion.json")
 HEARTBEAT = 1.0  # seconds between Live Activity refreshes while an agent drives: each one is an animation frame
+PHASE_HOLD = 4.0  # seconds a driving phase must last before the Live Activity's icon changes to it
 START_RETRY = 600  # seconds between Live Activity start pushes to a device that sent no activity token back
 AUDIO_OFF = os.path.join(os.path.dirname(config_path()), "audio-off")  # exists while the mirror's audio is off
 UXPLAY_PID = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.pid")  # written by `phoneuse up`
@@ -122,6 +123,8 @@ class Companion:
         self.activity_started = 0.0
         self.last_ts = 0  # the last Live Activity timestamp sent
         self.frame = 0
+        self._phase_seen = self._phase_shown = None
+        self._phase_since = 0.0
         self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
         self._mirror_since = 0.0
 
@@ -431,10 +434,22 @@ class Companion:
             return ("asking", "asking", p["action"] or "Using the phone", 0, p["id"])
         a = m.agent()
         if a == "driving":
-            return ("driving", m.current_phase(), m.agent_action or "Working", m.agent_steps, "")
+            return ("driving", self._steady_phase(m.current_phase()), m.agent_action or "Working", m.agent_steps, "")
         if a == "paused":
             return ("paused", "paused", m.agent_action, m.agent_steps, "")
         return ("idle", "idle", "", 0, "")
+
+    def _steady_phase(self, phase):
+        """The phase the Live Activity shows: a quick acting/reading flicker would swap its
+        icon every second, so a new phase shows only once it has lasted PHASE_HOLD seconds
+        (thinking shows at once: it is the long one)."""
+        now = time.time()
+        if phase != self._phase_seen:
+            self._phase_seen, self._phase_since = phase, now
+        if phase != self._phase_shown and (phase == "thinking" or now - self._phase_since >= PHASE_HOLD
+                                           or self._phase_shown is None):
+            self._phase_shown = phase
+        return self._phase_shown
 
     def _needs_start(self, want):
         """A device without a live activity, which we haven't asked to start lately."""
