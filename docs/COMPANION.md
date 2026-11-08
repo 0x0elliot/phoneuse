@@ -69,7 +69,7 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
   "mirroring": true,
   "phone": "LXEPhone17Pro",
   "bluetooth": {"connected": true, "via": "bridge"},
-  "agent": {"state": "idle | driving | paused", "action": "Opening Gmail", "since": 1794153854},
+  "agent": {"state": "idle | driving | paused", "action": "Opening Gmail", "since": 1794153854, "steps": 12},
   "awake": true,
   "audio": {"on": true, "needs_remirror": false},
   "unlock": {"passcode_saved": true, "pending": {"id": "…", "since": 1794153854}},
