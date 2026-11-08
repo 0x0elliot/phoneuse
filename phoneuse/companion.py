@@ -119,6 +119,7 @@ class Companion:
         self.sent = None  # the Live Activity's last content-state sent: (state, action, steps)
         self.sent_at = 0.0
         self.activity_started = 0.0
+        self.last_ts = 0  # the last Live Activity timestamp sent
         self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
         self._mirror_since = 0.0
 
@@ -452,7 +453,9 @@ class Companion:
                      "sound": "default"}
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
-            aps = {"timestamp": int(time.time())}
+            # iOS ignores an update whose timestamp isn't newer than the last one it applied
+            self.last_ts = max(int(time.time()), self.last_ts + 1)
+            aps = {"timestamp": self.last_ts}
             act = dev.get("activity") or {}
             if want and not act.get("token"):
                 # one start, then wait for the app to send the new activity's token: starting
