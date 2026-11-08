@@ -11,7 +11,11 @@ struct PhoneUseApp: App {
             ContentView()
                 .environmentObject(model)
                 .onOpenURL { model.pair(from: $0) }
+                #if DEBUG
+                .task { model.startDemoActivityIfAsked() }
+                #endif
                 .onChange(of: phase, initial: true) { _, phase in
+                    model.foreground = phase == .active
                     if phase == .active {
                         model.startPolling()
                         UIApplication.shared.registerForRemoteNotifications()  // iOS answers with the device token again

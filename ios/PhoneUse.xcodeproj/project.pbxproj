@@ -21,6 +21,7 @@
 		777B2BDF8A70679A4531AC90 /* CompanionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12BEBE4E61C3043D7067FA9 /* CompanionClient.swift */; };
 		92C0E3AB29D71C0A6E6B4745 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F02074B048620193B3B9E23 /* Pairing.swift */; };
 		957F742942E56EAC59E1A6E6 /* CompanionCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0E5981525F6136B8126827 /* CompanionCrypto.swift */; };
+		96CFCE766E3803B79F4311A9 /* PUSpin.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 48AF913CDE3172DBA3473202 /* PUSpin.ttf */; };
 		A1ACAD74CC7D0684F9C81E90 /* AgentLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48B4CA3BF3F1C0C4322874A5 /* AgentLiveActivity.swift */; };
 		ABFD6DD9A1537CA34CA7581A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE125BEF83809A7A3AAFD4FE /* AppModel.swift */; };
 		AE63A531A8BDDD39302D47AA /* RealPCUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A8B93AD27F070C1C7A9AA5 /* RealPCUITests.swift */; };
@@ -76,6 +77,7 @@
 		3402AB9623B6B53ABF712269 /* PhoneUseWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhoneUseWidgets.entitlements; sourceTree = "<group>"; };
 		35A63EC9B12C50E6AF1AB29F /* PhoneUseUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PhoneUseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		489D23D034BD4EAB6BC03865 /* Push.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Push.swift; sourceTree = "<group>"; };
+		48AF913CDE3172DBA3473202 /* PUSpin.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = PUSpin.ttf; sourceTree = "<group>"; };
 		48B4CA3BF3F1C0C4322874A5 /* AgentLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiveActivity.swift; sourceTree = "<group>"; };
 		4F02074B048620193B3B9E23 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		67E207141EF63DC24D4C6176 /* PhoneUseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneUseApp.swift; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 				48B4CA3BF3F1C0C4322874A5 /* AgentLiveActivity.swift */,
 				9B8EFE7E115EEEBC0421029C /* Info.plist */,
 				3402AB9623B6B53ABF712269 /* PhoneUseWidgets.entitlements */,
+				48AF913CDE3172DBA3473202 /* PUSpin.ttf */,
 			);
 			path = Widgets;
 			sourceTree = "<group>";
@@ -314,6 +317,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				96CFCE766E3803B79F4311A9 /* PUSpin.ttf in Resources */,
 				72E75B49125914FCEDD82AAD /* Symbols.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

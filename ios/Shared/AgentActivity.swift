@@ -40,6 +40,9 @@ struct AgentActivityAttributes: ActivityAttributes {
             updatedAt = try? c.decodeIfPresent(Double.self, forKey: .updatedAt)
         }
 
+        /// "1 step", "12 steps", or nil before the first step.
+        var stepsText: String? { steps <= 0 ? nil : steps == 1 ? "1 step" : "\(steps) steps" }
+
         var paused: Bool { state == "paused" }
         /// The phase to show; "paused" whenever the session is paused.
         var currentPhase: String? { paused ? "paused" : asking ? "asking" : idle ? "idle" : phase }

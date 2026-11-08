@@ -37,8 +37,10 @@ struct AgentLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     switch look {
                     case .driving, .paused:
-                        Text("\(s.steps) steps").font(.caption).monospacedDigit()
-                            .contentTransition(.numericText()).foregroundStyle(.secondary)
+                        if let steps = s.stepsText {
+                            Text(steps).font(.caption).monospacedDigit()
+                                .contentTransition(.numericText()).foregroundStyle(.secondary)
+                        }
                     case .idle, .asking:
                         Text(context.attributes.pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -73,8 +75,10 @@ struct AgentLiveActivity: Widget {
                 case .idle: EmptyView()
                 case .asking: Text("Allow?").font(.caption).foregroundStyle(.orange)
                 case .driving, .paused:
-                    Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
-                        .foregroundStyle(look.color(s))
+                    if s.steps > 0 {
+                        Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
+                            .foregroundStyle(look.color(s))
+                    }
                 }
             } minimal: {
                 StateIcon(state: s, size: 22)
@@ -134,10 +138,11 @@ enum Look {
     }
 }
 
-/// The state's icon. While driving, a ring runs around it: a Live Activity can't loop an animation, but a
-/// timer-driven ProgressView keeps drawing on its own. One pass takes 2.8 s, the PC's refresh interval while driving,
-/// and each update restarts it (the view is keyed on the update's time), so the ring keeps going while the agent
-/// works. The icon swaps with a symbol transition.
+/// The state's icon. While driving, a ring fills around it: a Live Activity can't loop an animation, but a
+/// timer-driven ProgressView keeps drawing on its own. A pass takes 2.8 s, the PC's refresh interval while
+/// driving, and starts when iOS draws the update. It starts at draw time rather than at the PC's updatedAt because
+/// iOS may deliver the low-priority refreshes seconds late, and a pass that began at updatedAt would already be full.
+/// updatedAt still changes on every refresh, so iOS redraws, and the view is keyed on it so the ring restarts.
 struct StateIcon: View {
     static let pass: TimeInterval = 2.8
     var state: AgentActivityAttributes.ContentState
@@ -147,12 +152,13 @@ struct StateIcon: View {
         let look = Look(state)
         ZStack {
             if look == .driving {
-                let start = ringStart
+                let start = Date()
                 ProgressView(timerInterval: start...start.addingTimeInterval(Self.pass), countsDown: false,
                              label: { EmptyView() }, currentValueLabel: { EmptyView() })
                     .progressViewStyle(.circular)
-                    .tint(look.color(state))
-                    .id(start)
+                    .tint(look.color(state).opacity(0.45))
+                    .id(state.updatedAt ?? start.timeIntervalSince1970)
+                Orbit(since: state.startDate, size: size, color: look.color(state))
             }
             Image(look.symbol(state))
                 .font(.system(size: size * (look == .driving ? 0.45 : 0.7), weight: .semibold))
@@ -161,11 +167,24 @@ struct StateIcon: View {
         }
         .frame(width: size, height: size)
     }
+}
 
-    /// The update's time if the PC sent it and it's recent; otherwise the time this view was drawn.
-    private var ringStart: Date {
-        if let t = state.updatedAt, abs(Date().timeIntervalSince1970 - t) < 10 { return Date(timeIntervalSince1970: t) }
-        return Date()
+/// A dot that orbits the icon once every 10 s, one step a second, with no pushes: a timer drawn in PUSpin.ttf
+/// (ios/scripts/make_spinner_font.py), whose digits are the ten frames, clipped to the seconds' units digit.
+struct Orbit: View {
+    var since: Date
+    var size: CGFloat
+    var color: Color
+
+    var body: some View {
+        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .font(.custom("PUSpin", size: size))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(width: size, height: size, alignment: .trailing)
+            .clipped()
+            .accessibilityHidden(true)
     }
 }
 
@@ -215,7 +234,9 @@ struct DrivingView: View {
                     .contentTransition(.opacity)
                 Text(state.action).font(.headline).lineLimit(1).contentTransition(.opacity)
                 HStack(spacing: 4) {
-                    Text("\(state.steps) steps ·").fixedSize().contentTransition(.numericText())
+                    if let steps = state.stepsText {
+                        Text("\(steps) ·").fixedSize().contentTransition(.numericText())
+                    }
                     Text(timerInterval: state.startDate...Date.distantFuture, countsDown: false)
                         .frame(width: 72, alignment: .leading)
                 }
@@ -236,7 +257,7 @@ struct PausedView: View {
             StateIcon(state: state, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text("You took over").font(.headline)
-                Text("\(state.action) · \(state.steps) steps").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text([state.action, state.stepsText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             ResumeButton()

@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
     @Published var askRemirror = false
     /// Notifications are off (not yet allowed, or denied) for PhoneUse.
     @Published var notificationsOff = false
+    /// Whether Phone Use is in front; set from the scene phase.
+    @Published var foreground = false
+    /// The session request to show as a sheet: pending, and the app in front.
+    var foregroundRequest: PCState.Pending? { foreground ? state?.session?.pending : nil }
     /// The last pointer setting the app sent; the state doesn't report it.
     @Published var pointerOn: Bool? = PairingStore.defaults.object(forKey: "pointer.on") as? Bool
 
@@ -233,6 +237,19 @@ final class AppModel: ObservableObject {
             await a.update(ActivityContent(state: next, staleDate: nil))
         }
     }
+
+    #if DEBUG
+    /// Launched with -PUDemoActivity (simulator checks): a driving activity with no PC, to watch its animation.
+    func startDemoActivityIfAsked() {
+        guard ProcessInfo.processInfo.arguments.contains("-PUDemoActivity") else { return }
+        let now = Date().timeIntervalSince1970
+        let state = AgentActivityAttributes.ContentState(state: "driving", phase: "thinking", requestId: nil,
+                                                         action: "Opening Settings", steps: 3, startedAt: now - 5,
+                                                         updatedAt: now)
+        _ = try? Activity.request(attributes: AgentActivityAttributes(pcName: "demo"),
+                                  content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+    }
+    #endif
 
     static func contentState(_ s: PCState) -> AgentActivityAttributes.ContentState {
         let now = Date().timeIntervalSince1970

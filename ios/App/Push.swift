@@ -83,6 +83,11 @@ actor PushRegistrar {
         AppLog.write("watching activity \(activity.id) state \(activity.activityState) phase \(activity.content.state.phase ?? "-")")
         if let token = activity.pushToken { Task { await sendActivity(activity.id, token) } }
         Task {
+            for await content in activity.contentUpdates where content.state.asking {
+                await AppModel.shared.refresh()  // shows the request sheet at once if the app is in front
+            }
+        }
+        Task {
             for await data in activity.pushTokenUpdates {
                 AppLog.write("activity \(activity.id) token \(AppLog.short(data))")
                 await sendActivity(activity.id, data)
@@ -186,7 +191,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
-        if info["session_id"] != nil || info["unlock_id"] != nil { Task { await AppModel.shared.refresh() } }
+        if info["session_id"] != nil || info["unlock_id"] != nil { await AppModel.shared.refresh() }
+        // The app shows a session request as a sheet while it's in front, so no banner for it.
+        if info["session_id"] != nil { return [] }
         return [.banner, .list, .sound]
     }
 

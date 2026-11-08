@@ -11,6 +11,11 @@ struct ContentView: View {
                 SettingsView()
             }
         }
+        .sheet(item: Binding(get: { model.foregroundRequest }, set: { _ in })) { request in
+            RequestSheet(request: request)
+                .interactiveDismissDisabled()
+                .presentationDetents([.medium])
+        }
         .alert("Mirror again", isPresented: $model.askRemirror) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -429,5 +434,41 @@ struct SpinningRing: View {
             .rotationEffect(.degrees(turning ? 360 : 0))
             .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
             .onAppear { turning = true }
+    }
+}
+
+/// A session request while Phone Use is open. iOS doesn't expand the app's own Live Activity while the app is in
+/// front, so the app asks here instead; the sheet closes when the request ends, however it was answered.
+struct RequestSheet: View {
+    @EnvironmentObject var model: AppModel
+    var request: PCState.Pending
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image("pu.asking").font(.system(size: 54)).foregroundStyle(.orange)
+            VStack(spacing: 6) {
+                Text("Agent wants to start").font(.title2.bold())
+                if let action = request.action, !action.isEmpty {
+                    Text(action).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                if let name = model.pairing?.name { Text(name).font(.subheadline).foregroundStyle(.secondary) }
+            }
+            HStack(spacing: 14) {
+                Button(role: .destructive) { Task { await model.answerSession(id: request.id, approve: false) } } label: {
+                    Text("Deny").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .accessibilityIdentifier("sheetDeny")
+                Button { Task { await model.answerSession(id: request.id, approve: true) } } label: {
+                    Text("Allow").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .accessibilityIdentifier("sheetAllow")
+            }
+            .disabled(model.busy.contains("session"))
+        }
+        .padding(24)
     }
 }
