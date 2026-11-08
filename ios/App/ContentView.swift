@@ -147,7 +147,7 @@ struct SettingsView: View {
             .accessibilityIdentifier("agentState")
             .listRowBackground(s.agent.state == "driving" ? AnyView(GlowBackground()) : AnyView(Color(.secondarySystemGroupedBackground)))
             if let pending = s.session?.pending {
-                Label("An agent wants to start\(pending.action.map { ": \($0)" } ?? "")", systemImage: "person.badge.clock")
+                Label("Agent wants to start\(pending.action.map { ": \($0)" } ?? "")", systemImage: "person.badge.clock")
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("sessionRequest")
                 HStack {
