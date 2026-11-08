@@ -45,12 +45,12 @@ points, which is plenty for scrolling and edge gestures.
   uses the same profile (`pointer.py`) and never grips for less than 15 pt,
   since a shorter press-and-move reads as a tap.
 - iOS hides the iPhone's on-screen keyboard while any Bluetooth keyboard is
-  connected, and Eject only toggles it blindly. So phoneuse lets go of the link
-  when nobody uses it: the page server sends `release` once the phone stops
-  mirroring (no paging either) or after 10 s without input from any page, the
-  mirror window or an agent session. The daemon then declines the iPhone's own
-  reconnects and drops hovers; the next press, key or agent command reconnects
-  first, then goes through.
+  connected, and Eject only toggles it blindly. Dropping the link while idle
+  would bring the keyboard back, but once phoneuse drops it, iOS refuses
+  phoneuse's reconnects ("Connection refused") until the owner taps PhoneUse in
+  Bluetooth settings. Links the phone dropped itself reconnect fine. So the
+  daemon's `release` command exists (it declines the iPhone's reconnects and
+  drops hovers until the next real input), but nothing calls it.
 - Avoid tapping the top centre of the screen: it hits the Dynamic Island, which
   opens the Screen Mirroring popup with a Stop Mirroring button.
 - Cmd+H doesn't close Control Center or Notification Center; use `phoneuse dismiss`.

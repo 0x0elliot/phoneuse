@@ -535,7 +535,11 @@ def run_command(line):
     else:
         last_use[0] = time.time()
         if released.is_set() and not hid.connected:
-            log("reconnect on use:", connect_out())
+            try:
+                log("reconnect on use:", connect_out())
+            except Exception:
+                released.set()  # still released: no paging until the next try
+                raise
             if cmd == "a":  # put the pointer there before the press (a press that moves ends the touch)
                 hid.send(3, absolute(args[0], args[1], 0))
                 time.sleep(0.05)
