@@ -123,12 +123,16 @@ struct SettingsView: View {
     private func agentSection(_ s: PCState) -> some View {
         Section("Agent") {
             LabeledContent {
-                if let steps = s.agent.steps, s.agent.state != "idle" { Text("\(steps) steps") }
+                if let steps = s.agent.steps, s.agent.state != "idle" { Text("\(steps) steps").monospacedDigit() }
             } label: {
-                Label(agentText(s.agent), systemImage: s.agent.state == "paused" ? "pause.circle"
-                                                     : s.agent.state == "driving" ? "cursorarrow.rays" : "moon.zzz")
+                if s.agent.state == "driving" {
+                    Label { Text(agentText(s.agent)) } icon: { ProgressView().tint(.blue) }
+                } else {
+                    Label(agentText(s.agent), systemImage: s.agent.state == "paused" ? "pause.circle" : "iphone")
+                }
             }
             .accessibilityIdentifier("agentState")
+            .listRowBackground(s.agent.state == "driving" ? AnyView(GlowBackground()) : AnyView(Color(.secondarySystemGroupedBackground)))
             if let pending = s.session?.pending {
                 Label("An agent wants to start\(pending.action.map { ": \($0)" } ?? "")", systemImage: "person.badge.clock")
                     .foregroundStyle(.orange)
@@ -385,5 +389,20 @@ struct NetworksView: View {
         let ok = await model.moveBridge(ssid: n.ssid, password: password)
         moving = false
         if ok { dismiss() } else { loadError = model.error }
+    }
+}
+
+/// A slowly turning blue-purple border with a soft glow, like the browser mirror's, for the Agent row while an
+/// agent drives the phone.
+struct GlowBackground: View {
+    var body: some View {
+        TimelineView(.animation) { context in
+            let angle = Angle.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4) * 90)
+            let gradient = AngularGradient(colors: [.blue, .purple, .pink, .cyan, .blue], center: .center, angle: angle)
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.secondarySystemGroupedBackground))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(gradient, lineWidth: 2))
+                .shadow(color: .purple.opacity(0.5), radius: 8)
+        }
     }
 }

@@ -17,6 +17,24 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// Unix seconds. A number rather than a Date, because ActivityKit decodes a Date as seconds since 2001.
         var startedAt: Double
 
+        init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double) {
+            (self.state, self.phase, self.requestId, self.action, self.steps, self.startedAt) =
+                (state, phase, requestId, action, steps, startedAt)
+        }
+
+        /// Missing or null fields get defaults, so a push that leaves one out still updates the activity instead of
+        /// being dropped.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = (try? c.decodeIfPresent(String.self, forKey: .state)) ?? "driving"
+            phase = try? c.decodeIfPresent(String.self, forKey: .phase)
+            let id = try? c.decodeIfPresent(String.self, forKey: .requestId)
+            requestId = id?.isEmpty == false ? id : nil
+            action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? ""
+            steps = (try? c.decodeIfPresent(Int.self, forKey: .steps)) ?? 0
+            startedAt = (try? c.decodeIfPresent(Double.self, forKey: .startedAt)) ?? Date().timeIntervalSince1970
+        }
+
         var paused: Bool { state == "paused" }
         /// The phase to show; "paused" whenever the session is paused.
         var currentPhase: String? { paused ? "paused" : asking ? "asking" : idle ? "idle" : phase }

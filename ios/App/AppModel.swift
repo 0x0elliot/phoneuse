@@ -61,7 +61,10 @@ final class AppModel: ObservableObject {
         guard let client else { return }
         do {
             let s = try await client.get("/v1/state", as: PCState.self)
-            if s != state { state = s }
+            if s != state {
+                state = s
+                await reconcileActivities(s)
+            }
             reachable = true
             await RequestNotifications.prune(session: s.session?.pending?.id, unlock: s.unlock.pending?.id)
             if let p = PairingStore.load(), p != pairing { pairing = p }
@@ -180,6 +183,20 @@ final class AppModel: ObservableObject {
             AppLog.write("started activity \(a.id) (\(a.content.state.state))")
         } catch {
             AppLog.write("starting the activity failed: \(error)")
+        }
+    }
+
+    /// While the app is open, corrects an activity whose state differs from the PC's, in case iOS dropped a push.
+    private func reconcileActivities(_ s: PCState) async {
+        let want = Self.contentState(s)
+        for a in Activity<AgentActivityAttributes>.activities
+        where !testActivities.contains(a.id) && a.activityState == .active {
+            let have = a.content.state
+            guard have.state != want.state || (want.asking && have.requestId != want.requestId) else { continue }
+            var next = want
+            if want.state == "driving" { next.phase = (have.state == "driving" ? have.phase : nil) ?? "thinking" }
+            AppLog.write("activity \(a.id) showed \(have.state), the PC says \(want.state); updating")
+            await a.update(ActivityContent(state: next, staleDate: nil))
         }
     }
 
