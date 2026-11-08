@@ -546,7 +546,7 @@ def set_mirror(name):
     mirror_name[0] = name.strip() or None
     save_state()
     log("mirroring phone:", mirror_name[0])
-    if hid.connected and not wanted(hid.peer):
+    if hid.connected and hid.peer and not wanted(hid.peer):  # no peer: input goes through the bridge
         hid.drop(f"{hid.peer} is not the mirroring phone")  # also wakes the reconnect loop
     else:
         reconnect_now.set()
