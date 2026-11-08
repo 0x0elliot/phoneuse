@@ -129,7 +129,7 @@ class Mirror:
         than waking a phone that was just locked."""
         # Absolute moves: they land exactly on every phone, while a small relative
         # move can shift the pointer less than a pixel at a slow tracking speed.
-        sign = 1
+        sign, misses = 1, 0
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(self.AWAKE_EVERY)
@@ -140,15 +140,22 @@ class Mirror:
             try:
                 x, y = self.hover_at
                 x = min(max(x, 0.02), 0.98) + 0.01 * sign
-                await loop.run_in_executor(None, self.get_hid().cmd, f"a {x:.4f} {min(max(y, 0.0), 1.0):.4f} 0")
+                r = await loop.run_in_executor(None, self.get_hid().cmd, f"a {x:.4f} {min(max(y, 0.0), 1.0):.4f} 0")
             except Exception:
                 self.hid = None
                 continue
             sign = -sign
-            await asyncio.sleep(0.6)
-            if self.last_frame_at == before and time.time() - self.last_input_at >= self.AWAKE_QUIET:
+            if "dropped" in r:  # the link was busy; this nudge never left
+                continue
+            await asyncio.sleep(0.8)
+            if self.last_frame_at != before or time.time() - self.last_input_at < self.AWAKE_QUIET:
+                misses = 0
+                continue
+            misses += 1
+            if misses >= 3:  # three nudges in a row drew nothing: the screen is off
+                misses = 0
                 self.screen_dark = True
-                log("keep awake: no picture after a nudge; the screen is off, pausing")
+                log("keep awake: no picture after three nudges; the screen is off, pausing")
 
     # Releasing the link while idle (so iOS shows its own keyboard) is off: after
     # phoneuse drops the link, iOS refuses phoneuse's reconnects ("Connection
