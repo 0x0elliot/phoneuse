@@ -30,6 +30,7 @@ from gi.repository import Gst  # noqa: E402
 from aiohttp import web  # noqa: E402
 
 from . import screen, unlock  # noqa: E402
+from .agent_session import AGENT_IDLE, AgentSession  # noqa: E402
 from .config import CFG, NAME, SCREEN_PT, config_path  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
@@ -94,8 +95,10 @@ class Mirror:
         self.mirroring = False
         self.hub_live = False
         self.hid = None
-        self.taken_over = False
-        self.agent_until = 0.0
+        # Who controls the phone (agent_session.py): the one record the gate, the pages,
+        # the companion app and the notifications derive from.
+        self.session = AgentSession()
+        self.session.listeners.append(self.on_session)
         self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
         self.last_frame_at = 0.0  # when the phone's picture last changed
         self.stale = False  # the picture stopped following the phone (see check_stale)
@@ -103,11 +106,6 @@ class Mirror:
         self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
         self.hover_at = PARK  # where the page's pointer last was (screen fractions)
-        self.agent_action = ""  # what the agent is doing, for the companion app's Live Activity
-        self.agent_phase = "thinking"  # acting (sending input), reading (the screen) or thinking (between actions)
-        self.phase_at = 0.0  # when agent_phase last changed
-        self.agent_steps = 0  # actions in this agent session
-        self.agent_started = 0.0  # when this agent session started
         self.unlocks = None
         self.sessions = None
 
@@ -186,51 +184,53 @@ class Mirror:
             self.hid = None
             return False
 
-    # ---- agent sessions: who is driving the phone ----
-    # An agent session ends this long after its last action (s). An agent's model can
-    # think for a while between actions, and with "ask before agent starts" on, the
-    # owner's approval lasts exactly as long as this visible session.
-    AGENT_IDLE = 60.0
+    # ---- agent sessions: who is driving the phone (agent_session.py holds the state) ----
+    AGENT_IDLE = AGENT_IDLE
+
+    @property
+    def taken_over(self):
+        return self.session.current() == "paused"
+
+    @property
+    def agent_action(self):
+        return self.session.action
+
+    @property
+    def agent_steps(self):
+        return self.session.steps
+
+    @property
+    def agent_started(self):
+        return self.session.started
 
     def agent(self):
         """"driving" while an agent acts (the page shows it and takes no input),
         "paused" after the user took over, else "idle"."""
-        if self.taken_over:
-            return "paused"
-        return "driving" if time.time() < self.agent_until else "idle"
-
-    THINK_AFTER = 3.0  # an agent quiet this long after acting or reading is thinking
+        return self.session.agent()
 
     def current_phase(self):
-        """What the agent does now: acting, reading, or thinking once it has been quiet
-        for THINK_AFTER seconds (no tool call tells us when its model starts thinking)."""
-        if self.agent_phase in ("acting", "reading") and time.time() - self.phase_at > self.THINK_AFTER:
-            return "thinking"
-        return self.agent_phase
+        return self.session.current_phase()
 
     def agent_acts(self, action="", phase="acting"):
-        """Called before every agent action (CLI or MCP). False while the user has
-        taken over: the agent must stop."""
-        if self.taken_over:
+        """Called before every agent action (CLI or MCP), once access allows it. False
+        while the user has taken over: the agent must stop."""
+        if not self.session.act(action, phase):
             return False
-        was = self.agent()
-        if was != "driving":
-            self.agent_started, self.agent_steps = time.time(), 0
-        self.agent_steps += 1
-        self.agent_action = action or self.agent_action
-        self.agent_phase, self.phase_at = phase, time.time()
         msg = json.dumps({"type": "agent-action", "action": self.agent_action, "steps": self.agent_steps})
         for tab in list(self.tabs):
             asyncio.ensure_future(tab.ws.send_str(msg))
-        self.agent_until = time.time() + self.AGENT_IDLE
         self.last_input_at = time.time()
-        if was != "driving":
-            self.broadcast_state()
-        # Tell the pages when the session runs out, so none keeps showing (and
-        # obeying) a session that is over.
-        if self.loop:
-            self.loop.call_soon_threadsafe(self.loop.call_later, self.AGENT_IDLE + 0.1, self._agent_expired)
         return True
+
+    def on_session(self, session, old, why):
+        """Every change of who controls the phone: tell the pages, and rest the pointer
+        when an agent lets go."""
+        if old != session.state:
+            log(f"agent session: {old} -> {session.state} ({why})")
+        if old == "driving" and session.state != "driving":
+            self.park()
+        if self.loop:
+            self.loop.call_soon_threadsafe(self.broadcast_state)
 
     def park(self):
         """Move the pointer to PARK, out of the way (in a thread: the link can be slow)."""
@@ -242,19 +242,11 @@ class Mirror:
         if self.live():
             threading.Thread(target=go, daemon=True).start()
 
-    def _agent_expired(self):
-        if self.agent() == "idle":
-            self.park()
-            self.broadcast_state()
-
     def take_over(self, take):
-        self.taken_over = take
-        self.agent_until = 0.0
-        if take and self.sessions:
-            self.sessions.end()
-        elif self.sessions:
-            threading.Thread(target=self.sessions.sync_gate, daemon=True).start()
-        self.broadcast_state()
+        if take:
+            self.session.take_over()
+        else:
+            self.session.resume()
 
     STALE_INPUT = 1.5  # s: input that should change the picture, with no new frame since
     STALE_CLOCK = 4.0  # s past a minute boundary (the status-bar clock changes) with no new frame
@@ -546,41 +538,70 @@ def set_ask_before_session(on):
 
 
 class SessionRequests:
-    """With "ask before an agent session" on, an agent's first action waits until the owner
-    allows the session: in the companion app's notification, a desktop notification or the
-    browser mirror. Once allowed, the agent keeps the phone until it hands it back
-    (`phoneuse done`), the owner takes over, or it sends no action for ASK_GAP
-    seconds, the same moment the page and the Live Activity show the owner in control."""
+    """The owner's side of agent access ("Agent access": Always / After a notice / Ask
+    every time). The state lives in the agent session (agent_session.py); this turns its
+    changes into what the owner and the agent see: the browser mirror's prompt, a
+    desktop notification, the companion app's notification, the HID daemon's gate,
+    and the agent's answer."""
 
-    ASK_GAP = Mirror.AGENT_IDLE  # the approval ends when the visible session does
+    ASK_GAP = AGENT_IDLE  # the approval ends when the visible session does
     WAIT = 120.0
 
     def __init__(self, mirror):
         self.mirror = mirror
-        self.pending = None  # {"id", "event", "approved", "notice", "since", "action"}
-        self.allowed_until = 0.0  # the allowed session lasts while actions keep coming
+        self.session = mirror.session
         self.companion = None
+        self.notices = {}  # request id -> its desktop notification process
+        self.session.listeners.append(self._on_change)
+
+    @property
+    def pending(self):
+        """The waiting request: {"id", "action", "mode", "since", "deadline"}, or None."""
+        return self.session.request if self.session.current() == "requested" else None
 
     def needed(self):
-        return ask_before_session() and time.time() > self.allowed_until
+        """Whether an agent's action must wait for the owner first."""
+        return start_setting()["mode"] != "auto" and self.session.current() not in ("driving", "paused")
 
     def acted(self):
-        if ask_before_session():
-            self.allowed_until = time.time() + self.ASK_GAP
         self.sync_gate()
 
-    # The HID daemon enforces the approval (its agent gate): agents' input is refused
-    # there unless this says the session is allowed. Its own connection, so a slow
-    # input command on the shared one never delays the gate.
+    def _on_change(self, session, old, why):
+        loop = self.mirror.loop
+        if old == "requested" and session.state != "requested":
+            rid = next(reversed(session.outcome))  # the request that just ended
+            log(f"agent session request over: {session.outcome[rid]} ({why})")
+            if loop:
+                loop.call_soon_threadsafe(self._request_over, rid)
+        if session.state == "requested" and old != "requested" and loop:
+            loop.call_soon_threadsafe(self._request_started, dict(session.request))
+        threading.Thread(target=self.sync_gate, daemon=True).start()
+
+    def _request_started(self, r):
+        self.broadcast({"type": "session-request", "id": r["id"], "action": r["action"], "mode": r["mode"],
+                        "deadline": r["deadline"]})
+        if self.companion:
+            asyncio.get_running_loop().run_in_executor(None, self.companion.push_session, r["id"], r["action"])
+        asyncio.ensure_future(self._notify(r))
+        log("an agent wants the phone; " + (f"it takes control in {round(r['deadline'] - time.time())} s unless "
+                                           "the owner cancels" if r["deadline"] else "waiting for the owner"))
+
+    def _request_over(self, rid):
+        self.broadcast({"type": "session-done"})
+        notice = self.notices.pop(rid, None)
+        if notice and notice.returncode is None:
+            notice.kill()
+        if self.companion:
+            asyncio.get_running_loop().run_in_executor(None, self.companion.push_request_over, "session", rid)
+
+    # The HID daemon enforces access (its agent gate): agents' input is refused there
+    # unless the session says it may pass. Its own connection, so a slow input
+    # command on the shared one never delays the gate.
     _gate_hid = None
     _gate_sent = None
 
     def gate_value(self):
-        if self.mirror.taken_over:
-            return "closed"
-        if not ask_before_session():
-            return "open"
-        return f"until {self.allowed_until:.3f}" if self.allowed_until > time.time() else "closed"
+        return self.session.gate(start_setting()["mode"])
 
     def sync_gate(self, force=False):
         v = self.gate_value()
@@ -606,82 +627,40 @@ class SessionRequests:
             asyncio.ensure_future(tab.ws.send_str(json.dumps(msg)))
 
     async def ask(self, action):
-        """True once the owner allows the session; else the reason it can't start.
-        Concurrent first actions share one request. The request ends for everyone when
-        the owner answers, after WAIT seconds, when the agent ends its session, or when
-        every waiting agent gives up (its request was cancelled); the browser mirror,
-        the desktop notification and the companion app all drop it then."""
-        p = self.pending
-        if not p:
-            st = start_setting()
-            now = time.time()
-            p = self.pending = {"id": secrets.token_hex(8), "event": asyncio.Event(), "approved": False,
-                                "notice": None, "since": now, "action": action, "waiters": 0,
-                                "answered": False, "mode": st["mode"],
-                                # countdown: the agent starts at the deadline unless the owner stops it
-                                "deadline": now + st["seconds"] if st["mode"] == "countdown" else None}
-            self.broadcast({"type": "session-request", "id": p["id"], "action": action, "mode": p["mode"],
-                            "deadline": p["deadline"]})
-            if self.companion:
-                asyncio.get_running_loop().run_in_executor(None, self.companion.push_session, p["id"], action)
-            asyncio.ensure_future(self._notify(p))
-            log("an agent wants the phone; " + (f"starting in {st['seconds']} s unless the owner stops it"
-                                               if p["deadline"] else "waiting for the owner"))
-        p["waiters"] += 1
+        """True once the session may start; else the reason it can't. Concurrent first
+        actions share one request. If every waiting agent gives up, the request is
+        cancelled everywhere."""
+        st = start_setting()
+        r = self.session.ask(action, st["mode"], st["seconds"])
+        rid = r["id"]
+        self._waiters = getattr(self, "_waiters", {})
+        self._waiters[rid] = self._waiters.get(rid, 0) + 1
         try:
-            limit = (p["deadline"] if p["deadline"] else p["since"] + self.WAIT) - time.time()
-            await asyncio.wait_for(asyncio.shield(p["event"].wait()), max(0.0, limit))
-        except asyncio.TimeoutError:
-            if p["deadline"] and not p["event"].is_set():  # the countdown ran out: the agent starts
-                p["approved"], p["answered"] = True, True
-                self._close(p, "the countdown ran out; allowed")
-            else:
-                self._close(p, "timed out")
+            while rid not in self.session.outcome:
+                await asyncio.sleep(0.1)
+                self.session.tick()  # a countdown ending, or no answer
         finally:
-            p["waiters"] -= 1
-            if p["waiters"] == 0 and not p["event"].is_set():
-                self._close(p, "the agent stopped waiting")  # cancelled: nobody waits any more
-        if not p["answered"]:
-            return "The owner didn't allow the agent session within 2 minutes. Stop and tell the user."
-        if not p["approved"]:
-            log("agent session declined")
+            self._waiters[rid] -= 1
+            if self._waiters[rid] == 0:
+                del self._waiters[rid]
+                if rid not in self.session.outcome:
+                    self.session.cancel("the agent stopped waiting")
+        outcome = self.session.outcome[rid]
+        if outcome == "allowed":
+            await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)  # open before the agent hears yes
+            return True
+        if outcome == "declined":
             return "The owner declined the agent session. Stop; don't retry unless the user asks you to."
-        self.allowed_until = time.time() + self.ASK_GAP
-        await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)  # open before the agent hears yes
-        return True
-
-    def _close(self, p, why):
-        """End a request everywhere: the page's prompt, the desktop notification and
-        the companion app's notification."""
-        if not p["event"].is_set():
-            p["event"].set()
-        if self.pending is not p:
-            return
-        self.pending = None
-        self.broadcast({"type": "session-done"})
-        if p["notice"] and p["notice"].returncode is None:
-            p["notice"].kill()
-        if self.companion:
-            asyncio.get_running_loop().run_in_executor(None, self.companion.push_request_over, "session", p["id"])
-        log(f"agent session request over: {why}")
+        if outcome == "timed out":
+            return "The owner didn't allow the agent session within 2 minutes. Stop and tell the user."
+        return "The agent session request was cancelled. Stop and tell the user."
 
     def answer_id(self, rid, approve):
-        p = self.pending
-        if not p or rid != p["id"]:
-            return False
-        p["approved"], p["answered"] = bool(approve), True
-        if p["approved"]:
-            log("agent session allowed")
-        self._close(p, "allowed" if p["approved"] else "declined")
-        return True
+        return self.session.answer(rid, bool(approve))
 
     def end(self):
-        """The agent handed the phone back (or the owner took over): forget the allowed
-        session, and drop a request nobody needs now."""
-        self.allowed_until = 0.0
-        if self.pending:
-            self._close(self.pending, "the agent ended its session")
-        threading.Thread(target=self.sync_gate, daemon=True).start()
+        """The agent handed the phone back (or the owner took over)."""
+        self.session.done()
 
     async def answer(self, req):
         if not same_origin(req):
@@ -706,7 +685,7 @@ class SessionRequests:
 
     async def _notify(self, p):
         try:
-            p["notice"] = await asyncio.create_subprocess_exec(
+            self.notices[p["id"]] = notice = await asyncio.create_subprocess_exec(
                 *(["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "deny=Cancel",
                    "-A", "allow=Allow now", f"Agent taking control in {round(p['deadline'] - time.time())} s",
                    f"{p['action'] or 'Using the phone'}. Cancel here or at http://localhost:{PORT}"]
@@ -715,7 +694,7 @@ class SessionRequests:
                    "Agent requests control",
                    f"{p['action'] or 'Using the phone'}. Answer here or at http://localhost:{PORT}"]),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await p["notice"].communicate()
+            out, _ = await notice.communicate()
             choice = out.decode().strip()
             if choice in ("allow", "deny"):
                 self.answer_id(p["id"], choice == "allow")
@@ -784,7 +763,7 @@ def app(mirror):
             action = str((await req.json()).get("action", ""))[:80]
         except ValueError:
             action = ""
-        if not mirror.taken_over and mirror.sessions.needed():
+        if mirror.sessions.needed():
             allowed = await mirror.sessions.ask(action)
             if allowed is not True:
                 return web.json_response({"ok": False, "result": allowed}, status=409)
@@ -802,8 +781,7 @@ def app(mirror):
             phase = (await req.json()).get("phase")
         except ValueError:
             phase = None
-        if mirror.agent() == "driving" and phase in ("reading", "thinking"):
-            mirror.agent_phase, mirror.phase_at = phase, time.time()
+        mirror.session.set_phase(phase)
         return web.json_response({"ok": True})
 
     async def keyboard(req):
@@ -827,10 +805,7 @@ def app(mirror):
 
     async def agent_done(_req):
         # The agent's session is over: control goes back to the page at once.
-        mirror.agent_until = 0.0
-        mirror.sessions.end()
-        mirror.park()
-        mirror.broadcast_state()
+        mirror.session.done()
         return web.json_response({"ok": True})
 
     async def agent_takeover(req):
@@ -889,6 +864,7 @@ def main():
         async def stale_loop():
             while True:
                 await asyncio.sleep(0.5)
+                mirror.session.tick()  # the session running out, a countdown ending
                 mirror.check_stale()
         asyncio.ensure_future(stale_loop())
         try:  # the companion app's API on the local network (companion.py)
