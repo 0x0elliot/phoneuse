@@ -65,6 +65,9 @@ static portMUX_TYPE latest_mux = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t out_task;
 static void out_loop(void *arg);
 static void key_loop(void *arg);
+typedef struct { uint16_t x, y, hold_ms; } tap_t;  // a whole tap (hid_tap)
+static QueueHandle_t tapq;
+static void tap_loop(void *arg);
 
 static void name_from(const uint8_t *addr) { esp_bt_gap_read_remote_name((uint8_t *)addr); }
 
@@ -175,9 +178,6 @@ static void key_loop(void *arg) {
 
 // A tap, done here as one unit: press, hold, release at the bridge's own pace, so
 // Wi-Fi delays between the PC's packets can't stretch a tap into a long press.
-typedef struct { uint16_t x, y, hold_ms; } tap_t;
-static QueueHandle_t tapq;
-
 static void tap_loop(void *arg) {
     tap_t t;
     for (;;) {
