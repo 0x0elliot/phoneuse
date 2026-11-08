@@ -4,7 +4,14 @@ import Foundation
 struct PCState: Decodable, Equatable {
     struct PC: Decodable, Equatable { var id: String; var name: String; var version: String? }
     struct Bluetooth: Decodable, Equatable { var connected: Bool; var via: String? }
-    struct Agent: Decodable, Equatable { var state: String; var action: String?; var since: Double?; var steps: Int? }
+    struct Agent: Decodable, Equatable {
+        var state: String
+        var action: String?
+        var since: Double?
+        var steps: Int?
+        /// "acting", "reading" or "thinking" while driving, if the PC sends it.
+        var phase: String?
+    }
     struct Audio: Decodable, Equatable {
         var on: Bool
         var needsRemirror: Bool?

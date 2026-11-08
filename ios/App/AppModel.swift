@@ -243,21 +243,29 @@ final class AppModel: ObservableObject {
     }
 
     #if DEBUG
-    /// Launched with -PUDemoActivity (simulator checks): a driving activity with no PC, to watch its animation.
+    /// Launched with -PUDemo <idle|asking|delay|driving|paused> (simulator checks): one activity in that state with
+    /// no PC, replacing any other.
     func startDemoActivityIfAsked() {
         let args = ProcessInfo.processInfo.arguments
-        guard args.contains("-PUDemoActivity") || args.contains("-PUDemoAsking") else { return }
+        guard let i = args.firstIndex(of: "-PUDemo"), i + 1 < args.count else { return }
         let now = Date().timeIntervalSince1970
-        var state = AgentActivityAttributes.ContentState(state: "driving", phase: "thinking", requestId: nil,
-                                                         action: "Opening Settings", steps: 3, startedAt: now - 5,
-                                                         updatedAt: now)
-        if args.contains("-PUDemoAsking") {
-            state = .init(state: "asking", phase: "asking", requestId: "demo", action: "Pressing escape", steps: 0,
-                          startedAt: now, updatedAt: now)
-            state.deadline = now + 30
+        var c = AgentActivityAttributes.ContentState(state: "driving", phase: "thinking", requestId: nil,
+                                                     action: "Opening Settings", steps: 3, startedAt: now - 5,
+                                                     updatedAt: now)
+        switch args[i + 1] {
+        case "idle": c.state = "idle"; c.phase = nil; c.action = ""; c.steps = 0
+        case "asking": c.state = "asking"; c.phase = "asking"; c.requestId = "demo"; c.action = "Pressing escape"; c.steps = 0
+        case "delay":
+            c.state = "asking"; c.phase = "asking"; c.requestId = "demo"; c.action = "Pressing escape"; c.steps = 0
+            c.deadline = now + 30
+        case "paused": c.state = "paused"; c.phase = "paused"
+        default: break
         }
-        _ = try? Activity.request(attributes: AgentActivityAttributes(pcName: "demo"),
-                                  content: ActivityContent(state: state, staleDate: nil), pushType: nil)
+        Task {
+            for a in Activity<AgentActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
+            _ = try? Activity.request(attributes: AgentActivityAttributes(pcName: "demo"),
+                                      content: ActivityContent(state: c, staleDate: nil), pushType: nil)
+        }
     }
     #endif
 

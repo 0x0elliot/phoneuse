@@ -139,24 +139,28 @@ struct SettingsView: View {
 
     private func agentSection(_ s: PCState) -> some View {
         Section("Agent") {
-            LabeledContent {
-                if let steps = s.agent.steps, steps > 0, s.agent.state != "idle" {
-                    Text(steps == 1 ? "1 step" : "\(steps) steps").monospacedDigit()
-                }
-            } label: {
-                if s.agent.state == "driving" {
-                    Label { Text(agentText(s.agent)) } icon: { SpinningRing(color: .blue) }
-                } else {
-                    Label { Text(agentText(s.agent)) } icon: {
-                        Image(s.agent.state == "paused" ? "pu.paused" : "pu.idle")
-                            .foregroundStyle(s.agent.state == "paused" ? .orange : .secondary)
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(agentTitle(s.agent)).font(.headline)
+                    if let detail = agentDetail(s), !detail.isEmpty {
+                        Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                     }
+                }
+            } icon: {
+                if s.agent.state == "driving" {
+                    SpinningRing(color: s.agent.phase == "thinking" ? .purple : .blue)
+                } else {
+                    Image(systemName: s.agent.state == "paused" ? "pause.circle.fill" : "iphone")
+                        .font(.system(size: 17, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(s.agent.state == "paused" ? Color.orange : Color.gray)
                 }
             }
             .accessibilityIdentifier("agentState")
             .listRowBackground(s.agent.state == "driving" ? AnyView(GlowBackground()) : AnyView(Color(.secondarySystemGroupedBackground)))
             if let pending = s.session?.pending {
-                Label("Agent wants to start\(pending.action.map { ": \($0)" } ?? "")", systemImage: "person.badge.clock")
+                Label(pending.deadline == nil ? "Agent requests control" : "Agent taking control soon",
+                      systemImage: "hand.raised.fill")
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("sessionRequest")
                 HStack {
@@ -173,11 +177,11 @@ struct SettingsView: View {
             }
             if s.agent.state == "driving" {
                 Button(role: .destructive) { Task { await model.takeOver() } } label: {
-                    row("Take Over", "hand.raised", busy: "agent")
+                    row("Take Over", "hand.raised.fill", busy: "agent")
                 }
                 .accessibilityIdentifier("takeover")
             } else if s.agent.state == "paused" {
-                Button { Task { await model.resume() } } label: { row("Resume", "play", busy: "agent") }
+                Button { Task { await model.resume() } } label: { row("Resume", "play.fill", busy: "agent") }
                     .accessibilityIdentifier("resume")
             }
             if let session = s.session {
@@ -186,11 +190,30 @@ struct SettingsView: View {
         }
     }
 
-    private func agentText(_ a: PCState.Agent) -> String {
+    /// Who has control, worded as in the Live Activity.
+    private func agentTitle(_ a: PCState.Agent) -> String {
         switch a.state {
-        case "driving": return (a.action?.isEmpty == false ? a.action! : "Working")
-        case "paused": return "Paused"
-        default: return "Idle"
+        case "driving":
+            switch a.phase {
+            case "acting": return "Agent is tapping"
+            case "reading": return "Agent is reading"
+            case "thinking": return "Agent is thinking"
+            default: return "Agent is working"
+            }
+        case "paused": return "You took over"
+        default: return "You're in control"
+        }
+    }
+
+    /// What's happening.
+    private func agentDetail(_ s: PCState) -> String? {
+        switch s.agent.state {
+        case "driving":
+            let steps = s.agent.steps ?? 0
+            let count = steps <= 0 ? nil : steps == 1 ? "1 step" : "\(steps) steps"
+            return [s.agent.action, count].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        case "paused": return "The agent is paused"
+        default: return s.mirroring ? "Phone Use is mirroring your screen" : nil
         }
     }
 
@@ -453,7 +476,8 @@ struct RequestSheet: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Image("pu.asking").font(.system(size: 54)).foregroundStyle(.orange)
+            Image(systemName: "hand.raised.fill").font(.system(size: 44, weight: .semibold))
+                .symbolRenderingMode(.hierarchical).foregroundStyle(.orange)
             VStack(spacing: 6) {
                 if let deadline {
                     HStack(spacing: 6) {
@@ -494,25 +518,25 @@ struct RequestSheet: View {
     }
 }
 
-/// "Agent access" (Always / After a notice / Ask every time) and, for a notice, how long: two ordinary rows.
+/// "Agent control" (Always / After a delay / Ask every time) and, for a delay, how long: two ordinary rows.
 struct StartModeRow: View {
     @EnvironmentObject var model: AppModel
     var session: PCState.Session
 
     var body: some View {
-        Picker("Agent access", selection: Binding(
+        Picker("Agent control", selection: Binding(
             get: { session.currentMode },
             set: { mode in Task { await model.setSessionMode(mode) } }
         )) {
             Text("Always").tag("auto")
-            Text("After a notice").tag("countdown")
+            Text("After a delay").tag("countdown")
             Text("Ask every time").tag("ask")
         }
         .pickerStyle(.menu)
         .accessibilityIdentifier("sessionMode")
         if session.currentMode == "countdown" {
             let current = session.seconds ?? 10
-            Picker("Notice", selection: Binding(
+            Picker("Delay", selection: Binding(
                 get: { current },
                 set: { seconds in Task { await model.setSessionSeconds(seconds) } }
             )) {
