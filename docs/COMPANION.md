@@ -114,7 +114,11 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
 
-`content-state` is `{"state": "driving | paused", "action": "Opening Gmail", "steps": 12, "startedAt": <unix seconds>}`.
+`content-state` is `{"state": "driving | paused", "phase": "acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "startedAt": <unix seconds>}`.
+
+`phase` says what the agent is doing at the moment: `acting` while phoneuse sends a tap, a swipe or keys to the
+phone, `reading` while the agent looks at the screen, and `thinking` between actions, while the agent's model
+works out its next step. The phase changes every few seconds, and the PC sends at most one update per second.
 
 ## The app
 

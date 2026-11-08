@@ -191,12 +191,26 @@ def describe(cmd, what=""):
     return verb
 
 
+def agent_phase(phase):
+    """Tell the companion app's Live Activity what the agent is doing between actions:
+    "reading" the screen, or "thinking" (its model works out the next step)."""
+    import json
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:{CFG['web_port']}/api/agent/phase", data=json.dumps({"phase": phase}).encode(),
+            method="POST", headers={"Content-Type": "application/json"}), timeout=1).close()
+    except OSError:
+        pass
+
+
 def agent_turn():
     """Before an agent action: tell the browser mirror an agent is driving (it
     glows and locks its own input), and stop if the user has taken over. Also
     notes when the screen changed since the agent last looked without it acting
     (the user may be using the phone, or something is animating)."""
-    import json
+    import atexit, json
+    if sys.argv[0].endswith("phoneuse"):  # a CLI command: the agent thinks again once it exits
+        atexit.register(agent_phase, "thinking")
     req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act",
                                  data=json.dumps({"action": ACTION}).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})

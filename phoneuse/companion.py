@@ -334,7 +334,8 @@ class Companion:
                 continue
             m = self.mirror
             state = m.agent()
-            now_state = None if state == "idle" else (state, m.agent_action or "Working", m.agent_steps)
+            now_state = None if state == "idle" else (state, m.agent_action or "Working", m.agent_steps,
+                                                       m.agent_phase if state == "driving" else "paused")
             if now_state == self.sent or (now_state and self.sent and time.time() - self.sent_at < 1.0):
                 continue
             await self.run(self._send_activity, now_state)
@@ -342,7 +343,8 @@ class Companion:
     def _send_activity(self, now_state):
         m, before = self.mirror, self.sent
         self.sent, self.sent_at = now_state, time.time()
-        content = lambda s: {"state": s[0], "action": s[1], "steps": s[2], "startedAt": int(m.agent_started)}
+        content = lambda s: {"state": s[0], "action": s[1], "steps": s[2], "phase": s[3],
+                             "startedAt": int(m.agent_started)}
         for dev in self._devices():
             env, topic = dev.get("env", "production"), dev["bundle_id"] + ".push-type.liveactivity"
             aps = {"timestamp": int(time.time())}

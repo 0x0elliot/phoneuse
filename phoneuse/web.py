@@ -103,6 +103,7 @@ class Mirror:
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
         self.hover_at = PARK  # where the page's pointer last was (screen fractions)
         self.agent_action = ""  # what the agent is doing, for the companion app's Live Activity
+        self.agent_phase = "thinking"  # acting (sending input), reading (the screen) or thinking (between actions)
         self.agent_steps = 0  # actions in this agent session
         self.agent_started = 0.0  # when this agent session started
         self.unlocks = None
@@ -192,7 +193,7 @@ class Mirror:
             return "paused"
         return "driving" if time.time() < self.agent_until else "idle"
 
-    def agent_acts(self, action=""):
+    def agent_acts(self, action="", phase="acting"):
         """Called before every agent action (CLI or MCP). False while the user has
         taken over: the agent must stop."""
         if self.taken_over:
@@ -202,6 +203,7 @@ class Mirror:
             self.agent_started, self.agent_steps = time.time(), 0
         self.agent_steps += 1
         self.agent_action = action or self.agent_action
+        self.agent_phase = phase
         self.agent_until = time.time() + self.AGENT_IDLE
         self.last_input_at = time.time()
         if was != "driving":
@@ -511,6 +513,17 @@ def app(mirror):
                                   "continue only when they tell you to (they resume you on the page)."},
                                  status=409)
 
+    async def agent_phase(req):
+        # The CLI and MCP server: "reading" while the agent reads the screen, "thinking" once an
+        # action returns (its model works out the next step).
+        try:
+            phase = (await req.json()).get("phase")
+        except ValueError:
+            phase = None
+        if mirror.agent() == "driving" and phase in ("reading", "thinking"):
+            mirror.agent_phase = phase
+        return web.json_response({"ok": True})
+
     async def keyboard(req):
         # The page's keyboard button: Eject shows or hides the on-screen keyboard.
         if not same_origin(req):
@@ -548,6 +561,7 @@ def app(mirror):
     a.router.add_route("*", "/api/passcode", passcode)
     a.router.add_post("/api/unlock", unlocks.ask)
     a.router.add_post("/api/agent/act", agent_act)
+    a.router.add_post("/api/agent/phase", agent_phase)
     a.router.add_post("/api/agent/takeover", agent_takeover)
     a.router.add_post("/api/agent/cursor", agent_cursor)
     a.router.add_post("/api/agent/done", agent_done)

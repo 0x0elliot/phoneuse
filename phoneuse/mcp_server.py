@@ -64,7 +64,13 @@ def tool(fn):
         _reload_changed()
         what = kw.get("name") or kw.get("target") or kw.get("combo") or kw.get("to") or ""
         cli.ACTION = cli.describe(fn.__name__, what)
-        return fn(*a, **kw)
+        if fn.__name__ in ("look", "wait"):
+            cli.agent_phase("reading")
+        try:
+            return fn(*a, **kw)
+        finally:
+            if fn.__name__ not in ("end_session", "status"):
+                cli.agent_phase("thinking")
     return server.tool(structured_output=False)(run)
 
 
