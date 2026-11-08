@@ -18,7 +18,7 @@ points, which is plenty for scrolling and edge gestures.
 
 | Goal | Command | What it does |
 |---|---|---|
-| Pointer on | `phoneuse cursor on` | holds the Siri key (consumer usage 0xCF) for the whole request and plays "Turn on AssistiveTouch" on the PC speakers; `phoneuse cursor` checks by moving the pointer between two spots and looking for it in the picture |
+| Pointer on | `phoneuse cursor on` | checks first and does nothing if the pointer is already on; otherwise holds the Siri key (consumer usage 0xCF), waits until Siri's orb shows at the bottom centre (about 1-1.4 s), plays "Turn on AssistiveTouch" on the PC speakers, and lets go. `phoneuse cursor` moves the pointer A, B, A, B and wants a pointer-sized change centred on each spot that repeats on both visits, so a moving wallpaper or video can't pass for the pointer |
 | Per-phone drag speed | `phoneuse calibrate` | hovers the pointer up from a fixed start with N relative reports of each size (28 down to 1 unit), finds it in the picture, and returns to the start by stepping beside it first (iOS ignores an absolute report that repeats the previous position after relative moves). The table goes to `~/.config/phoneuse/phones.json` under the mirroring phone's name; drags use it while that phone mirrors. An iPhone 15 Pro moved 0.08x-0.22x as far as the 17 Pro per report, and its drags fell far short until calibrated |
 | Tap | `phoneuse tap X Y` | press and release at the point |
 | Long press | `phoneuse longpress X Y [S]` | hold 0.8 s by default; opens context menus |

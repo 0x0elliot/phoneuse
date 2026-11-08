@@ -433,42 +433,80 @@ SOUNDS = os.path.join(PKG, "sounds")
 
 def cursor_state(h):
     """Is the phone's pointer working (AssistiveTouch on)? Moves the pointer between
-    two spots and back: with AssistiveTouch on, the pointer is part of the mirrored
-    picture, so the picture changes at both spots; with it off, nothing changes.
-    Returns "on", "off", or "unknown" when the screen keeps changing by itself."""
+    two spots twice (A, B, A, B). With AssistiveTouch on, the pointer is part of
+    the mirrored picture: near each spot, the two frames with the pointer there
+    match each other and differ from the two with it away, in a pointer-sized blob
+    centred on the spot. A moving wallpaper or video changes between visits too,
+    so it can't pass for the pointer. Returns "on", "off", or "unknown" when the
+    screen keeps changing by itself near the spots."""
     import numpy as np
     spots = [(0.30, 0.42), (0.70, 0.58)]
     shots = []
-    for x, y in spots + spots[:1]:
+    for x, y in spots + spots:
         h.cmd(f"a {x} {y} 0")
-        time.sleep(0.45)
+        time.sleep(0.4)
         shots.append(screen.grab_rgb().astype(np.int16))
     if any(s.shape != shots[0].shape for s in shots):
         return "unknown"
+    H, W, _ = shots[0].shape
+    r = int(W * 0.07)
 
-    def changed(a, b, spot=None):  # share of pixels that changed, near a spot or overall
-        if spot is not None:
-            H, W, _ = a.shape
-            r, cx, cy = int(W * 0.07), int(spot[0] * W), int(spot[1] * H)
-            a, b = a[max(cy - r, 0):cy + r, max(cx - r, 0):cx + r], b[max(cy - r, 0):cy + r, max(cx - r, 0):cx + r]
-        return float((np.abs(a - b).max(axis=2) > 40).mean())
+    def near(img, spot):
+        cx, cy = int(spot[0] * W), int(spot[1] * H)
+        return img[max(cy - r, 0):cy + r, max(cx - r, 0):cx + r]
 
-    if changed(shots[0], shots[2]) > 0.01:  # pointer back where it was, yet the picture differs
-        return "unknown"
-    return "on" if min(changed(shots[0], shots[1], s) for s in spots) > 0.02 else "off"
+    def diff(a, b):
+        return np.abs(a - b).max(axis=2) > 40
+
+    seen = []
+    for i, spot in enumerate(spots):
+        here = [near(shots[k], spot) for k in (i, i + 2)]  # frames with the pointer at this spot
+        away = [near(shots[k], spot) for k in (1 - i, 3 - i)]
+        if diff(here[0], here[1]).mean() > 0.005 or diff(away[0], away[1]).mean() > 0.005:
+            return "unknown"  # something else moves here
+        moved = diff(here[0], away[0]) & diff(here[1], away[1])
+        ys, xs = np.nonzero(moved)
+        # the pointer: a blob of some size, centred on the spot (the crop's middle)
+        seen.append(moved.mean() > 0.02 and abs(xs.mean() - moved.shape[1] / 2) < r * 0.4
+                    and abs(ys.mean() - moved.shape[0] / 2) < r * 0.4)
+    return "on" if all(seen) else "off"
+
+
+def siri_open(before, wait=2.5):
+    """Wait until Siri is listening: its orb appears at the bottom centre about
+    1-1.4 s after the Siri key goes down. True once the picture there changed."""
+    import numpy as np
+    H, W = before.shape[:2]
+    box = (slice(int(H * 0.85), H), slice(int(W * 0.3), int(W * 0.7)))
+    until = time.time() + wait
+    while time.time() < until:
+        time.sleep(0.2)
+        now = screen.grab_rgb().astype(np.int16)
+        if now.shape == before.shape and (np.abs(now[box] - before[box]).max(axis=2) > 40).mean() > 0.08:
+            return True
+    return False
 
 
 def cursor_set(h, on):
-    """Turn AssistiveTouch on or off by asking Siri out loud: hold the Siri key, play
-    the request on this PC's speakers (the phone must hear them), let go. Asks a
-    second time if the first request didn't take."""
+    """Turn AssistiveTouch on or off by asking Siri out loud: hold the Siri key,
+    wait until Siri shows it is listening, play the request on this PC's speakers
+    (the phone must hear them), let go. Asks a second time if the first request
+    didn't take."""
+    import numpy as np
     refuse_if_locked()
     want = "on" if on else "off"
+    state = cursor_state(h)
+    if state == want:
+        return f"cursor {state} (already)"
     wav = os.path.join(SOUNDS, f"assistivetouch-{want}.wav")
+    heard = False
     for _ in range(2):
+        before = screen.grab_rgb().astype(np.int16)
         h.cmd("consumer siri down")
         try:
-            time.sleep(1.0)  # Siri starts listening
+            if not siri_open(before):
+                continue  # let go (finally) and hold again
+            heard = True
             subprocess.run(["pw-play", wav], check=True, timeout=15)
             time.sleep(0.3)
         finally:
@@ -482,7 +520,10 @@ def cursor_set(h, on):
                 if on and not phones.entry().get("drag_pts"):  # first time on: measure it
                     return f"cursor {state}; " + calibrate.calibrate(h)
                 return f"cursor {state}"
-    return (f"cursor {state} (wanted {want}): Siri didn't switch it. Check that the phone "
+    if not heard:
+        return (f"cursor {state} (wanted {want}): Siri didn't open when the Siri key was held. "
+                "Check Settings → Siri: Press Side Button for Siri on, and Siri not restricted.")
+    return (f"cursor {state} (wanted {want}): Siri opened but didn't switch it. Check that the phone "
             "is near this PC's speakers and their volume is up, then try again.")
 
 
