@@ -67,26 +67,6 @@
                  font-weight: 500; color: #ff453a; background: rgba(255, 69, 58, .14); }
   .destructive:hover { background: rgba(255, 69, 58, .2); }
   .foot { font-size: 12px; line-height: 1.45; color: rgba(235, 235, 245, .5); margin: 8px 6px 0; }
-  #keys { position: fixed; z-index: 10; left: 14px; bottom: 14px; width: 236px; border-radius: 16px; padding: 10px;
-          font-size: 13px; }
-  #keys[hidden] { display: none; }
-  #keys .row { display: flex; gap: 6px; margin-bottom: 8px; }
-  #keys .pk { flex: 1; padding: 7px 0 6px; border-radius: 10px; background: rgba(255, 255, 255, .08); text-align: center;
-              line-height: 1.2; }
-  #keys .pk:hover { background: rgba(255, 255, 255, .13); }
-  #keys .pk.held { background: #0a84ff; color: #fff; }
-  #keys .pk small { display: block; font-size: 11px; color: rgba(235, 235, 245, .5); }
-  #keys .pk.held small { color: rgba(255, 255, 255, .8); }
-  #keys dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; margin: 0 2px; }
-  #keys dt { white-space: nowrap; }
-  #keys dd { margin: 0; color: rgba(235, 235, 245, .6); }
-  kbd { font: 12px ui-monospace, monospace; padding: 1px 5px; border-radius: 5px; background: rgba(255, 255, 255, .1);
-        color: #f5f5f7; }
-  #keysToggle { position: fixed; z-index: 10; left: 14px; bottom: 14px; height: 30px; padding: 0 12px; border-radius: 99px;
-                font-size: 13px; }
-  #keysToggle[hidden] { display: none; }
-  #keys .close { float: right; color: rgba(235, 235, 245, .5); padding: 0 2px; }
-  #keys .close:hover { color: #fff; }
   #ask { position: fixed; z-index: 30; top: 14px; left: 50%; transform: translateX(-50%); border-radius: 16px;
          padding: 10px 10px 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
   #ask .btn { padding: 6px 12px; border-radius: 99px; background: rgba(255, 255, 255, .1); font-weight: 500; }
@@ -98,25 +78,6 @@
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.75"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
   <span>Keyboard</span><span class="sw"></span>
 </button>
-<div id="keys" class="glass" aria-label="Phone keys">
-  <button class="close" tabindex="-1" title="Hide">✕</button>
-  <div class="row">
-    <button class="pk" data-key="siri" tabindex="-1" title="Hold about 1 s for Siri">Siri<small>hold · F1</small></button>
-    <button class="pk" data-key="home" tabindex="-1" title="Home">Home<small>F2</small></button>
-    <button class="pk" data-key="search" tabindex="-1" title="Spotlight">Spotlight<small>F3</small></button>
-  </div>
-  <dl>
-    <dt><kbd>⌘</kbd> <kbd>Space</kbd></dt><dd>Spotlight</dd>
-    <dt><kbd>⌘</kbd> <kbd>H</kbd></dt><dd>Home</dd>
-    <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Tab</kbd></dt><dd>move through lists</dd>
-    <dt><kbd>Enter</kbd></dt><dd>open, confirm</dd>
-    <dt><kbd>Esc</kbd></dt><dd>close, back</dd>
-    <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt><dd>next input language</dd>
-    <dt><kbd>F4</kbd></dt><dd>on-screen keyboard (Eject)</dd>
-  </dl>
-  <p class="foot" style="margin: 8px 2px 0">⌘ is your Super key. Keys reach the phone while the page has focus.</p>
-</div>
-<button id="keysToggle" class="glass" tabindex="-1" hidden>Keys</button>
 <div id="btDown" class="glass" hidden><span class="dot"></span>Bluetooth not connected</div>
 <button id="takeover" class="glass" hidden><span class="dot"></span><span id="takeoverLabel">Take over</span></button>
 <button id="gear" class="glass" title="Settings" aria-label="Settings" aria-expanded="false">
@@ -168,6 +129,18 @@ function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg))
 function active() { return state.live && playing && state.agent !== "driving"; }
 
 function showNote(html) { note.innerHTML = html && `<div>${html}</div>`; note.hidden = !html; }
+// Never leave an old picture up: whenever the phone isn't live (locked, screen off,
+// mirroring stopped, server gone), the screen goes black until a new frame arrives.
+// The phone sends frames only when its screen changes, and none at all while the
+// screen is off (locking doesn't always end mirroring). Its status-bar clock changes
+// every minute, so a minute boundary passing with no new frame means the screen is
+// off: the old picture goes away then.
+let lastFrameAt = 0, screenOff = false;
+setInterval(() => {
+  if (!state.live || !hasPicture || screenOff) return;
+  if (Date.now() > Math.floor(lastFrameAt / 60000 + 1) * 60000 + 4000) { screenOff = true; blank(); updateNote(); }
+}, 1000);
+function blank() { hasPicture = false; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
 // Notes only appear when there is no picture: a picture on screen stays put
 // while the connection or stream recovers, and short gaps show nothing at all.
 let hasPicture = false;   // a frame of the phone is on the canvas
@@ -175,9 +148,13 @@ let troubleSince = 0;     // when the current no-picture problem started
 function updateNote() {
   if (!("VideoDecoder" in window)) return showNote("This browser can't decode video here (no WebCodecs).<br>Use a current Chrome, Edge or Firefox.");
   const connected = ws && ws.readyState === 1;
-  if (connected && !state.live && !state.mirroring) {  // mirroring really ended
-    hasPicture = false;
-    return showNote(`On the iPhone, open Control Center<br><b>Screen Mirroring</b> › <b>${state.name}</b>`);
+  if (connected && !state.live && !state.mirroring) {  // mirroring ended (iOS ends it when the phone locks)
+    blank();
+    return showNote(`Screen Mirroring stopped, or the iPhone is locked.<br>Unlock it, then open Control Center<br>`
+                    + `<b>Screen Mirroring</b> › <b>${state.name}</b>`);
+  }
+  if (connected && state.live && screenOff) {
+    return showNote("The iPhone's screen is off or locked.<br>Wake it to see it here.");
   }
   if (hasPicture || (connected && state.live)) { troubleSince = 0; return showNote(""); }
   if (!troubleSince) { troubleSince = performance.now(); setTimeout(updateNote, 5100); }
@@ -219,6 +196,8 @@ function newDecoder() {
       }
       ctx.drawImage(frame, 0, 0);
       frame.close();
+      lastFrameAt = Date.now();
+      if (screenOff) { screenOff = false; hasPicture = true; updateNote(); }
       if (!playing) { playing = true; hasPicture = true; send({ t: "playing" }); updateNote(); }
     },
     error(e) {
@@ -306,12 +285,12 @@ function connect() {
     if (msg.type !== "state") return;
     const wasLive = state.live;
     state = msg;
-    if (!state.live && !state.mirroring && wasLive) { playing = false; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+    if (!state.live) { if (wasLive) playing = false; blank(); }
     layout(); updateNote(); showAgent();
     document.getElementById("btDown").hidden = state.bluetooth !== false;
   };
   ws.onclose = () => {
-    playing = false; configured = false; awaitingKey = true; pending = []; updateNote();
+    playing = false; configured = false; awaitingKey = true; pending = []; blank(); updateNote();
     setTimeout(connect, 1000);
   };
 }
@@ -373,24 +352,8 @@ function onKey(e, down) {
 }
 function holdConsumer(key, down) {
   send({ t: "consumer", key, down });
-  document.querySelector(`#keys .pk[data-key="${key}"]`)?.classList.toggle("held", down);
   if (key === "eject" && !down) kbd.setAttribute("aria-checked", kbd.getAttribute("aria-checked") !== "true");
 }
-// The panel's buttons hold their key while pressed. They never take focus, so
-// typing keeps going to the phone after a click.
-for (const b of document.querySelectorAll("#keys .pk")) {
-  b.onpointerdown = (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); holdConsumer(b.dataset.key, true); };
-  b.onpointerup = b.onpointercancel = () => holdConsumer(b.dataset.key, false);
-}
-const keysPanel = document.getElementById("keys"), keysToggle = document.getElementById("keysToggle");
-function showKeys(on) {
-  keysPanel.hidden = !on; keysToggle.hidden = on;
-  try { localStorage.setItem("phoneuse.keys", on ? "1" : "0"); } catch {}
-}
-for (const b of [keysPanel.querySelector(".close"), keysToggle]) b.onpointerdown = (e) => e.preventDefault();
-keysPanel.querySelector(".close").onclick = () => showKeys(false);
-keysToggle.onclick = () => showKeys(true);
-try { showKeys(localStorage.getItem("phoneuse.keys") !== "0"); } catch { showKeys(true); }
 addEventListener("keydown", (e) => onKey(e, true));
 addEventListener("keyup", (e) => onKey(e, false));
 addEventListener("blur", () => send({ t: "blur" }));  // let go of held keys and buttons
