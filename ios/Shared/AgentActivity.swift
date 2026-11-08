@@ -30,7 +30,7 @@ func setActivitiesState(_ state: String) async {
 
 struct TakeOverIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Take Over"
-    static var description = IntentDescription("Stops the agent that is using your iPhone.")
+    static var description = IntentDescription("Stops the agent that is using your phone.")
 
     func perform() async throws -> some IntentResult {
         try await CompanionClient.paired().send("POST", "/v1/agent/takeover", json: [:])
