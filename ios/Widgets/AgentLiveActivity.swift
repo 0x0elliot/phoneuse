@@ -209,11 +209,15 @@ struct AskingContent: View {
     var body: some View {
         let deadline = state.deadlineDate
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {  // the hand sits on the title's line
+            HStack(alignment: .center, spacing: 12) {
+                // Resizable, so the glyph's ink box fills the 28 pt frame and the frame's center is the ink's
+                // center, level with the middle of the title and action.
                 Image("pu.asking")
-                    .font(.system(size: 24, weight: .semibold))
+                    .resizable()
+                    .scaledToFit()
                     .foregroundStyle(.orange)
-                    .frame(width: 30)
+                    .frame(width: 28, height: 28)
+                    .offset(y: 1)  // measured: the text block's visual center sits 1 pt below its frame's
                 VStack(alignment: .leading, spacing: 2) {
                     if let deadline {
                         (Text("Agent taking control in ") + Text(timerInterval: Date()...deadline, countsDown: true))
