@@ -29,7 +29,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: PhoneUse
+        CFBundleDisplayName: "Phone Use"
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -37,7 +37,7 @@ targets:
         UIRequiresFullScreen: true
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
-        NSLocalNetworkUsageDescription: PhoneUse talks to the phoneuse PC on your network.
+        NSLocalNetworkUsageDescription: Phone Use talks to your Phone Use PC on your network.
         NSBonjourServices: [_phoneuse._tcp]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -51,7 +51,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: co.lxe.phoneuse
         PRODUCT_NAME: PhoneUse
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: PhoneUse
+        INFOPLIST_KEY_CFBundleDisplayName: "Phone Use"
       configs:
         Release:
           CODE_SIGN_STYLE: Manual
@@ -67,7 +67,7 @@ targets:
     info:
       path: Widgets/Info.plist
       properties:
-        CFBundleDisplayName: PhoneUse
+        CFBundleDisplayName: "Phone Use"
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:

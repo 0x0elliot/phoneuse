@@ -38,7 +38,7 @@ struct UnpairedView: View {
             .buttonStyle(.borderedProminent)
             if let error = model.error { Text(error).foregroundStyle(.red).font(.footnote) }
         }
-        .navigationTitle("PhoneUse")
+        .navigationTitle("Phone Use")
     }
 }
 
@@ -97,7 +97,7 @@ struct SettingsView: View {
             }
             pcSection
         }
-        .navigationTitle("PhoneUse")
+        .navigationTitle("Phone Use")
         .refreshable { await model.refresh() }
         .sheet(isPresented: $passcodeSheet) { PasscodeSheet() }
     }

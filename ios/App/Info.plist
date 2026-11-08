@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>PhoneUse</string>
+	<string>Phone Use</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -43,7 +43,7 @@
 		<string>_phoneuse._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PhoneUse talks to the phoneuse PC on your network.</string>
+	<string>Phone Use talks to your Phone Use PC on your network.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
