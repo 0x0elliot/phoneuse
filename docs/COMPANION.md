@@ -89,7 +89,7 @@ When `session.ask` is on, an agent's first action waits until the owner allows t
 The owner can answer in the app's notification, in the app, in a desktop notification or in the browser mirror. If
 the owner declines or doesn't answer, the agent's action fails with a message that tells it to stop. Once allowed,
 the session lasts until the agent hands the phone back (`phoneuse done`), the owner takes over, or the agent sends
-no action for 5 minutes; after that, the next action asks again.
+no action for 60 seconds, which is also when the agent session ends everywhere; after that, the next action asks again.
 
 ## Audio
 
@@ -119,7 +119,7 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `attributes: {"pcName": "…"}`, `content-state` as below, and an `alert` ("An agent is using your iPhone").
 - **Update**, to the activity's token, when the agent's action or state changes, at most once per second:
   `event: "update"`, `content-state`.
-- **End**, when the session ends (`phoneuse done`, or 20 s without an action): `event: "end"`, the last
+- **End**, when the session ends (`phoneuse done`, or 60 s without an action): `event: "end"`, the last
   `content-state`, and `dismissal-date` 10 s later.
 - **Session request** (topic `<bundle id>`, push type `alert`), to the device token: an alert with category
   `SESSION`, `interruption-level: "time-sensitive"` and `"session_id"` in the payload. The app's notification

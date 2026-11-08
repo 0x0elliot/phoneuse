@@ -186,7 +186,10 @@ class Mirror:
             return False
 
     # ---- agent sessions: who is driving the phone ----
-    AGENT_IDLE = 20.0  # an agent session ends this long after its last action (s)
+    # An agent session ends this long after its last action (s). An agent's model can
+    # think for a while between actions, and with "ask before agent starts" on, the
+    # owner's approval lasts exactly as long as this visible session.
+    AGENT_IDLE = 60.0
 
     def agent(self):
         """"driving" while an agent acts (the page shows it and takes no input),
@@ -494,9 +497,10 @@ class SessionRequests:
     """With "ask before an agent session" on, an agent's first action waits until the owner
     allows the session: in the companion app's notification, a desktop notification or the
     browser mirror. Once allowed, the agent keeps the phone until it hands it back
-    (`phoneuse done`), the owner takes over, or it stays idle for ASK_GAP seconds."""
+    (`phoneuse done`), the owner takes over, or it sends no action for ASK_GAP
+    seconds, the same moment the page and the Live Activity show the owner in control."""
 
-    ASK_GAP = 300.0
+    ASK_GAP = Mirror.AGENT_IDLE  # the approval ends when the visible session does
     WAIT = 120.0
 
     def __init__(self, mirror):
