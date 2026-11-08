@@ -243,7 +243,8 @@ function updateNote() {
 function layout() {
   const aspect = state.screen[0] / state.screen[1];
   const dw = 1 + 2 * state.bezel, dh = 1 / aspect + 2 * state.bezel;
-  const u = Math.min((innerWidth - 24) / dw, (innerHeight - 24) / dh);  // px per screen width
+  // px per screen width; room above and below (and at the sides) for the agent glow
+  const u = Math.min((innerWidth - 64) / dw, (innerHeight - 96) / dh);
   Object.assign(phone.style, { width: `${dw * u}px`, height: `${dh * u}px`, borderRadius: `${(state.radius + state.bezel) * u}px` });
   Object.assign(scr.style, { left: `${state.bezel * u}px`, top: `${state.bezel * u}px`, width: `${u}px`,
                              height: `${u / aspect}px`, borderRadius: `${state.radius * u}px` });
