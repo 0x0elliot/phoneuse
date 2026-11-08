@@ -372,10 +372,12 @@ class Companion:
                 log(f"{kind} request over push:", r)
 
     def push_session(self, rid, action):
+        """The notification is the fallback: a phone with a live activity gets the
+        request there (state "asking"), not twice."""
         if not apns.configured():
             return
         for dev in self._devices():
-            if dev.get("device"):
+            if dev.get("device") and not (dev.get("activity") or {}).get("token"):
                 r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Let an agent use your phone?",
                                                                  "body": f"{action or 'An agent'} wants to start."},
                                                        "category": "SESSION", "sound": "default",
@@ -449,6 +451,7 @@ class Companion:
 
         def content(st):
             return {"state": st[0], "phase": st[1], "action": st[2], "steps": st[3], "requestId": st[4],
+                    "updatedAt": round(time.time(), 2),  # every refresh differs, and restarts the ring
                     "startedAt": int(m.agent_started if st[0] in ("driving", "paused") else self.mirror_since())}
 
         alert = None

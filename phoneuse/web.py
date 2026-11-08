@@ -35,9 +35,9 @@ from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
 
 # Where the pointer rests while nobody uses the phone (after Bluetooth reconnects,
-# after an agent session, and during keep-awake nudges): the very bottom middle,
-# below the dock, where a resting pointer covers nothing and touches nothing.
-PARK = (0.5, 0.995)
+# after an agent session, and during keep-awake nudges): the very bottom left corner,
+# clear of the dock and the home bar, where it covers nothing and touches nothing.
+PARK = (0.03, 0.995)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 PAGE = os.path.join(HERE, "web", "index.html")

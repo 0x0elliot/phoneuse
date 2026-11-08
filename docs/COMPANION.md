@@ -128,7 +128,10 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
 
-`content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>}`.
+`content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>}`.
+
+While an agent drives, the PC refreshes the activity every 2.8 s (priority 5); `updatedAt` makes each refresh new
+content, and the app restarts its progress ring from it.
 
 The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends when mirroring stops.
 `idle` means the owner is in control. `asking` means an agent waits for the owner's answer to a session request:
