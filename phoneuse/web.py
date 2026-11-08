@@ -205,6 +205,9 @@ class Mirror:
         self.agent_steps += 1
         self.agent_action = action or self.agent_action
         self.agent_phase = phase
+        msg = json.dumps({"type": "agent-action", "action": self.agent_action, "steps": self.agent_steps})
+        for tab in list(self.tabs):
+            asyncio.ensure_future(tab.ws.send_str(msg))
         self.agent_until = time.time() + self.AGENT_IDLE
         self.last_input_at = time.time()
         if was != "driving":

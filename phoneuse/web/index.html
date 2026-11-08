@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>phoneuse</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0e0e11; overflow: hidden; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  html { background: #0e0e11; }  /* on html only: the agent glow sits behind the phone, above this */
   body { display: grid; place-items: center; font: 15px system-ui, sans-serif; color: rgba(255, 255, 255, .55); }
   #phone { position: relative; background: #18181c; touch-action: none; user-select: none; }
   #screen { position: absolute; background: #000; overflow: hidden; }
@@ -31,15 +32,46 @@
   #awake .sw, #bUse .sw { flex: none; }
   #awake[aria-checked="true"] .sw, #kbd[aria-checked="true"] .sw, #bUse[aria-checked="true"] .sw { background: #30d158; }
   #awake[aria-checked="true"] .sw::after, #kbd[aria-checked="true"] .sw::after, #bUse[aria-checked="true"] .sw::after { transform: translateX(14px); }
-  #takeover { position: fixed; z-index: 10; top: 14px; right: 58px; height: 34px; padding: 0 14px; border-radius: 99px;
-              font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 7px; }
+  /* who controls the phone: the agent (glow + pill with Take over) or the owner */
+  #takeover { position: fixed; z-index: 10; top: 14px; right: 58px; height: 34px; padding: 0 5px 0 14px; border-radius: 99px;
+              font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 230px);
+              transition: background .3s, border-color .3s; }
   #takeover[hidden] { display: none; }
-  #takeover .dot { width: 7px; height: 7px; border-radius: 50%; background: #0a84ff; box-shadow: 0 0 8px #0a84ff; }
+  #takeover.idle { padding-right: 14px; cursor: default; }
+  #takeoverLabel { white-space: nowrap; flex: none; }
+  @media (max-width: 560px) {  /* below the keyboard switch, right-aligned */
+    #takeover { top: 56px; right: 14px; max-width: calc(100vw - 28px); }
+    #takeover .what { display: none; }
+  }
+  #takeover .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #30d158; box-shadow: 0 0 8px #30d158; }
+  #takeover.driving .dot { background: #64d2ff; box-shadow: 0 0 10px #0a84ff; animation: dotpulse 1.2s ease-in-out infinite; }
   #takeover.paused .dot { background: #ff9f0a; box-shadow: 0 0 8px #ff9f0a; }
-  /* while an agent drives: a glow around the screen itself, inside the bezel */
-  #phone.driving #screen { box-shadow: 0 0 0 2px rgba(10, 132, 255, .9), 0 0 18px 3px rgba(10, 132, 255, .55);
-                           animation: drive 2.2s ease-in-out infinite; }
-  @keyframes drive { 50% { box-shadow: 0 0 0 2px rgba(10, 132, 255, .65), 0 0 26px 6px rgba(10, 132, 255, .35); } }
+  @keyframes dotpulse { 50% { transform: scale(.65); opacity: .7; } }
+  #takeover .what { color: rgba(235, 235, 245, .55); font-weight: 400; white-space: nowrap; overflow: hidden;
+                    text-overflow: ellipsis; min-width: 0; }
+  #takeover .what:empty { display: none; }
+  #takeover .act { flex: none; height: 26px; padding: 0 11px; border-radius: 99px; display: grid; place-items: center;
+                   background: rgba(255, 255, 255, .12); font-size: 13px; }
+  #takeover:hover .act { background: rgba(255, 255, 255, .2); }
+  #takeover.idle .act { display: none; }
+  #takeover.driving { border-color: rgba(100, 210, 255, .35); }
+  #takeover.flash { animation: flash 1.6s ease-out; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 0 rgba(48, 209, 88, .7), 0 18px 50px rgba(0, 0, 0, .45); }
+                     100% { box-shadow: 0 0 0 14px rgba(48, 209, 88, 0), 0 18px 50px rgba(0, 0, 0, .45); } }
+  /* while an agent drives: a moving glow around the phone, behind its body */
+  @property --glow { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  #phone::before, #phone::after { content: ""; position: absolute; z-index: -1; border-radius: inherit; pointer-events: none;
+    background: conic-gradient(from var(--glow), #0a84ff, #5e5ce6, #bf5af2, #ff375f, #64d2ff, #0a84ff);
+    opacity: 0; transition: opacity .6s; animation: glow 3.5s linear infinite; }
+  #phone::before { inset: -10px; filter: blur(22px); }
+  #phone::after { inset: -2.5px; filter: blur(1.5px); }
+  #phone.driving::before { opacity: .85; }
+  #phone.driving::after { opacity: 1; }
+  @keyframes glow { to { --glow: 360deg; } }
+  /* the owner gets the phone back: a short green ring */
+  #phone.handback::after { background: #30d158; opacity: 0; animation: handback 1.4s ease-out; }
+  @keyframes handback { 0% { opacity: 1; } 100% { opacity: 0; } }
+  #phone.driving #screen { box-shadow: 0 0 0 1px rgba(100, 210, 255, .35); }
   #agentDot { position: absolute; z-index: 2; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
               background: #5ac8fa; box-shadow: 0 0 0 2px rgba(255, 255, 255, .85), 0 0 14px 4px rgba(10, 132, 255, .8);
               pointer-events: none; transition: left .12s ease-out, top .12s ease-out, transform .1s, opacity .3s; }
@@ -90,7 +122,7 @@
   <span>On-screen keyboard</span><span class="sw"></span>
 </button>
 <div id="btDown" class="glass" hidden><span class="dot"></span>Bluetooth not connected</div>
-<button id="takeover" class="glass" hidden><span class="dot"></span><span id="takeoverLabel">Take over</span></button>
+<button id="takeover" class="glass idle" hidden aria-live="polite"><span class="dot"></span><span id="takeoverLabel">You're in control</span><span class="what" id="agentWhat"></span><span class="act" id="takeoverAct"></span></button>
 <button id="gear" class="glass" title="Settings" aria-label="Settings" aria-expanded="false">
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 </button>
@@ -304,6 +336,7 @@ function connect() {
     if (typeof e.data !== "string") return onFrame(e.data);
     const msg = JSON.parse(e.data);
     if (msg.type === "agent-cursor") return showAgentDot(msg);
+    if (msg.type === "agent-action") return showAgentAction(msg);
     if (msg.type === "unlock-request") return showAsk(msg.id, "unlock");
     if (msg.type === "unlock-done") return showAsk(null, "unlock");
     if (msg.type === "session-request") return showAsk(msg.id, "session", msg.action);
@@ -569,15 +602,28 @@ function showAgentDot(m) {
   agentDot.classList.toggle("down", m.down);
   agentDot.hidden = false;
 }
+let shownAgent = "idle", agentAction = "";
 function showAgent() {
   const a = state.agent || "idle";
   if (a !== "driving") agentDot.hidden = true;
   phone.classList.toggle("driving", a === "driving");
-  takeover.hidden = a === "idle";
-  takeover.classList.toggle("paused", a === "paused");
-  takeoverLabel.textContent = a === "paused" ? "You have the phone · Resume agent" : "Agent driving · Take over";
+  if (shownAgent === "driving" && a !== "driving") {  // the agent let go: show the owner has the phone
+    phone.classList.remove("handback"); void phone.offsetWidth; phone.classList.add("handback");
+    takeover.classList.remove("flash"); void takeover.offsetWidth; takeover.classList.add("flash");
+  }
+  shownAgent = a;
+  takeover.hidden = !state.live && a === "idle";
+  takeover.className = `glass ${a}` + (takeover.classList.contains("flash") ? " flash" : "");
+  takeover.disabled = a === "idle";
+  takeoverLabel.textContent = a === "driving" ? "Agent in control" : a === "paused" ? "You took over" : "You're in control";
+  document.getElementById("takeoverAct").textContent = a === "driving" ? "Take over" : a === "paused" ? "Resume agent" : "";
+  document.getElementById("agentWhat").textContent = a === "driving" ? agentAction : "";
 }
-takeover.onclick = () => fetch("/api/agent/takeover", {
+function showAgentAction(m) {
+  agentAction = m.action || "";
+  if (state.agent === "driving") document.getElementById("agentWhat").textContent = agentAction;
+}
+takeover.onclick = () => state.agent !== "idle" && fetch("/api/agent/takeover", {
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ take: state.agent !== "paused" }) });
 
