@@ -37,8 +37,12 @@ struct AgentLiveActivity: Widget {
                     }
                 case .driving:
                     if s.steps > 0 {
-                        Text("\(s.steps)").monospacedDigit().contentTransition(.identity)
+                        Text("\(s.steps)")
+                            .font(.body.monospacedDigit().weight(.semibold))
                             .foregroundStyle(look.color(s))
+                            .fixedSize()
+                            .frame(minWidth: 18)
+                            .contentTransition(.identity)
                             .transaction { $0.animation = nil }
                     }
                 case .idle, .paused:
