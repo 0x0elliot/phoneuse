@@ -27,6 +27,7 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                the field holds (Cmd+A first) unless --append
   phoneuse key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
   phoneuse keyboard             show or hide the iPhone's on-screen keyboard (Eject key)
+  phoneuse app pair             pair the companion app (docs/COMPANION.md); --print for the link only
   phoneuse awake [on|off]       keep the screen awake: a tiny pointer nudge every second
                                 while nobody uses the phone (also in the page's settings)
   phoneuse cursor [on|off]      whether the pointer works (AssistiveTouch); on/off asks
@@ -163,13 +164,41 @@ LAST_SEEN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-la
 NOTES = []  # remarks for the agent, printed (CLI) or returned (MCP) with the action
 
 
+ACTION = ""  # what the agent is doing now, in a few words (the companion app's Live Activity)
+
+VERBS = {"open": "Opening", "open_app": "Opening", "tap-on": "Tapping", "tap_on": "Tapping", "tap": "Tapping",
+         "longpress": "Long-pressing", "long_press": "Long-pressing", "swipe": "Swiping", "scroll": "Scrolling",
+         "scroll_by": "Scrolling", "type": "Typing", "type_text": "Typing", "key": "Pressing",
+         "press_key": "Pressing", "back": "Going back", "home": "Going home", "switcher": "Opening the app switcher",
+         "control-center": "Opening Control Center", "notifications": "Opening notifications",
+         "dismiss": "Closing an overlay", "unlock": "Asking to unlock", "cursor": "Switching the pointer",
+         "keyboard": "Showing the keyboard", "toggle_keyboard": "Showing the keyboard", "calibrate": "Calibrating",
+         "look": "Looking", "wait": "Waiting", "screenshot": "Looking", "text": "Reading the screen"}
+
+
+def describe(cmd, what=""):
+    """A few words for the Live Activity: "Opening Gmail", "Tapping “Wi-Fi”"."""
+    verb = VERBS.get(cmd, cmd.replace("_", " ").capitalize())
+    what = str(what or "").strip()
+    if cmd in ("open", "open_app") and what:
+        return f"{verb} {what}"[:60]
+    if cmd in ("tap-on", "tap_on") and what:
+        return f"{verb} “{what[:40]}”"
+    if cmd in ("key", "press_key") and what:
+        return f"{verb} {what}"[:60]
+    if cmd == "navigate" and what:
+        return VERBS.get(what, f"Going to {what}")
+    return verb
+
+
 def agent_turn():
     """Before an agent action: tell the browser mirror an agent is driving (it
     glows and locks its own input), and stop if the user has taken over. Also
     notes when the screen changed since the agent last looked without it acting
     (the user may be using the phone, or something is animating)."""
     import json
-    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act", data=b"{}", method="POST",
+    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act",
+                                 data=json.dumps({"action": ACTION}).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
     try:
         urllib.request.urlopen(req, timeout=2).close()
@@ -889,24 +918,33 @@ def up():
     def keep_web():
         # The browser mirror (web.py), on localhost only. Restarts when its code
         # changes: it rejoins the hub, so the phone keeps mirroring.
-        supervise("web", "browser mirror", ["web.py", "pointer.py", "touch.py", "phones.py", "unlock.py", "screen.py"])
+        supervise("web", "browser mirror", ["web.py", "pointer.py", "touch.py", "phones.py", "unlock.py", "screen.py",
+                                            "companion.py", "apns.py", "bridge.py", "bridge_web.py"])
     threading.Thread(target=keep_web, daemon=True).start()
 
     def keep_mirror():
         # If UxPlay dies, start it again so the phone can reconnect without
-        # restarting `phoneuse up`.
+        # restarting `phoneuse up`. The companion app turns the audio off or on by
+        # changing the audio-off file and stopping UxPlay (companion.py).
+        from .companion import AUDIO_OFF, UXPLAY_PID
         while not stop.is_set():
+            args = MIRROR_ARGS
+            if os.path.exists(AUDIO_OFF):
+                i = MIRROR_ARGS.index("-as")
+                args = MIRROR_ARGS[:i] + ["-as", "0"] + MIRROR_ARGS[i + 2:]
             env = dict(os.environ)
             out = subprocess.DEVNULL
             if os.environ.get("PHONEUSE_TRACE"):  # per-element GStreamer latency, for tuning
                 env.update(GST_TRACERS="latency(flags=pipeline+element)", GST_DEBUG="GST_TRACER:7")
                 out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-gst-trace.log"), "w")
             if out is subprocess.DEVNULL:  # read UxPlay's output for the sender's name
-                procs["mirror"] = subprocess.Popen(UNBUFFERED + MIRROR_ARGS, stdout=subprocess.PIPE,
+                procs["mirror"] = subprocess.Popen(UNBUFFERED + args, stdout=subprocess.PIPE,
                                                    stderr=subprocess.STDOUT, env=env, text=True, errors="replace")
                 threading.Thread(target=follow_sender, args=(procs["mirror"].stdout,), daemon=True).start()
             else:
-                procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=out, stderr=out, env=env)
+                procs["mirror"] = subprocess.Popen(args, stdout=out, stderr=out, env=env)
+            with open(UXPLAY_PID, "w") as f:
+                f.write(str(procs["mirror"].pid))
             rc = procs["mirror"].wait()
             if stop.is_set():
                 break
@@ -993,6 +1031,30 @@ def agent_done():
     print("ok: session ended; control is back with the user")
 
 
+def app_cmd(args):
+    """`phoneuse app pair`: make a one-time pairing link and open it on the phone,
+    which asks to open it in the PhoneUse app. `--print` only prints the link."""
+    import json
+    if args[:1] != ["pair"]:
+        die("usage: phoneuse app pair [--print]")
+    req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/companion/pair", data=b"{}",
+                                 method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            link = json.loads(r.read())["link"]
+    except OSError as e:
+        die(f"The browser mirror didn't answer ({e}). Is `phoneuse up` running?")
+    if "--print" in args:
+        return print(link)
+    h = hid()
+    open_app(h, "Safari")
+    step(h, "key l gui")  # the address bar
+    h.cmd("type " + link)
+    step(h, "key enter", quiet=0.3)
+    print("Opened the pairing link on the phone. If Safari asks, tap Open to open it in PhoneUse. "
+          "The link works once, for 10 minutes.")
+
+
 def unlock_cmd():
     """Ask the owner to unlock the phone with the saved passcode. Waits for their
     answer (up to 2 minutes); the passcode never passes through here."""
@@ -1015,6 +1077,8 @@ def main():
         print(__doc__)
         return
     cmd, args = a[0], a[1:]
+    global ACTION
+    ACTION = describe(cmd, " ".join(x for x in args if x != "--text"))
     # `--text` at the end of an action: print the screen as text afterwards, saving
     # a second call (only as the last argument, so `type` can still type it).
     then_text = bool(args) and args[-1] == "--text" and cmd not in ("text", "find", "screenshot")
@@ -1031,6 +1095,8 @@ def main():
         return
     if cmd == "up":
         return up()
+    if cmd == "app":  # app pair: pair the companion app (docs/COMPANION.md)
+        return app_cmd(args)
     if cmd == "status":
         return status()
     if cmd == "unlock":

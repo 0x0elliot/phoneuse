@@ -62,6 +62,8 @@ def tool(fn):
     @functools.wraps(fn)
     def run(*a, **kw):
         _reload_changed()
+        what = kw.get("name") or kw.get("target") or kw.get("combo") or kw.get("to") or ""
+        cli.ACTION = cli.describe(fn.__name__, what)
         return fn(*a, **kw)
     return server.tool(structured_output=False)(run)
 

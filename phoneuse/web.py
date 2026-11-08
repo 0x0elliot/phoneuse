@@ -102,6 +102,10 @@ class Mirror:
         self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
         self.hover_at = PARK  # where the page's pointer last was (screen fractions)
+        self.agent_action = ""  # what the agent is doing, for the companion app's Live Activity
+        self.agent_steps = 0  # actions in this agent session
+        self.agent_started = 0.0  # when this agent session started
+        self.unlocks = None
 
     def get_hid(self):
         if self.hid is None:
@@ -188,12 +192,16 @@ class Mirror:
             return "paused"
         return "driving" if time.time() < self.agent_until else "idle"
 
-    def agent_acts(self):
+    def agent_acts(self, action=""):
         """Called before every agent action (CLI or MCP). False while the user has
         taken over: the agent must stop."""
         if self.taken_over:
             return False
         was = self.agent()
+        if was != "driving":
+            self.agent_started, self.agent_steps = time.time(), 0
+        self.agent_steps += 1
+        self.agent_action = action or self.agent_action
         self.agent_until = time.time() + self.AGENT_IDLE
         self.last_input_at = time.time()
         if was != "driving":
@@ -363,7 +371,8 @@ class UnlockRequests:
 
     def __init__(self, mirror):
         self.mirror = mirror
-        self.pending = None  # {"id", "event", "approved", "notice"}
+        self.pending = None  # {"id", "event", "approved", "notice", "since"}
+        self.companion = None
 
     def broadcast(self, msg):
         for tab in list(self.mirror.tabs):
@@ -376,8 +385,11 @@ class UnlockRequests:
             return web.json_response({"result": "no passcode saved: the owner can save one in the browser "
                                                 "mirror's settings, or unlock the phone themselves"}, status=409)
         rid = secrets.token_hex(8)
-        p = self.pending = {"id": rid, "event": asyncio.Event(), "approved": False, "notice": None}
+        p = self.pending = {"id": rid, "event": asyncio.Event(), "approved": False, "notice": None,
+                            "since": time.time()}
         self.broadcast({"type": "unlock-request", "id": rid})
+        if self.companion:  # the companion app's notification, with Unlock and Deny
+            asyncio.get_running_loop().run_in_executor(None, self.companion.push_unlock, rid)
         asyncio.ensure_future(self._notify(p))
         log("unlock requested; waiting for the owner")
         try:
@@ -434,7 +446,7 @@ class UnlockRequests:
 
 
 def app(mirror):
-    unlocks = UnlockRequests(mirror)
+    unlocks = mirror.unlocks = UnlockRequests(mirror)
 
     async def page(_req):
         return web.FileResponse(PAGE, headers={"Cache-Control": "no-cache"})
@@ -487,9 +499,13 @@ def app(mirror):
             log("tab left;", len(mirror.tabs), "open")
         return sock
 
-    async def agent_act(_req):
+    async def agent_act(req):
         # The CLI and MCP server call this before every agent action.
-        if mirror.agent_acts():
+        try:
+            action = str((await req.json()).get("action", ""))[:80]
+        except ValueError:
+            action = ""
+        if mirror.agent_acts(action):
             return web.json_response({"ok": True})
         return web.json_response({"ok": False, "result": "The user took over the phone. Stop and wait; "
                                   "continue only when they tell you to (they resume you on the page)."},
@@ -540,6 +556,14 @@ def app(mirror):
     from .bridge_web import BridgeRoutes
     BridgeRoutes(same_origin).add(a)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
+
+    async def companion_pair(req):
+        # `phoneuse app pair`: a one-time link that pairs the companion app.
+        if req.headers.get("Origin") and not same_origin(req):
+            return web.Response(status=403)
+        from . import companion
+        return web.json_response({"link": await asyncio.get_running_loop().run_in_executor(None, companion.new_pairing)})
+    a.router.add_post("/api/companion/pair", companion_pair)
     return a
 
 
@@ -557,6 +581,12 @@ def main():
         await web.TCPSite(runner, "127.0.0.1", PORT).start()
         log(f"browser mirror on http://localhost:{PORT}")
         asyncio.ensure_future(mirror.keep_awake())
+        try:  # the companion app's API on the local network (companion.py)
+            from .companion import Companion
+            c = mirror.unlocks.companion = Companion(mirror, mirror.unlocks)
+            await c.start()
+        except OSError as e:
+            log("companion API off:", e)
         await mirror.watch()
 
     try:

@@ -31,7 +31,7 @@ phoneuse uses two features that every iPhone has: Screen Mirroring and Assistive
 
 The phone and the PC must be on the same network. If you run a firewall, open TCP
 ports 7000, 7001 and 7100 and UDP ports 6000, 6001 and 7011 for AirPlay, and UDP
-port 47700 for the bridge.
+port 47700 for the bridge. The companion app needs TCP port 8778.
 
 ## Setup
 
