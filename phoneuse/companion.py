@@ -29,6 +29,9 @@ STORE = os.path.join(os.path.dirname(config_path()), "companion.json")
 HEARTBEAT = 1.0  # seconds between Live Activity refreshes while an agent drives: each one is an animation frame
 PHASE_HOLD = 4.0  # seconds a driving phase must last before the Live Activity's icon changes to it
 START_RETRY = 600  # seconds between Live Activity start pushes to a device that sent no activity token back
+MIRROR_GONE = 90  # seconds mirroring must stay off (not a stall or a sleeping screen) before the activity ends
+WARN_HOLD = 3  # bridge checks (5 s apart) a warning, or its all-clear, must hold before it shows
+WARN_ALERT_EVERY = 1800  # seconds between sounded alerts for the same bridge warning
 AUDIO_OFF = os.path.join(os.path.dirname(config_path()), "audio-off")  # exists while the mirror's audio is off
 UXPLAY_PID = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.pid")  # written by `phoneuse up`
 PAIR_TTL = 600
@@ -160,6 +163,9 @@ class Companion:
         self._phase_seen = self._phase_shown = None
         self._phase_since = 0.0
         self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
+        self.had_activity = {}  # device id -> True once it had an activity in this mirroring session
+        self._off_since = 0.0  # when mirroring stopped, while it is off
+        self.warned_at = {}  # bridge warning title -> when its alert last sounded
         self._mirror_since = 0.0
 
     # ---- auth ----
@@ -491,7 +497,13 @@ class Companion:
         """(state, phase, action, steps, request id), or None while the phone doesn't mirror."""
         m = self.mirror
         if not m.live():
+            now = time.time()
+            self._off_since = self._off_since or now
+            if self.sent and now - self._off_since < MIRROR_GONE:
+                return self.sent  # a stall or the screen sleeping: leave the activity as it is
+            self.had_activity.clear()  # mirroring ended: the next session starts a new activity
             return None
+        self._off_since = 0
         p = m.sessions.pending if m.sessions else None
         if p:
             return ("asking", "asking", p["action"] or "Using the phone", 0, p["id"], p.get("deadline"))
@@ -506,9 +518,10 @@ class Companion:
         return ("idle", "idle", "", 0, "")
 
     async def watch_bridge(self):
-        """Check the bridge every 5 s for the Live Activity's warning. A warning shows only
-        after it has held for two checks in a row, and clears at once."""
-        pending = None
+        """Check the bridge every 5 s for the Live Activity's warning. A warning shows, and
+        clears, only after it has held for WARN_HOLD checks in a row, so a signal hovering
+        near a threshold doesn't flip the activity back and forth."""
+        seen, count = None, 0
         while True:
             await asyncio.sleep(5)
             b = bridge.saved()
@@ -523,15 +536,19 @@ class Companion:
                 except Exception:
                     return {}
             h = bridge_health(await self.run(ask), b.get("use", True))
-            w = h["warning"]
-            if w and w != (self.health or {}).get("warning"):
-                if pending != w:  # first sighting: wait for the next check
-                    pending = w
-                    continue
-                log("bridge warning:", w["title"])
-            elif not w and (self.health or {}).get("warning"):
-                log("bridge warning cleared")
-            pending = None
+            w, shown = h["warning"], (self.health or {}).get("warning")
+            if (w or {}).get("title") == (shown or {}).get("title"):
+                seen, count = None, 0
+                self.health = h
+                continue
+            key = (w or {}).get("title")
+            seen, count = key, (count + 1 if seen == key else 1)
+            if count < WARN_HOLD:
+                if self.health:  # keep the signal bars fresh; only the warning waits
+                    self.health = dict(h, warning=shown)
+                continue
+            log("bridge warning:", w["title"]) if w else log("bridge warning cleared")
+            seen, count = None, 0
             self.health = h
 
     def _steady_phase(self, phase):
@@ -551,7 +568,8 @@ class Companion:
         if not want:
             return False
         now = time.time()
-        return any(not (dev.get("activity") or {}).get("token") and now - self.start_tried.get(i, 0) > START_RETRY
+        return any(not (dev.get("activity") or {}).get("token") and not self.had_activity.get(i)
+                   and now - self.start_tried.get(i, 0) > START_RETRY
                    for i, dev in self._devices_by_id().items() if dev.get("push_to_start"))
 
     def _devices_by_id(self):
@@ -577,7 +595,9 @@ class Companion:
             dl = want[5] if len(want) > 5 else None
             alert = {"title": f"Agent taking control in {round(dl - time.time())} s" if dl else "Agent requests control",
                      "body": want[2], "sound": "default"}
-        elif want and want[1] == "warning" and (not before or before[1] != "warning"):
+        elif (want and want[1] == "warning" and (not before or before[1] != "warning")
+              and time.time() - self.warned_at.get(want[2], 0) > WARN_ALERT_EVERY):
+            self.warned_at[want[2]] = time.time()
             alert = {"title": want[2], "body": want[6], "sound": "default"}  # the bridge needs the owner
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
@@ -592,7 +612,10 @@ class Companion:
             if want and not act.get("token"):
                 # one start, then wait for the app to send the new activity's token: starting
                 # again sooner could leave two activities on the phone
-                if not dev.get("push_to_start") or time.time() - self.start_tried.get(i, 0) < START_RETRY:
+                # and never again in this mirroring session once the phone had one: Apple makes
+                # every start an alert, and the owner may have swiped the activity away
+                if (not dev.get("push_to_start") or self.had_activity.get(i)
+                        or time.time() - self.start_tried.get(i, 0) < START_RETRY):
                     continue
                 self.start_tried[i] = time.time()
                 aps.update({"event": "start", "content-state": content(want),
@@ -600,6 +623,7 @@ class Companion:
                             "alert": alert or {"title": "Phone Use", "body": "Mirroring to " + pc_name()}})
                 r = self._send(dev, "push_to_start", dev["push_to_start"], {"aps": aps}, topic, "liveactivity")
             elif act.get("token"):
+                self.had_activity[i] = True
                 if want:
                     aps.update({"event": "update", "content-state": content(want)})
                     if alert:

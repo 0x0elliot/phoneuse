@@ -92,9 +92,10 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 bridge measures it every 2 s; firmware 0.2.1 and later). `bridge.warning` is `null` or `{"title", "detail"}`:
 "Bridge is offline" (check power and Wi-Fi), "Bridge can't reach your iPhone" (move it closer, or check
 Bluetooth), "Bridge is too far from your iPhone" (move it closer), or "Bridge's Wi-Fi is weak" (move it closer to
-your router). While the owner is in control and a warning holds for two checks (5 s apart), the Live Activity
-shows it: state `idle`, phase `warning`, `action` the title and `detail` the second line, with an alert the first
-time.
+your router). While the owner is in control and a warning holds for three checks (5 s apart), the Live Activity
+shows it: state `idle`, phase `warning`, `action` the title and `detail` the second line. A warning clears only
+after three clear checks, so a signal near a threshold doesn't flip it back and forth, and the alert for a given
+warning sounds at most once every 30 minutes.
 
 ## Agent control
 
@@ -170,12 +171,15 @@ ProgressView) don't move in the compact Dynamic Island, so these frames are what
 look per `state`, uses `phase` only while driving, and fills in any missing field, so a payload without one still
 updates the activity.
 
-The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends when mirroring stops.
+The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends once mirroring has been
+off for 90 s (a stalled picture or a sleeping screen leaves it as it is).
 `idle` means the owner is in control. `asking` means an agent waits for the owner's answer to a session request:
 `requestId` is the request's id, and the activity shows Allow and Deny buttons that call `POST /v1/session/answer`;
 the update that enters `asking` carries an alert, so the Dynamic Island expands. `driving` means the agent uses
 the phone, and `paused` that the owner took over. The PC starts the activity by push only when the app hasn't sent
-a token for a live one, and at most once every 10 minutes per device; the app also starts it itself (the same
+a token for a live one, at most once every 10 minutes per device, and never again in a mirroring session once the
+device had an activity in it: Apple makes every start push an alert, and an activity the owner swiped away stays
+gone until the next session; the app also starts it itself (the same
 attributes and content) when it opens while the PC mirrors and no activity is running.
 
 `phase` says what the agent is doing at the moment: `acting` while phoneuse sends a tap, a swipe or keys to the
