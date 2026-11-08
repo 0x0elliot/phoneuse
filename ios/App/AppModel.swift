@@ -245,11 +245,17 @@ final class AppModel: ObservableObject {
     #if DEBUG
     /// Launched with -PUDemoActivity (simulator checks): a driving activity with no PC, to watch its animation.
     func startDemoActivityIfAsked() {
-        guard ProcessInfo.processInfo.arguments.contains("-PUDemoActivity") else { return }
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-PUDemoActivity") || args.contains("-PUDemoAsking") else { return }
         let now = Date().timeIntervalSince1970
-        let state = AgentActivityAttributes.ContentState(state: "driving", phase: "thinking", requestId: nil,
+        var state = AgentActivityAttributes.ContentState(state: "driving", phase: "thinking", requestId: nil,
                                                          action: "Opening Settings", steps: 3, startedAt: now - 5,
                                                          updatedAt: now)
+        if args.contains("-PUDemoAsking") {
+            state = .init(state: "asking", phase: "asking", requestId: "demo", action: "Pressing escape", steps: 0,
+                          startedAt: now, updatedAt: now)
+            state.deadline = now + 30
+        }
         _ = try? Activity.request(attributes: AgentActivityAttributes(pcName: "demo"),
                                   content: ActivityContent(state: state, staleDate: nil), pushType: nil)
     }

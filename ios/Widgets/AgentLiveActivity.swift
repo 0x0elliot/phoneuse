@@ -32,7 +32,7 @@ struct AgentLiveActivity: Widget {
             let look = Look(s)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    StateIcon(state: s, size: 36)
+                    if look != .asking { StateIcon(state: s, size: 36) }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     switch look {
@@ -41,16 +41,15 @@ struct AgentLiveActivity: Widget {
                             Text(steps).font(.caption).monospacedDigit()
                                 .contentTransition(.identity).foregroundStyle(.secondary)
                         }
-                    case .idle, .asking:
+                    case .idle:
                         Text(context.attributes.pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    case .asking:
+                        EmptyView()
                     }
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    VStack(spacing: 2) {
-                        if look == .asking, let deadline = s.deadlineDate {
-                            CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
-                            Text(s.action).font(.headline).lineLimit(1)
-                        } else {
+                    if look != .asking {
+                        VStack(spacing: 2) {
                             Text(look.title(s)).font(.caption).foregroundStyle(look.color(s))
                             if look != .idle {
                                 Text(s.action).font(.headline).lineLimit(1)
@@ -61,7 +60,7 @@ struct AgentLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     switch look {
                     case .idle: EmptyView()
-                    case .asking: AnswerButtons(requestId: s.requestId ?? "", countdown: s.deadlineDate != nil)
+                    case .asking: AskingContent(state: s).padding(.horizontal, 4).padding(.bottom, 4)
                     case .driving:
                         HStack {
                             Text(timerInterval: s.startDate...Date.distantFuture, countsDown: false)
@@ -81,7 +80,7 @@ struct AgentLiveActivity: Widget {
                 case .asking:
                     if let deadline = s.deadlineDate {
                         Text(timerInterval: Date()...deadline, countsDown: true)
-                            .font(.caption).monospacedDigit().foregroundStyle(.orange).frame(maxWidth: 40)
+                            .font(.body.monospacedDigit()).foregroundStyle(.orange).frame(maxWidth: 44)
                     }
                 case .driving, .paused:
                     if s.steps > 0 {
@@ -199,36 +198,37 @@ struct AskingView: View {
     var state: AgentActivityAttributes.ContentState
     var pcName: String
 
-    var body: some View {
-        let deadline = state.deadlineDate
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                StateIcon(state: state, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
-                    if let deadline {
-                        CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
-                        Text(state.action).font(.headline).lineLimit(2)
-                    } else {
-                        Text("Agent requests control").font(.caption).foregroundStyle(.orange)
-                        Text(state.action).font(.headline).lineLimit(2)
-                    }
-                    Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-            }
-            AnswerButtons(requestId: state.requestId ?? "", countdown: deadline != nil)
-        }
-    }
+    var body: some View { AskingContent(state: state) }
 }
 
-/// "Agent taking control in 0:08", counting down on its own.
-struct CountdownTitle: View {
-    var deadline: Date
+/// A request for control: the hand, one title line (with the countdown inline when there is one), the action under
+/// it, and two equal capsule buttons across the full width.
+struct AskingContent: View {
+    var state: AgentActivityAttributes.ContentState
 
     var body: some View {
-        HStack(spacing: 4) {
-            Text("Agent taking control in")
-            Text(timerInterval: Date()...deadline, countsDown: true).monospacedDigit()
+        let deadline = state.deadlineDate
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {  // the hand sits on the title's line
+                Image("pu.asking")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let deadline {
+                        (Text("Agent taking control in ") + Text(timerInterval: Date()...deadline, countsDown: true))
+                            .font(.headline.monospacedDigit())
+                            .lineLimit(1)
+                    } else {
+                        Text("Agent requests control").font(.headline).lineLimit(1)
+                    }
+                    if !state.action.isEmpty {
+                        Text(state.action).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            AnswerButtons(requestId: state.requestId ?? "", countdown: deadline != nil)
         }
     }
 }
@@ -283,18 +283,24 @@ struct AnswerButtons: View {
     var countdown = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button(intent: DenySessionIntent(requestId: requestId)) {
-                Label(countdown ? "Cancel" : "Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
+                Text(countdown ? "Cancel" : "Deny")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Capsule().fill(Color.white.opacity(0.2)))
             }
-            .tint(.red)
+            .buttonStyle(.plain)
             Button(intent: AllowSessionIntent(requestId: requestId)) {
-                Label(countdown ? "Allow now" : "Allow", systemImage: "checkmark").lineLimit(1)
-                    .frame(maxWidth: .infinity)
+                Text(countdown ? "Allow now" : "Allow")
+                    .font(.headline)
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(Capsule().fill(Color.orange))
             }
-            .tint(.green)
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.borderedProminent)
     }
 }
 
