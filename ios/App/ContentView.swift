@@ -494,56 +494,32 @@ struct RequestSheet: View {
     }
 }
 
-/// "Agent control": Instant, Delayed (a 5-30 s notice), or Approval.
+/// "Agent access" (Always / After a notice / Ask every time) and, for a notice, how long: two ordinary rows.
 struct StartModeRow: View {
     @EnvironmentObject var model: AppModel
     var session: PCState.Session
-    @State private var seconds: Double?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Agent control")
-                if model.busy.contains("sessionMode") { Spacer(); ProgressView() }
-            }
-            Picker("Agent control", selection: Binding(
-                get: { session.currentMode },
-                set: { mode in Task { await model.setSessionMode(mode) } }
-            )) {
-                Text("Instant").tag("auto")
-                Text("Delayed").tag("countdown")
-                Text("Approval").tag("ask")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityIdentifier("sessionMode")
-            if session.currentMode == "countdown" {
-                let shown = Int(seconds ?? Double(session.seconds ?? 10))
-                HStack {
-                    Text("Notice")
-                    Slider(value: Binding(get: { seconds ?? Double(session.seconds ?? 10) }, set: { seconds = $0 }),
-                           in: 5...30, step: 1) { editing in
-                        if !editing, let seconds {
-                            Task {
-                                await model.setSessionSeconds(Int(seconds))
-                                self.seconds = nil
-                            }
-                        }
-                    }
-                    .accessibilityIdentifier("sessionSeconds")
-                    Text("\(shown) s").monospacedDigit().frame(width: 40, alignment: .trailing)
-                }
-            }
-            Text(hint).font(.footnote).foregroundStyle(.secondary)
+        Picker("Agent access", selection: Binding(
+            get: { session.currentMode },
+            set: { mode in Task { await model.setSessionMode(mode) } }
+        )) {
+            Text("Always").tag("auto")
+            Text("After a notice").tag("countdown")
+            Text("Ask every time").tag("ask")
         }
-    }
-
-    private var hint: String {
-        switch session.currentMode {
-        case "countdown":
-            return "An agent takes control after a \(Int(seconds ?? Double(session.seconds ?? 10)))-second countdown, unless you cancel it."
-        case "ask": return "An agent takes control only with your approval."
-        default: return "An agent can take control at any time."
+        .pickerStyle(.menu)
+        .accessibilityIdentifier("sessionMode")
+        if session.currentMode == "countdown" {
+            let current = session.seconds ?? 10
+            Picker("Notice", selection: Binding(
+                get: { current },
+                set: { seconds in Task { await model.setSessionSeconds(seconds) } }
+            )) {
+                ForEach(Array(Set([5, 10, 15, 30, current])).sorted(), id: \.self) { Text("\($0) s").tag($0) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("sessionSeconds")
         }
     }
 }
