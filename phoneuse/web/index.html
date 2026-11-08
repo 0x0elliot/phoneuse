@@ -168,13 +168,13 @@
     </button>
   </div>
   <div class="group" id="startMode" style="margin-bottom: 14px">
-    <label class="item"><span class="grow">Agent access</span>
+    <label class="item"><span class="grow">Agent control</span>
       <select id="startModeSel" class="pick">
         <option value="auto">Always</option>
-        <option value="countdown">After a notice</option>
+        <option value="countdown">After a delay</option>
         <option value="ask">Ask every time</option>
       </select></label>
-    <label class="item" id="startSecondsRow" hidden><span class="grow">Notice</span>
+    <label class="item" id="startSecondsRow" hidden><span class="grow">Delay</span>
       <select id="startSecondsSel" class="pick">
         <option value="5">5 s</option><option value="10">10 s</option>
         <option value="15">15 s</option><option value="30">30 s</option>
@@ -667,7 +667,7 @@ const awakeSw = document.getElementById("awake");
 awakeSw.onclick = () => fetch("/api/awake", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ on: awakeSw.getAttribute("aria-checked") !== "true" }) });
 
-// Agent access: always, after a notice (a countdown the owner can cancel), or ask every time.
+// Agent control: always, after a delay (a countdown the owner can cancel), or ask every time.
 const modeSel = document.getElementById("startModeSel"), secsSel = document.getElementById("startSecondsSel");
 function showStart(st) {
   modeSel.value = st.mode;

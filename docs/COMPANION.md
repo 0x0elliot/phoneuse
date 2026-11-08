@@ -85,15 +85,15 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 
 `session.pending`, `unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
 
-## Agent access
+## Agent control
 
 One setting decides what happens when an agent's first action arrives (`session.mode`):
 
 | Mode | In the app | What happens |
 |---|---|---|
-| `auto` | Agent access: Always | The agent takes control at once. |
-| `countdown` | Agent access: After a notice (Notice: 5, 10, 15 or 30 s) | The agent takes control when the countdown runs out, unless you cancel. |
-| `ask` | Agent access: Ask every time | The agent waits for your Allow (up to 2 minutes). |
+| `auto` | Agent control: Always | The agent takes control at once. |
+| `countdown` | Agent control: After a delay (Delay: 5, 10, 15 or 30 s) | The agent takes control when the countdown runs out, unless you cancel. |
+| `ask` | Agent control: Ask every time | The agent waits for your Allow (up to 2 minutes). |
 
 In `countdown` and `ask`, the request reaches the Live Activity (state `asking`), the app, a desktop
 notification and the browser mirror. With a countdown, `pending.deadline` (and the Live Activity's `deadline`)
