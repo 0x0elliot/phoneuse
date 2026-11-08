@@ -246,6 +246,8 @@ class Tab:
             self.keys.modifier(int(msg["bit"]), bool(msg["down"]))
         elif t == "key":
             self.keys.key(int(msg["usage"]), bool(msg["down"]))
+        elif t == "consumer" and msg.get("key") in ("siri", "home", "search", "eject"):
+            self.keys.consumer(msg["key"], bool(msg["down"]))
 
     def close(self):
         try:

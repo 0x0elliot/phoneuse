@@ -272,6 +272,7 @@ class Keys:
         self.hid = hid
         self.mods = 0
         self.held = []
+        self.consumers = set()  # held consumer keys: siri, home, search, eject
 
     def modifier(self, bit, down):
         self.mods = self.mods | bit if down else self.mods & ~bit
@@ -286,10 +287,20 @@ class Keys:
             return
         self._send()
 
+    def consumer(self, name, down):
+        """Hold or let go of a consumer key (Siri, Home, Spotlight, Eject)."""
+        if down == (name in self.consumers):
+            return
+        (self.consumers.add if down else self.consumers.discard)(name)
+        self.hid().cmd(f"consumer {name} {'down' if down else 'up'}")
+
     def release_all(self):
         if self.mods or self.held:
             self.mods, self.held = 0, []
             self._send()
+        if self.consumers:
+            self.consumers.clear()
+            self.hid().cmd("consumer up")
 
     def _send(self):
         self.hid().cmd("k %d %s" % (self.mods, " ".join(str(c) for c in self.held[-6:])))

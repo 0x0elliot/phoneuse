@@ -49,10 +49,16 @@ REPORT_MAP = bytes.fromhex(
     # whether iOS will place the AssistiveTouch pointer at exact coordinates.
     + "05010902a10185030901a1000509190129031500250195037501810295017505810305010930093115002"
     "6ff7f751095028102c0c0"
-    # Report 4: consumer control, one bit: Eject. On iOS it shows or hides the
-    # on-screen keyboard while a hardware keyboard (this one) is connected.
-    + "050c0901a10185041500250175019501" "09b88102" "95078103c0"
+    # Report 4: consumer control, one bit per key (CONSUMER_KEYS, in this order).
+    + "050c0901a10185041500250175019501"
+    + "09b88102" "09cf8102" "09408102" "0a21028102"  # Eject, Voice Command, Menu, AC Search
+    + "95048103c0"
 )
+
+# Consumer keys, by bit of report 4. Eject shows or hides the on-screen keyboard while
+# a hardware keyboard (this one) is connected; Voice Command is the Siri key; Menu
+# goes home; AC Search opens Spotlight.
+CONSUMER_KEYS = {"eject": 0, "siri": 1, "home": 2, "search": 3}
 
 
 def log(*a):
@@ -90,6 +96,7 @@ class HID:
         self.intr = None
         self.peer = None
         self.buttons = 0
+        self.consumer_bits = 0
         self.lock = threading.Lock()
 
     @property
@@ -157,11 +164,21 @@ class HID:
             time.sleep(0.02)
 
     # keyboard
+    def consumer(self, name, hold=0.05):
+        """Press a consumer key (CONSUMER_KEYS) for `hold` seconds, then release it."""
+        self.consumer_set(name, True)
+        time.sleep(hold)
+        self.consumer_set(name, False)
+
+    def consumer_set(self, name, down):
+        """Hold or let go of one consumer key (None lets go of all of them)."""
+        bit = 1 << CONSUMER_KEYS[name] if name else 0xFF
+        self.consumer_bits = self.consumer_bits | bit if down else self.consumer_bits & ~bit
+        self.send(4, [self.consumer_bits])
+
     def eject(self):
         """Press and release Eject: toggles the iPhone's on-screen keyboard."""
-        self.send(4, [1])
-        time.sleep(0.05)
-        self.send(4, [0])
+        self.consumer("eject")
 
     def key(self, code, mods=0):
         self.send(1, [mods, 0, code, 0, 0, 0, 0, 0])
@@ -515,6 +532,8 @@ def passive(cmd, args):
             return (len(args) < 3 or int(args[2]) == 0) and (len(args) < 4 or int(args[3]) == 0)
         if cmd == "k":
             return int(args[0]) == 0 and not any(int(c) for c in args[1:])
+        if cmd == "consumer":
+            return args[-1:] == ["up"]
     except ValueError:
         return False
     return cmd in ("move", "corner", "up")
@@ -567,6 +586,18 @@ def run_command(line):
                 time.sleep(0.05)
     if cmd == "eject":
         hid.eject()
+        return "ok"
+    if cmd == "consumer":  # consumer NAME [HOLD_SECONDS | down | up]: siri, home, search, eject
+        if args == ["up"]:  # let go of every consumer key
+            hid.consumer_set(None, False)
+            return "ok"
+        if not args or args[0] not in CONSUMER_KEYS:
+            return "err consumer keys: " + ", ".join(CONSUMER_KEYS)
+        how = args[1] if len(args) > 1 else "0.05"
+        if how in ("down", "up"):
+            hid.consumer_set(args[0], how == "down")
+        else:
+            hid.consumer(args[0], float(how))
         return "ok"
     if cmd == "pair":
         secs = int(args[0]) if args else 120
