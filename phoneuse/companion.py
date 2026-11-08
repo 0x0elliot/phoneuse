@@ -241,6 +241,7 @@ class Companion:
     async def ask_setting(self, req):
         from .web import set_ask_before_session, ask_before_session
         set_ask_before_session(bool(req["json"].get("on")))
+        await self.run(self.mirror.sessions.sync_gate)
         return web.json_response({"on": ask_before_session()})
 
     async def passcode(self, req):

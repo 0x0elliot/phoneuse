@@ -893,13 +893,60 @@ def run_command(line):
     return "ok"
 
 
+# ---- the agent gate ----
+# With "ask before agent starts" on, an agent may send input only while the owner has
+# allowed its session. The gate is kept here, in the root daemon every tap and key
+# passes through, so no agent code (however old or buggy) can go around it. The
+# owner's own processes (the browser mirror and the mirror window, started by
+# `phoneuse up`) always pass, and only they may move the gate: the browser mirror
+# sends "gate open" / "gate closed" / "gate until <unix time>".
+OWNER_MODULES = ("phoneuse.web", "phoneuse.window")
+INPUT_COMMANDS = {"a", "m", "md", "k", "consumer", "eject", "move", "corner", "click", "down", "up", "scroll",
+                  "key", "type"}
+gate_until = [0.0]  # agents may send input while time.time() < this; closed until the browser mirror opens it
+
+
+def peer_is_owner(conn):
+    try:
+        pid = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))[0]
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            args = f.read().split(b"\0")
+        return any(args[i:i + 2] == [b"-m", m.encode()] for m in OWNER_MODULES for i in range(len(args)))
+    except OSError:
+        return False
+
+
+def gated(line, owner):
+    """None if the command may run; else the refusal."""
+    parts = line.strip().split(" ", 1)
+    cmd, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+    if cmd == "gate":
+        if not owner:
+            return "err only the browser mirror may change the agent gate"
+        a = rest.split()
+        if a[:1] == ["open"]:
+            gate_until[0] = float("inf")
+        elif a[:1] == ["closed"]:
+            gate_until[0] = 0.0
+        elif a[:1] == ["until"] and len(a) == 2:
+            gate_until[0] = float(a[1])
+        else:
+            return "err gate open | closed | until UNIX_TIME"
+        return "ok"
+    if cmd in INPUT_COMMANDS and not owner and time.time() >= gate_until[0]:
+        return ("err the owner hasn't allowed an agent session: nothing was sent to the phone. "
+                "Stop and ask the user")
+    return None
+
+
 def serve_client(conn):
+    owner = peer_is_owner(conn)
     with conn, conn.makefile("rw") as f:
         for line in f:
             if not line.strip():
                 continue
             try:
-                reply = run_command(line)
+                reply = gated(line, owner) or run_command(line)
             except Exception as e:
                 reply = f"err {e}"
             f.write(reply + "\n")

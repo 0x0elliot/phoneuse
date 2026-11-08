@@ -251,6 +251,8 @@ class Mirror:
         self.agent_until = 0.0
         if take and self.sessions:
             self.sessions.end()
+        elif self.sessions:
+            threading.Thread(target=self.sessions.sync_gate, daemon=True).start()
         self.broadcast_state()
 
     def broadcast_state(self):
@@ -515,6 +517,39 @@ class SessionRequests:
     def acted(self):
         if ask_before_session():
             self.allowed_until = time.time() + self.ASK_GAP
+        self.sync_gate()
+
+    # The HID daemon enforces the approval (its agent gate): agents' input is refused
+    # there unless this says the session is allowed. Its own connection, so a slow
+    # input command on the shared one never delays the gate.
+    _gate_hid = None
+    _gate_sent = None
+
+    def gate_value(self):
+        if self.mirror.taken_over:
+            return "closed"
+        if not ask_before_session():
+            return "open"
+        return f"until {self.allowed_until:.3f}" if self.allowed_until > time.time() else "closed"
+
+    def sync_gate(self, force=False):
+        v = self.gate_value()
+        if v == self._gate_sent and not force:
+            return
+        try:
+            if self._gate_hid is None:
+                self._gate_hid = Hid()
+            self._gate_hid.cmd("gate " + v)
+            self._gate_sent = v
+        except Exception as e:
+            self._gate_hid = None
+            log("couldn't set the agent gate in the HID daemon:", e)
+
+    async def keep_gate(self):
+        """Resend the gate now and then: the daemon starts closed after a restart."""
+        while True:
+            await asyncio.sleep(2.0)
+            await asyncio.get_running_loop().run_in_executor(None, self.sync_gate, True)
 
     def broadcast(self, msg):
         for tab in list(self.mirror.tabs):
@@ -551,6 +586,7 @@ class SessionRequests:
             log("agent session declined")
             return "The owner declined the agent session. Stop; don't retry unless the user asks you to."
         self.allowed_until = time.time() + self.ASK_GAP
+        await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)  # open before the agent hears yes
         return True
 
     def _close(self, p, why):
@@ -584,6 +620,7 @@ class SessionRequests:
         self.allowed_until = 0.0
         if self.pending:
             self._close(self.pending, "the agent ended its session")
+        threading.Thread(target=self.sync_gate, daemon=True).start()
 
     async def answer(self, req):
         if not same_origin(req):
@@ -597,6 +634,7 @@ class SessionRequests:
             if not same_origin(req):
                 return web.Response(status=403)
             set_ask_before_session(bool((await req.json()).get("on")))
+            await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)
         return web.json_response({"on": ask_before_session()})
 
     async def _notify(self, p):
@@ -771,6 +809,7 @@ def main():
         await web.TCPSite(runner, "127.0.0.1", PORT).start()
         log(f"browser mirror on http://localhost:{PORT}")
         asyncio.ensure_future(mirror.keep_awake())
+        asyncio.ensure_future(mirror.sessions.keep_gate())
         try:  # the companion app's API on the local network (companion.py)
             from .companion import Companion
             c = mirror.unlocks.companion = mirror.sessions.companion = Companion(mirror, mirror.unlocks)
