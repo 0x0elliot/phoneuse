@@ -33,7 +33,7 @@ the full list.
 
 ## MCP or CLI
 
-If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`, `cursor`,
+If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`, `cursor`, `calibrate`,
 `type_text`, `open_app`, `navigate`, `wait`, `unlock`, ...), use them. Every action
 returns, in the same call, frames from just after it (0.1, 0.4 and 0.8 s; frames
 that didn't change are dropped, so a still screen is one frame) plus the last
@@ -107,6 +107,7 @@ try is enough.
 | Keep the screen from locking | `phoneuse awake on` / `off` (a few-pixel pointer nudge each second while nobody uses the phone; also the page's settings) |
 | Does the pointer work? | `phoneuse cursor` (on / off / unknown). Taps and drags need AssistiveTouch on |
 | Turn the pointer on | `phoneuse cursor on`: holds the Siri key and asks out loud on this PC's speakers; the phone must be unlocked and in earshot |
+| Drags or scrolls fall short | `phoneuse calibrate` (~13 s of hovering, nothing tapped): measures this phone's pointer speed for drags. Runs by itself the first time a phone's pointer is on; rerun after changing Tracking Speed |
 | Where is the pointer | `phoneuse where` |
 
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read

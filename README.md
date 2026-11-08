@@ -60,7 +60,9 @@ attached: without it the signal can be too weak to pair reliably.
    - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
      pointer taps by itself when it rests). Once the phone is mirroring and
      paired, `phoneuse cursor on` can do the first part for you: it holds the
-     Siri key and asks Siri out loud, through this PC's speakers.
+     Siri key and asks Siri out loud, through this PC's speakers. The first time a
+     phone's pointer is on, phoneuse measures how far it moves (about 13 s of
+     hovering; `phoneuse calibrate` reruns it), since drags depend on that speed.
    - Optional, for the debugging tools: Accessibility → Accessories → Pointer
      Control colour **Orange**, large,
      with Automatically Hide Pointer off. `phoneuse where` and the telemetry tools

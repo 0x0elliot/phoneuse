@@ -239,6 +239,16 @@ def cursor(on: bool | None = None, look: Look = "strip") -> list:
 
 
 @server.tool(structured_output=False)
+def calibrate(look: Look = "strip") -> list:
+    """Measure how far the pointer moves on the mirroring phone (about 10 s of
+    hovering; nothing is tapped). Drags and swipes use the result. Runs by itself
+    the first time a phone's pointer is on; call it again after changing
+    AssistiveTouch's Tracking Speed."""
+    from . import calibrate as cal
+    return _act(lambda h: cal.calibrate(h, log=lambda *_: None), look)
+
+
+@server.tool(structured_output=False)
 def open_app(name: str, look: Look = "strip") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)

@@ -14,18 +14,43 @@ import bisect
 import threading
 import time
 
+from . import phones
 from .config import SCREEN_PT  # the phone screen in points (config: screen_points)
 TICK = 0.008  # one relative report per tick
 RAMP = 1.0  # no start-of-motion correction: touchlab shows requested distances land exactly
 
-# Points moved by one relative report of N units (8 ms pacing), measured.
-DRAG_PTS = [(1, 3.6), (2, 6.9), (3, 12.1), (4, 17.6), (5, 25.6), (6, 33.3), (8, 46.6),
-            (10, 62.1), (12, 76.3), (16, 104.1), (20, 141.8), (28, 199.7)]
+# Points moved by one relative report of N units (8 ms pacing), measured on the
+# iPhone 17 Pro. Other phones (and Tracking Speed settings) move farther or less
+# far: `phoneuse calibrate` measures the mirroring phone, and its table replaces
+# this one while that phone mirrors (phones.json).
+REF_PTS = [(1, 3.6), (2, 6.9), (3, 12.1), (4, 17.6), (5, 25.6), (6, 33.3), (8, 46.6),
+           (10, 62.1), (12, 76.3), (16, 104.1), (20, 141.8), (28, 199.7)]
+DRAG_PTS = REF_PTS
 _PTS = [p for _, p in DRAG_PTS]
+_stamp = None
+_checked = 0.0
+
+
+def refresh(force=False):
+    """Use the mirroring phone's calibration, if it has one (checked at most once a
+    second; long-running servers pick up a new phone or a new calibration)."""
+    global DRAG_PTS, _PTS, _stamp, _checked
+    now = time.time()
+    if not force and now - _checked < 1.0:
+        return
+    _checked = now
+    st = phones.stamp()
+    if st == _stamp and not force:
+        return
+    _stamp = st
+    table = phones.entry().get("drag_pts")
+    DRAG_PTS = [tuple(x) for x in table] if table else REF_PTS
+    _PTS = [p for _, p in DRAG_PTS]
 
 
 def units_for(points):
     """Report size (units, may be fractional) that moves `points` in one report."""
+    refresh()
     if points <= 0:
         return 0.0
     i = bisect.bisect_left(_PTS, points)
@@ -39,6 +64,7 @@ def units_for(points):
 
 def points_for(units):
     """Points moved by a report of `units` (inverse of units_for)."""
+    refresh()
     if units <= 0:
         return 0.0
     us = [u for u, _ in DRAG_PTS]
@@ -55,6 +81,7 @@ def whole_units(px, py):
     """Report (ux, uy) that moves at most (px, py) points: sizes round down, so the
     touch never gets ahead of the requested position and has to come back (the
     back-and-forth showed as a vibrating pointer during slow drags)."""
+    refresh()
     dist = (px * px + py * py) ** 0.5
     if dist < DRAG_PTS[0][1]:  # less than one unit's worth so far: wait
         return 0, 0

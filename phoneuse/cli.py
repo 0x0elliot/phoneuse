@@ -31,6 +31,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                 while nobody uses the phone (also in the page's settings)
   phoneuse cursor [on|off]      whether the pointer works (AssistiveTouch); on/off asks
                                 Siri out loud on this PC's speakers to switch it
+  phoneuse calibrate            measure how far the pointer moves on this phone (~10 s;
+                                runs by itself the first time a phone's pointer is on)
   phoneuse where                debugging: where the pointer appears (needs Pointer
                                Control colour Orange)
 
@@ -59,7 +61,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import screen, touch
+from . import calibrate, phones, screen, touch
 from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
 from .hidclient import Hid
 
@@ -96,10 +98,40 @@ def follow_sender(stream):
             if not m:
                 continue
             print(time.strftime("%H:%M:%S"), f"mirroring: {m[1]} ({m[2]})", flush=True)
+            phones.seen(m[1], m[2])
             try:
                 print(time.strftime("%H:%M:%S"), Hid().cmd("mirror " + m[1]), flush=True)
             except Exception as e:
                 print(time.strftime("%H:%M:%S"), f"could not tell the HID daemon: {e}", flush=True)
+            if not phones.entry(m[1]).get("drag_pts"):
+                threading.Thread(target=calibrate_when_ready, args=(m[1],), daemon=True).start()
+
+
+def calibrate_when_ready(name, wait=180):
+    """A phone without a calibration started mirroring: once its Bluetooth link is
+    up, it is unlocked and its pointer is on, measure it (about 10 s, hovering
+    only). If the pointer is off, `phoneuse cursor on` calibrates after switching it."""
+    until = time.time() + wait
+    while time.time() < until:
+        time.sleep(5)
+        if phones.current() != name or phones.entry(name).get("drag_pts"):
+            return
+        try:
+            st = Hid().cmd("status")
+            from . import unlock
+            if "connected=True" not in st or not screen.mirror_live() or unlock.locked(screen_text):
+                continue
+            h = hid()
+            state = cursor_state(h)
+            if state == "unknown":
+                continue
+            if state == "on":
+                print(time.strftime("%H:%M:%S"), calibrate.calibrate(h, name, log=lambda *_: None), flush=True)
+            agent_done()
+            return
+        except Exception as e:
+            print(time.strftime("%H:%M:%S"), f"calibration skipped: {e}", flush=True)
+            return
 
 
 def die(msg):
@@ -447,6 +479,8 @@ def cursor_set(h, on):
             time.sleep(1.0)
             state = cursor_state(h)
             if state == want:
+                if on and not phones.entry().get("drag_pts"):  # first time on: measure it
+                    return f"cursor {state}; " + calibrate.calibrate(h)
                 return f"cursor {state}"
     return (f"cursor {state} (wanted {want}): Siri didn't switch it. Check that the phone "
             "is near this PC's speakers and their volume is up, then try again.")
@@ -723,7 +757,7 @@ def up():
     def keep_web():
         # The browser mirror (web.py), on localhost only. Restarts when its code
         # changes: it rejoins the hub, so the phone keeps mirroring.
-        supervise("web", "browser mirror", ["web.py", "pointer.py", "unlock.py", "screen.py"])
+        supervise("web", "browser mirror", ["web.py", "pointer.py", "touch.py", "phones.py", "unlock.py", "screen.py"])
     threading.Thread(target=keep_web, daemon=True).start()
 
     def keep_mirror():
@@ -917,6 +951,8 @@ def main():
             print(cursor_set(h, args[0] == "on"))
         else:
             die("usage: phoneuse cursor [on|off]")
+    elif cmd == "calibrate":  # measure the mirroring phone's pointer (drags use it)
+        print(calibrate.calibrate(h))
     elif cmd == "tap-on":
         print(tap_on(h, " ".join(args)))
     elif cmd == "where":
