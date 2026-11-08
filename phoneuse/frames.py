@@ -12,6 +12,9 @@ request:
                with N, first up to C seconds (default 0.6) for a change after N;
                the answer's reacted= says how long that change took ("-": none)
   react N [L]  wait up to L seconds (default 3) for the first change after N
+  lag          "ok lag=S at=EPOCH" (or "lag=-"): how far the picture trails the phone,
+               measured once a minute from when the status-bar clock changes (the
+               smaller of the last two minutes, so a single late change doesn't count)
   shot         PNG of the current picture (2 px per phone point):
                "ok LENGTH\\n" + bytes
 """
@@ -34,6 +37,10 @@ from .config import FRAMES_SOCKET, SCREEN_PT, decoder  # noqa: E402
 DYNAMIC_AFTER = 1.0  # a region moving continuously this long (s) is video/animation: ignored
 AMBIENT_AFTER = 0.4  # after this long (s), only big motion keeps settle waiting
 BIG = 0.05  # a change of at least this share of the picture is big (a page, a scroll)
+# The status-bar clock (top left, as fractions of the picture): it changes at each minute
+# boundary, so the time its change arrives after the boundary is the picture's lag.
+CLOCK = (0.015, 0.05, 0.05, 0.30)  # top, bottom, left, right
+CLOCK_WINDOW = 30.0  # s after a boundary a clock change still counts as that minute's
 
 
 def log(*a):
@@ -58,6 +65,10 @@ class Frames:
         self.reacted = None
         self.last_move = self.moving_since = None  # (time, change vs last counted frame, change vs previous frame)
         self.shot_lock = threading.Lock()
+        self.clock = None  # the clock's pixels in the last frame
+        self.clock_moved_at = 0.0  # when they last changed
+        self.lag, self.lag_at, self.lag_minute = None, 0.0, 0  # the last lag measurement
+        self.lags = [0.0]  # recent minutes' measurements: lag reports the smaller of the last two
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
         # System memory: NVDEC's own CUDA surfaces get reused while we hold the last one.
         download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
@@ -104,6 +115,8 @@ class Frames:
                 stride, h, w = vi.stride[0], vi.height, vi.width
                 y = np.frombuffer(m.data, np.uint8, count=stride * h).reshape(h, stride)
                 thumb = y[::16, :w:16].astype(np.int16)
+                t, b, l, r = CLOCK
+                clock = y[int(h * t):int(h * b):2, int(w * l):int(w * r):2].astype(np.int16)
             finally:
                 buf.unmap(m)
         except Exception:
@@ -121,6 +134,7 @@ class Frames:
         # (a playing video, an animated banner) is ignored: page transitions and
         # scroll flings finish well within that, video never does.
         moved = np.abs(thumb - prev) > 12
+        self._clock(clock, now, float(moved.mean()))
         paused = now - self.last_move > 0.6  # pixels in a video pause now and then
         self.moving_since[moved & paused] = now
         self.last_move[moved] = now
@@ -146,6 +160,25 @@ class Frames:
                 self.big_at = now
             return True
         return False
+
+    def _clock(self, clock, now, moved):
+        """Measure the lag: the first change of the clock's pixels after a minute boundary,
+        on a frame where little else changed (a page sliding in changes the clock area
+        too), and only when the clock area was still for 5 s before the boundary."""
+        prev, self.clock = self.clock, clock
+        if prev is None or prev.shape != clock.shape:
+            return
+        if float((np.abs(clock - prev) > 40).mean()) < 0.01:
+            return
+        minute = round(now / 60) * 60 if now % 60 > 58 else int(now // 60) * 60  # a phone clock a bit ahead flips early
+        quiet_before = self.clock_moved_at < minute - 5
+        self.clock_moved_at = now
+        if (now - minute < CLOCK_WINDOW and minute != self.lag_minute and quiet_before and moved < 0.02):
+            self.lags = (self.lags + [max(0.0, now - minute)])[-2:]
+            # one late flip can be a fluke; a lag that holds shows in two minutes in a row
+            self.lag, self.lag_at, self.lag_minute = min(self.lags), now, minute
+            if self.lag > 1.5:
+                log(f"the picture is {self.lag:.1f} s behind the phone")
 
     def settle(self, since=None, change=0.6, quiet=0.1, limit=3.0):
         """Wait until the picture is still. Measured (history, PHONEUSE_STEPLOG):
@@ -256,6 +289,9 @@ class Frames:
                         import json
                         t0 = float(arg or 0)
                         conn.sendall((json.dumps([h for h in self.history if h[0] >= t0]) + "\n").encode())
+                    elif cmd == "lag":
+                        fresh = self.lag is not None and time.time() - self.lag_at < 150 and self.last is not None
+                        conn.sendall((f"ok lag={self.lag:.2f} at={self.lag_at:.0f}\n" if fresh else "ok lag=-\n").encode())
                     elif cmd == "shot":
                         png = self.screenshot()
                         conn.sendall(b"err not mirroring\n" if png is None else f"ok {len(png)}\n".encode() + png)
