@@ -202,8 +202,9 @@ class Companion:
                       "steps": m.agent_steps},
             "awake": m.awake,
             "audio": {"on": not os.path.exists(AUDIO_OFF), "needs_remirror": self.needs_remirror()},
-            "session": {"ask": os.path.exists(self._ask_file()),
-                        "pending": ({"id": sp["id"], "since": int(sp["since"]), "action": sp["action"]}
+            "session": {**self._start(),
+                        "pending": ({"id": sp["id"], "since": int(sp["since"]), "action": sp["action"],
+                                     "mode": sp.get("mode"), "deadline": sp.get("deadline")}
                                     if (sp := self.mirror.sessions.pending) else None)},
             "unlock": {"passcode_saved": await self.run(unlock.saved),
                        "pending": {"id": p["id"], "since": int(p.get("since", 0))} if p else None},
@@ -241,11 +242,23 @@ class Companion:
             return web.json_response({"error": "That request is over."}, status=409)
         return web.json_response({"ok": True})
 
+    @staticmethod
+    def _start():
+        """When an agent starts: {"ask": bool (older apps), "mode", "seconds"}."""
+        from .web import start_setting
+        st = start_setting()
+        return {"ask": st["mode"] != "auto", **st}
+
     async def ask_setting(self, req):
-        from .web import set_ask_before_session, ask_before_session
-        set_ask_before_session(bool(req["json"].get("on")))
+        # {"mode": auto | countdown | ask, "seconds": 5..30}, or the older {"on": bool}
+        from .web import set_ask_before_session, set_start_setting
+        b = req["json"]
+        if "mode" in b or "seconds" in b:
+            set_start_setting(b.get("mode"), b.get("seconds"))
+        else:
+            set_ask_before_session(bool(b.get("on")))
         await self.run(self.mirror.sessions.sync_gate)
-        return web.json_response({"on": ask_before_session()})
+        return web.json_response(self._start())
 
     async def passcode(self, req):
         try:
@@ -383,8 +396,11 @@ class Companion:
             return
         for dev in self._devices():
             if dev.get("device") and not (dev.get("activity") or {}).get("token"):
-                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Let agent use your phone?",
-                                                                 "body": f"Agent wants to start: {action or 'using the phone'}."},
+                p = self.mirror.sessions.pending or {}
+                title = (f"Agent starts in {round(p['deadline'] - time.time())} s" if p.get("deadline")
+                         else "Agent wants control of your iPhone")
+                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": title,
+                                                                 "body": f"First step: {action or 'using the phone'}"},
                                                        "category": "SESSION", "sound": "default",
                                                        "interruption-level": "time-sensitive"},
                                               "session_id": rid},
@@ -431,7 +447,7 @@ class Companion:
             return None
         p = m.sessions.pending if m.sessions else None
         if p:
-            return ("asking", "asking", p["action"] or "Using the phone", 0, p["id"])
+            return ("asking", "asking", p["action"] or "Using the phone", 0, p["id"], p.get("deadline"))
         a = m.agent()
         if a == "driving":
             return ("driving", self._steady_phase(m.current_phase()), m.agent_action or "Working", m.agent_steps, "")
@@ -469,14 +485,17 @@ class Companion:
 
         def content(st):
             return {"state": st[0], "phase": st[1], "action": st[2], "steps": st[3], "requestId": st[4],
+                    # asking with a countdown: when the agent starts unless the owner stops it
+                    "deadline": round(st[5]) if len(st) > 5 and st[5] else None,
                     "updatedAt": round(time.time(), 2),  # every refresh differs, and restarts the ring
                     "frame": self.frame,  # counts up with each refresh: the app draws one animation frame per value
                     "startedAt": int(m.agent_started if st[0] in ("driving", "paused") else self.mirror_since())}
 
         alert = None
         if want and want[0] == "asking" and (not before or before[0] != "asking"):
-            alert = {"title": "Agent wants control of your iPhone", "body": f"First step: {want[2]}",
-                     "sound": "default"}
+            dl = want[5] if len(want) > 5 else None
+            alert = {"title": f"Agent starts in {round(dl - time.time())} s" if dl else "Agent wants control of your iPhone",
+                     "body": f"First step: {want[2]}", "sound": "default"}
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
             # iOS ignores an update whose timestamp isn't newer than the last one it applied

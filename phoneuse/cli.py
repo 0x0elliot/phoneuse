@@ -215,7 +215,12 @@ def agent_turn():
                                  headers={"Content-Type": "application/json"})
     # With "ask before agent starts" on, the action may only go ahead after the server
     # says yes: every failure to get that answer stops the agent (fail closed).
-    asks = os.path.exists(os.path.join(os.path.dirname(config_path()), "ask-before-session"))
+    cfg_dir = os.path.dirname(config_path())
+    try:
+        with open(os.path.join(cfg_dir, "agent-start.json")) as f:
+            asks = json.load(f).get("mode", "auto") != "auto"
+    except (OSError, ValueError):
+        asks = os.path.exists(os.path.join(cfg_dir, "ask-before-session"))
     try:
         # up to 2 minutes when the owner asked to approve each agent session (SessionRequests in web.py)
         urllib.request.urlopen(req, timeout=130).close()

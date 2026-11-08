@@ -111,6 +111,13 @@
   #bridge .item input { letter-spacing: 0; }
   #settings { max-height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: none; }
   #settings::-webkit-scrollbar { display: none; }
+  .seg { padding: 4px; gap: 4px; }
+  .seg button { flex: 1; height: 30px; border-radius: 8px; font-size: 13px; color: rgba(235, 235, 245, .7); }
+  .seg button[aria-checked="true"] { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 600; }
+  #startSeconds { flex: 1; accent-color: #ff9f0a; letter-spacing: 0; }
+  .secs { width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
+  #startSecondsRow[hidden] { display: none; }
+  #startHint { margin: 7px 6px 14px; }
   /* an agent asks the owner (to start a session, or to unlock): a page-wide toast rising from the
      bottom of the window, over the phone, so it reads as this page asking, not the phone */
   #ask { position: fixed; z-index: 30; inset: 0; pointer-events: none; }
@@ -162,10 +169,20 @@
     <button class="item" id="awake" role="switch" aria-checked="false" style="width: 100%; text-align: left">
       <span class="grow">Keep screen awake</span><span class="sw"></span>
     </button>
-    <button class="item" id="askSession" role="switch" aria-checked="false" style="width: 100%; text-align: left">
-      <span class="grow">Ask before agent starts</span><span class="sw"></span>
-    </button>
   </div>
+  <div class="label">When an agent starts</div>
+  <div class="group" id="startMode">
+    <div class="item seg" role="radiogroup" aria-label="When an agent starts">
+      <button role="radio" data-mode="auto">Go ahead</button>
+      <button role="radio" data-mode="countdown">Wait</button>
+      <button role="radio" data-mode="ask">Ask me</button>
+    </div>
+    <div class="item" id="startSecondsRow" hidden>
+      <input type="range" id="startSeconds" min="5" max="30" step="1" value="10" aria-label="Seconds to wait">
+      <span id="startSecondsLabel" class="secs">10 s</span>
+    </div>
+  </div>
+  <p class="foot" id="startHint"></p>
   <div class="label">Bluetooth bridge</div>
   <div class="group" id="bridge"></div>
   <p class="foot" id="bridgeFoot" hidden></p>
@@ -377,7 +394,7 @@ function connect() {
     if (msg.type === "agent-action") return showAgentAction(msg);
     if (msg.type === "unlock-request") return showAsk(msg.id, "unlock");
     if (msg.type === "unlock-done") return showAsk(null, "unlock");
-    if (msg.type === "session-request") return showAsk(msg.id, "session", msg.action);
+    if (msg.type === "session-request") return showAsk(msg.id, "session", msg.action, msg.deadline);
     if (msg.type === "session-done") return showAsk(null, "session");
     if (msg.type !== "state") return;
     const wasLive = state.live;
@@ -595,20 +612,37 @@ const ICONS = {
   session: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>',
   unlock: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>',
 };
-function showAsk(id, kind, action) {
+let askTick = null;
+function showAsk(id, kind, action, deadline) {
   if (!id && kind !== askKind) return;  // the other request ended
   const fresh = id && id !== askId;
   askId = id; askKind = kind; ask.hidden = !id;
+  clearInterval(askTick);
   if (!id) return;
+  const title = document.getElementById("askTitle"), timer = document.getElementById("askTimer");
   document.getElementById("askIcon").innerHTML = ICONS[kind];
-  document.getElementById("askTitle").textContent = kind === "session"
-    ? "Agent wants control of your iPhone" : "Agent wants to unlock your iPhone";
-  document.getElementById("askText").textContent = kind === "session"
-    ? (action ? `First step: ${action}. Allow it to use the phone until it's done?` : "Allow it to use the phone until it's done?")
-    : "Allow it to enter your saved passcode once?";
-  document.getElementById("approve").textContent = kind === "session" ? "Allow" : "Unlock";
-  if (fresh) {  // restart the 2-minute countdown and the entrance
-    for (const el of [ask, ask.querySelector(".sheet"), document.getElementById("askTimer")]) { el.style.animation = "none"; void el.offsetWidth; el.style.animation = ""; }
+  const step = action ? `First step: ${action}.` : "";
+  if (kind === "session" && deadline) {  // countdown: the agent starts unless stopped
+    const tick = () => {
+      const left = Math.max(0, Math.ceil(deadline - Date.now() / 1000));
+      title.textContent = `Agent starts in ${left} s`;
+    };
+    tick();
+    askTick = setInterval(tick, 250);
+    document.getElementById("askText").textContent = `${step} Stop it if you're using the phone.`.trim();
+    document.getElementById("approve").textContent = "Start now";
+    document.getElementById("deny").textContent = "Stop";
+  } else {
+    title.textContent = kind === "session" ? "Agent wants control of your iPhone" : "Agent wants to unlock your iPhone";
+    document.getElementById("askText").textContent = kind === "session"
+      ? `${step} Allow it to use the phone until it's done?`.trim() : "Allow it to enter your saved passcode once?";
+    document.getElementById("approve").textContent = kind === "session" ? "Allow" : "Unlock";
+    document.getElementById("deny").textContent = "Deny";
+  }
+  if (fresh) {  // restart the countdown bar and the entrance
+    const secs = deadline ? Math.max(1, deadline - Date.now() / 1000) : 120;
+    for (const el of [ask, ask.querySelector(".sheet"), timer]) { el.style.animation = "none"; void el.offsetWidth; el.style.animation = ""; }
+    timer.style.animationDuration = `${secs}s`;
   }
 }
 async function answer(approve) {
@@ -637,14 +671,34 @@ const awakeSw = document.getElementById("awake");
 awakeSw.onclick = () => fetch("/api/awake", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ on: awakeSw.getAttribute("aria-checked") !== "true" }) });
 
-const askSw = document.getElementById("askSession");
-askSw.onclick = async () => {
-  const r = await fetch("/api/session/ask", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ on: askSw.getAttribute("aria-checked") !== "true" }) });
-  if (r.ok) askSw.setAttribute("aria-checked", (await r.json()).on);
+// When an agent starts: go ahead, wait N seconds (the owner can stop it), or ask.
+const START_HINTS = {
+  auto: "Agents take control right away.",
+  countdown: (n) => `You get ${n} seconds to stop an agent, then it starts.`,
+  ask: "Agents wait until you allow them.",
 };
+const startSeconds = document.getElementById("startSeconds");
+function showStart(st) {
+  for (const b of document.querySelectorAll("#startMode .seg button")) b.setAttribute("aria-checked", b.dataset.mode === st.mode);
+  startSeconds.value = st.seconds;
+  document.getElementById("startSecondsLabel").textContent = `${st.seconds} s`;
+  document.getElementById("startSecondsRow").hidden = st.mode !== "countdown";
+  const h = START_HINTS[st.mode];
+  document.getElementById("startHint").textContent = typeof h === "function" ? h(st.seconds) : h;
+}
+async function setStart(body) {
+  const r = await fetch("/api/session/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify(body) });
+  if (r.ok) showStart(await r.json());
+}
+for (const b of document.querySelectorAll("#startMode .seg button")) b.onclick = () => setStart({ mode: b.dataset.mode });
+startSeconds.oninput = () => {
+  document.getElementById("startSecondsLabel").textContent = `${startSeconds.value} s`;
+  document.getElementById("startHint").textContent = START_HINTS.countdown(startSeconds.value);
+};
+startSeconds.onchange = () => setStart({ seconds: Number(startSeconds.value) });
 function loadAskSetting() {
-  fetch("/api/session/ask").then((r) => r.json()).then((j) => askSw.setAttribute("aria-checked", j.on)).catch(() => {});
+  fetch("/api/session/ask").then((r) => r.json()).then(showStart).catch(() => {});
 }
 loadAskSetting();
 document.getElementById("gear").addEventListener("click", loadAskSetting);  // the app may have changed it

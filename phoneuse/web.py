@@ -506,18 +506,43 @@ class UnlockRequests:
         return web.json_response({"ok": True})
 
 
-ASK_FILE = os.path.join(os.path.dirname(config_path()), "ask-before-session")  # exists: ask before each agent session
+ASK_FILE = os.path.join(os.path.dirname(config_path()), "ask-before-session")  # older setting: "ask"
+START_FILE = os.path.join(os.path.dirname(config_path()), "agent-start.json")
+START_MODES = ("auto", "countdown", "ask")  # go ahead / wait N s (then start) / ask me (wait for Allow)
+
+
+def start_setting():
+    """When an agent starts: {"mode": auto | countdown | ask, "seconds": 5..30}."""
+    try:
+        with open(START_FILE) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        d = {"mode": "ask" if os.path.exists(ASK_FILE) else "auto"}
+    mode = d.get("mode") if d.get("mode") in START_MODES else "auto"
+    seconds = int(min(30, max(5, d.get("seconds", 10))))
+    return {"mode": mode, "seconds": seconds}
+
+
+def set_start_setting(mode=None, seconds=None):
+    cur = start_setting()
+    if mode in START_MODES:
+        cur["mode"] = mode
+    if seconds is not None:
+        cur["seconds"] = int(min(30, max(5, float(seconds))))
+    with open(START_FILE, "w") as f:
+        json.dump(cur, f)
+    if os.path.exists(ASK_FILE):
+        os.remove(ASK_FILE)  # moved into agent-start.json
+    return cur
 
 
 def ask_before_session():
-    return os.path.exists(ASK_FILE)
+    """Whether an agent's first action waits for the owner (a countdown or an Allow)."""
+    return start_setting()["mode"] != "auto"
 
 
 def set_ask_before_session(on):
-    if on:
-        open(ASK_FILE, "w").close()
-    elif os.path.exists(ASK_FILE):
-        os.remove(ASK_FILE)
+    set_start_setting("ask" if on else "auto")
 
 
 class SessionRequests:
@@ -588,19 +613,30 @@ class SessionRequests:
         the desktop notification and the companion app all drop it then."""
         p = self.pending
         if not p:
+            st = start_setting()
+            now = time.time()
             p = self.pending = {"id": secrets.token_hex(8), "event": asyncio.Event(), "approved": False,
-                                "notice": None, "since": time.time(), "action": action, "waiters": 0,
-                                "answered": False}
-            self.broadcast({"type": "session-request", "id": p["id"], "action": action})
+                                "notice": None, "since": now, "action": action, "waiters": 0,
+                                "answered": False, "mode": st["mode"],
+                                # countdown: the agent starts at the deadline unless the owner stops it
+                                "deadline": now + st["seconds"] if st["mode"] == "countdown" else None}
+            self.broadcast({"type": "session-request", "id": p["id"], "action": action, "mode": p["mode"],
+                            "deadline": p["deadline"]})
             if self.companion:
                 asyncio.get_running_loop().run_in_executor(None, self.companion.push_session, p["id"], action)
             asyncio.ensure_future(self._notify(p))
-            log("an agent asks to use the phone; waiting for the owner")
+            log("an agent wants the phone; " + (f"starting in {st['seconds']} s unless the owner stops it"
+                                               if p["deadline"] else "waiting for the owner"))
         p["waiters"] += 1
         try:
-            await asyncio.wait_for(asyncio.shield(p["event"].wait()), self.WAIT - (time.time() - p["since"]))
+            limit = (p["deadline"] if p["deadline"] else p["since"] + self.WAIT) - time.time()
+            await asyncio.wait_for(asyncio.shield(p["event"].wait()), max(0.0, limit))
         except asyncio.TimeoutError:
-            self._close(p, "timed out")
+            if p["deadline"] and not p["event"].is_set():  # the countdown ran out: the agent starts
+                p["approved"], p["answered"] = True, True
+                self._close(p, "the countdown ran out; allowed")
+            else:
+                self._close(p, "timed out")
         finally:
             p["waiters"] -= 1
             if p["waiters"] == 0 and not p["event"].is_set():
@@ -654,20 +690,31 @@ class SessionRequests:
         return web.json_response({"ok": self.answer_id(body.get("id"), body.get("approve"))})
 
     async def setting(self, req):
-        # The browser mirror's settings: ask before an agent session, on or off.
+        # The browser mirror's settings: when an agent starts ({"mode", "seconds"}; the
+        # older {"on": bool} means ask / go ahead).
         if req.method == "POST":
             if not same_origin(req):
                 return web.Response(status=403)
-            set_ask_before_session(bool((await req.json()).get("on")))
+            b = await req.json()
+            if "mode" in b or "seconds" in b:
+                set_start_setting(b.get("mode"), b.get("seconds"))
+            else:
+                set_ask_before_session(bool(b.get("on")))
             await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)
-        return web.json_response({"on": ask_before_session()})
+        st = start_setting()
+        return web.json_response({"on": st["mode"] != "auto", **st})
 
     async def _notify(self, p):
         try:
             p["notice"] = await asyncio.create_subprocess_exec(
-                "notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "allow=Allow", "-A", "deny=Deny",
-                "Let agent use the iPhone?", f"Agent wants to start: {p['action'] or 'using the phone'}. Answer here or at "
-                f"http://localhost:{PORT}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                *(["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "deny=Stop",
+                   "-A", "allow=Start now", f"Agent starts in {round(p['deadline'] - time.time())} s",
+                   f"First step: {p['action'] or 'using the phone'}. Stop it here or at http://localhost:{PORT}"]
+                  if p["deadline"] else
+                  ["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "allow=Allow", "-A", "deny=Deny",
+                   "Agent wants control of your iPhone",
+                   f"First step: {p['action'] or 'using the phone'}. Answer here or at http://localhost:{PORT}"]),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await p["notice"].communicate()
             choice = out.decode().strip()
             if choice in ("allow", "deny"):
