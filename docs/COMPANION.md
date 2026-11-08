@@ -128,7 +128,15 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
 
-`content-state` is `{"state": "driving | paused", "phase": "acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "startedAt": <unix seconds>}`.
+`content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>}`.
+
+The Live Activity stays on the phone the whole time the phone mirrors to the PC, and ends when mirroring stops.
+`idle` means the owner is in control. `asking` means an agent waits for the owner's answer to a session request:
+`requestId` is the request's id, and the activity shows Allow and Deny buttons that call `POST /v1/session/answer`;
+the update that enters `asking` carries an alert, so the Dynamic Island expands. `driving` means the agent uses
+the phone, and `paused` that the owner took over. The PC starts the activity by push only when the app hasn't sent
+a token for a live one, and at most once every 10 minutes per device; the app also starts it itself (the same
+attributes and content) when it opens while the PC mirrors and no activity is running.
 
 `phase` says what the agent is doing at the moment: `acting` while phoneuse sends a tap, a swipe or keys to the
 phone, `reading` while the agent looks at the screen, and `thinking` between actions, while the agent's model

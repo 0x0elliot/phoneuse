@@ -26,6 +26,7 @@ from .config import RUNTIME_DIR, config_path
 
 PORT = 8778
 STORE = os.path.join(os.path.dirname(config_path()), "companion.json")
+START_RETRY = 600  # seconds between Live Activity start pushes to a device that sent no activity token back
 AUDIO_OFF = os.path.join(os.path.dirname(config_path()), "audio-off")  # exists while the mirror's audio is off
 UXPLAY_PID = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.pid")  # written by `phoneuse up`
 PAIR_TTL = 600
@@ -118,6 +119,8 @@ class Companion:
         self.sent = None  # the Live Activity's last content-state sent: (state, action, steps)
         self.sent_at = 0.0
         self.activity_started = 0.0
+        self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
+        self._mirror_since = 0.0
 
     # ---- auth ----
     @web.middleware
@@ -390,52 +393,102 @@ class Companion:
                 log("unlock push:", r)
 
     async def activities(self):
-        """Start, update and end the Live Activity as the agent session changes."""
+        """Keep one Live Activity on the phone the whole time the phone mirrors to this PC:
+        "idle" (the owner is in control), "asking" (an agent waits for the owner's
+        Allow, with Allow and Deny buttons), "driving" (with the agent's phase: acting,
+        reading or thinking) or "paused" (the owner took over). It ends when mirroring
+        stops. An activity the app or iOS ended is started again by push."""
         while True:
             await asyncio.sleep(0.5)
             if not apns.configured():
                 continue
-            m = self.mirror
-            state = m.agent()
-            now_state = None if state == "idle" else (state, m.agent_action or "Working", m.agent_steps,
-                                                       m.agent_phase if state == "driving" else "paused")
-            if now_state == self.sent or (now_state and self.sent and time.time() - self.sent_at < 1.0):
+            want = self._activity_state()
+            urgent = bool(want and self.sent and want[0] != self.sent[0])  # a new state goes out at once
+            if want == self.sent and not self._needs_start(want):
                 continue
-            await self.run(self._send_activity, now_state)
+            if not urgent and want and self.sent and time.time() - self.sent_at < 1.0:
+                continue
+            await self.run(self._send_activity, want)
 
-    def _send_activity(self, now_state):
+    def _activity_state(self):
+        """(state, phase, action, steps, request id), or None while the phone doesn't mirror."""
+        m = self.mirror
+        if not m.live():
+            return None
+        p = m.sessions.pending if m.sessions else None
+        if p:
+            return ("asking", "asking", p["action"] or "An agent", 0, p["id"])
+        a = m.agent()
+        if a == "driving":
+            return ("driving", m.agent_phase, m.agent_action or "Working", m.agent_steps, "")
+        if a == "paused":
+            return ("paused", "paused", m.agent_action, m.agent_steps, "")
+        return ("idle", "idle", "", 0, "")
+
+    def _needs_start(self, want):
+        """A device without a live activity, which we haven't asked to start lately."""
+        if not want:
+            return False
+        now = time.time()
+        return any(not (dev.get("activity") or {}).get("token") and now - self.start_tried.get(i, 0) > START_RETRY
+                   for i, dev in self._devices_by_id().items() if dev.get("push_to_start"))
+
+    def _devices_by_id(self):
+        return {i: dev for i, dev in load()["devices"].items() if dev.get("bundle_id")}
+
+    def _send_activity(self, want):
         m, before = self.mirror, self.sent
-        self.sent, self.sent_at = now_state, time.time()
-        content = lambda s: {"state": s[0], "action": s[1], "steps": s[2], "phase": s[3],
-                             "startedAt": int(m.agent_started)}
-        for dev in self._devices():
-            env, topic = dev.get("env", "production"), dev["bundle_id"] + ".push-type.liveactivity"
+        self.sent, self.sent_at = want, time.time()
+
+        def content(st):
+            return {"state": st[0], "phase": st[1], "action": st[2], "steps": st[3], "requestId": st[4],
+                    "startedAt": int(m.agent_started if st[0] in ("driving", "paused") else self.mirror_since())}
+
+        alert = None
+        if want and want[0] == "asking" and (not before or before[0] != "asking"):
+            alert = {"title": "An agent wants control of your iPhone", "body": f"First step: {want[2]}",
+                     "sound": "default"}
+        for i, dev in self._devices_by_id().items():
+            topic = dev["bundle_id"] + ".push-type.liveactivity"
             aps = {"timestamp": int(time.time())}
-            if now_state and not before:
-                if not dev.get("push_to_start"):
+            act = dev.get("activity") or {}
+            if want and not act.get("token"):
+                # one start, then wait for the app to send the new activity's token: starting
+                # again sooner could leave two activities on the phone
+                if not dev.get("push_to_start") or time.time() - self.start_tried.get(i, 0) < START_RETRY:
                     continue
-                aps.update({"event": "start", "content-state": content(now_state),
+                self.start_tried[i] = time.time()
+                aps.update({"event": "start", "content-state": content(want),
                             "attributes-type": "AgentActivityAttributes", "attributes": {"pcName": pc_name()},
-                            "alert": {"title": "PhoneUse", "body": "An agent is using your iPhone"}})
+                            "alert": alert or {"title": "PhoneUse", "body": "Mirroring to " + pc_name()}})
                 r = self._send(dev, "push_to_start", dev["push_to_start"], {"aps": aps}, topic, "liveactivity")
-                self.activity_started = time.time()
-            else:
-                act = dev.get("activity") or {}
-                if not act.get("token"):
-                    continue
-                if now_state:
-                    aps.update({"event": "update", "content-state": content(now_state)})
+            elif act.get("token"):
+                if want:
+                    aps.update({"event": "update", "content-state": content(want)})
+                    if alert:
+                        aps["alert"] = alert
                 else:
-                    aps.update({"event": "end", "content-state": content(before),
-                                "dismissal-date": int(time.time()) + 10})
-                r = self._send(dev, "activity", act["token"], {"aps": aps}, topic, "liveactivity")
+                    aps.update({"event": "end", "content-state": content(before or ("idle", "idle", "", 0, "")),
+                                "dismissal-date": int(time.time())})
+                r = self._send(dev, "activity", act["token"], {"aps": aps}, topic, "liveactivity",
+                               priority=10 if (alert or not want or (before and want[0] != before[0])) else 5)
                 if r[0] == 410 or (r[0] == 400 and "BadDeviceToken" in r[1]):  # that activity is gone
                     d = load()
                     for v in d["devices"].values():
-                        if v.get("activity", {}).get("token") == act["token"]:
+                        if (v.get("activity") or {}).get("token") == act["token"]:
                             v.pop("activity", None)
                     save(d)
-            log(f"live activity {aps.get('event')}:", r)
+            else:
+                continue
+            log(f"live activity {aps.get('event')} ({want[0] if want else 'off'}):", r)
+
+    def mirror_since(self):
+        if self.mirror.live():
+            if not self._mirror_since:
+                self._mirror_since = time.time()
+        else:
+            self._mirror_since = 0
+        return self._mirror_since or time.time()
 
     # ---- Bonjour ----
     async def advertise(self):

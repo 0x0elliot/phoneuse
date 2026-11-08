@@ -25,13 +25,13 @@
   #gear:hover, #gear[aria-expanded="true"] { color: #fff; }
   #kbd { position: fixed; z-index: 10; top: 14px; left: 14px; height: 34px; padding: 0 8px 0 12px; border-radius: 99px;
          display: flex; align-items: center; gap: 9px; font-size: 14px; color: rgba(255, 255, 255, .85); }
-  #awake .sw, #kbd .sw, #bUse .sw { width: 34px; height: 20px; border-radius: 99px; background: rgba(120, 120, 128, .4); position: relative;
+  #awake .sw, #kbd .sw, #bUse .sw, #askSession .sw { width: 34px; height: 20px; border-radius: 99px; background: rgba(120, 120, 128, .4); position: relative;
              transition: background .2s; }
-  #awake .sw::after, #kbd .sw::after, #bUse .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  #awake .sw::after, #kbd .sw::after, #bUse .sw::after, #askSession .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
                     background: #fff; transition: transform .2s; }
-  #awake .sw, #bUse .sw { flex: none; }
-  #awake[aria-checked="true"] .sw, #kbd[aria-checked="true"] .sw, #bUse[aria-checked="true"] .sw { background: #30d158; }
-  #awake[aria-checked="true"] .sw::after, #kbd[aria-checked="true"] .sw::after, #bUse[aria-checked="true"] .sw::after { transform: translateX(14px); }
+  #awake .sw, #bUse .sw, #askSession .sw { flex: none; }
+  #awake[aria-checked="true"] .sw, #kbd[aria-checked="true"] .sw, #bUse[aria-checked="true"] .sw, #askSession[aria-checked="true"] .sw { background: #30d158; }
+  #awake[aria-checked="true"] .sw::after, #kbd[aria-checked="true"] .sw::after, #bUse[aria-checked="true"] .sw::after, #askSession[aria-checked="true"] .sw::after { transform: translateX(14px); }
   /* who controls the phone: the agent (glow + pill with Take over) or the owner */
   #takeover { position: fixed; z-index: 10; top: 14px; right: 58px; height: 34px; padding: 0 5px 0 14px; border-radius: 99px;
               font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 230px);
@@ -623,7 +623,11 @@ askSw.onclick = async () => {
     body: JSON.stringify({ on: askSw.getAttribute("aria-checked") !== "true" }) });
   if (r.ok) askSw.setAttribute("aria-checked", (await r.json()).on);
 };
-fetch("/api/session/ask").then((r) => r.json()).then((j) => askSw.setAttribute("aria-checked", j.on)).catch(() => {});
+function loadAskSetting() {
+  fetch("/api/session/ask").then((r) => r.json()).then((j) => askSw.setAttribute("aria-checked", j.on)).catch(() => {});
+}
+loadAskSetting();
+document.getElementById("gear").addEventListener("click", loadAskSetting);  // the app may have changed it
 
 // ---- agent sessions ----
 const takeover = document.getElementById("takeover"), takeoverLabel = document.getElementById("takeoverLabel");
