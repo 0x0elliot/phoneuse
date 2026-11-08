@@ -78,6 +78,7 @@ struct AgentLiveActivity: Widget {
                     if s.steps > 0 {
                         Text("\(s.steps)").monospacedDigit().contentTransition(.identity)
                             .foregroundStyle(look.color(s))
+                            .transaction { $0.animation = nil }
                     }
                 }
             } minimal: {
@@ -166,6 +167,7 @@ struct StateIcon: View {
                 // Still on every update: only the ring moves with the 1 s frames. A new phase swaps the icon at once.
                 .contentTransition(.identity)
                 .transition(.identity)
+                .transaction { $0.animation = nil }  // no system update animation on the icon
         }
         .frame(width: size, height: size)
     }
