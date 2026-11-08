@@ -3,7 +3,7 @@
 Each candidate is a 100 x 100 grid drawing (y down) with two poses, built from shapely shapes at a stroke weight
 (Regular, Semibold, Bold). The primary layer is solid; the secondary layer is drawn at 45% opacity, the way
 SF Symbols' hierarchical rendering draws it. Usage:
-    python ios/scripts/robot_candidates.py OUT.png
+    python ios/scripts/robot_candidates.py OUT.png [--a2]   (--a2: the reworked head only)
 """
 import math
 import sys
@@ -43,6 +43,32 @@ def head(x0, y0, x1, y1, w, look=0.0, tilt=0.0):
     return unary_union([solid.difference(eyes), antenna]), ears
 
 
+def head2(w, look=0.0, ears=True):
+    """Candidate A, reworked so every part reads at one weight: a solid head with cut-out eyes, an antenna stalk as
+    thick as an eye, a ball 1.6x the stalk, and solid ear nubs as thick as the stalk. Only the eyes move between poses
+    (look 0..1 glances down)."""
+    x0, x1, y0, y1 = 16.0, 84.0, 36.0, 90.0
+    h = y1 - y0
+    stalk = w * 1.2
+    er = stalk / 2 * 1.05  # an eye's diameter about the stalk's thickness
+    solid = rrect(x0, y0, x1, y1, (x1 - x0) * 0.24)
+    ey = y0 + h * (0.46 + 0.14 * look)
+    eyes = unary_union([Point(x0 + (x1 - x0) * 0.33, ey).buffer(er, quad_segs=16),
+                        Point(x0 + (x1 - x0) * 0.67, ey).buffer(er, quad_segs=16)])
+    cx = (x0 + x1) / 2
+    ball_r = stalk * 0.8
+    ball_y = y0 - h * 0.30
+    antenna = unary_union([box(cx - stalk / 2, ball_y, cx + stalk / 2, y0 + 2),
+                           Point(cx, ball_y).buffer(ball_r, quad_segs=16)])
+    parts = [solid.difference(eyes), antenna]
+    if ears:
+        ear_h = h * 0.34
+        ym = y0 + h * 0.5
+        parts += [rrect(x0 - stalk * 0.8, ym - ear_h / 2, x0 + 2, ym + ear_h / 2, stalk * 0.4),
+                  rrect(x1 - 2, ym - ear_h / 2, x1 + stalk * 0.8, ym + ear_h / 2, stalk * 0.4)]
+    return unary_union(parts), Polygon()
+
+
 def cursor(tipx, tipy, s):
     pts = [(0, 0), (0, 46), (11, 35), (19, 52), (27, 48), (19, 32), (34, 32)]
     return Polygon([(tipx + x * s, tipy + y * s) for x, y in pts]).buffer(1.2, quad_segs=6)
@@ -78,6 +104,8 @@ def render_glyph(prim, sec, px, color):
     sc = px * k / 100
 
     def fill(g, rgba):
+        if g.is_empty:
+            return
         for poly in getattr(g, "geoms", [g]):
             d.polygon([(x * sc, y * sc) for x, y in poly.exterior.coords], fill=rgba)
             for hole in poly.interiors:
@@ -104,14 +132,19 @@ def render_ring(px, color, frame=3):
     return big.resize((px, px), Image.LANCZOS)
 
 
-def main(out):
+def candidates_a2(w):
+    return {"A2  head, solid ear nubs": [head2(w, 0.0, True), head2(w, 1.0, True)],
+            "A2  head, no ears": [head2(w, 0.0, False), head2(w, 1.0, False)]}
+
+
+def main(out, which=candidates):
     P = 3  # pixels per point, like the phone
     blue = (10, 132, 255)
     font = ImageFont.truetype("/System/Library/Fonts/SFNS.ttf", 17 * P)
     font.set_variation_by_name("Semibold")
     small = ImageFont.truetype("/System/Library/Fonts/SFNS.ttf", 13 * P)
     small.set_variation_by_name("Regular")
-    cands = candidates(WEIGHTS["Semibold"])
+    cands = which(WEIGHTS["Semibold"])
     row_h, W = 120 * P, 1400 * P
     sheet = Image.new("RGB", (W, row_h * len(cands) + 60 * P), "black")
     d = ImageDraw.Draw(sheet)
@@ -149,7 +182,7 @@ def main(out):
             x += 10 * P
         x += 10 * P
         for wname, wv in WEIGHTS.items():
-            prim, sec = candidates(wv)[name][0]
+            prim, sec = which(wv)[name][0]
             glyph = render_glyph(prim, sec, 28 * P, blue)
             sheet.paste(glyph, (x, y + 34 * P), glyph)
             d.text((x, y + 66 * P), wname, font=small, fill=(110, 110, 115))
@@ -159,4 +192,4 @@ def main(out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], candidates_a2 if "--a2" in sys.argv else candidates)
