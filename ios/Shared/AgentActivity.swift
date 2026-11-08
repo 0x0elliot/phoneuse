@@ -19,6 +19,8 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// Unix seconds of this update. The PC refreshes the activity every 2.8 s while driving; the ring restarts on
         /// each one. Older PCs don't send it.
         var updatedAt: Double?
+        /// Counts up by one with each of the PC's 1 s refreshes while driving; the ring turns 45 degrees per frame.
+        var frame: Int?
 
         init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double,
              updatedAt: Double? = nil) {
@@ -38,6 +40,7 @@ struct AgentActivityAttributes: ActivityAttributes {
             steps = (try? c.decodeIfPresent(Int.self, forKey: .steps)) ?? 0
             startedAt = (try? c.decodeIfPresent(Double.self, forKey: .startedAt)) ?? Date().timeIntervalSince1970
             updatedAt = try? c.decodeIfPresent(Double.self, forKey: .updatedAt)
+            frame = try? c.decodeIfPresent(Int.self, forKey: .frame)
         }
 
         /// "1 step", "12 steps", or nil before the first step.

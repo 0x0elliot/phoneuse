@@ -138,7 +138,9 @@ struct SettingsView: View {
     private func agentSection(_ s: PCState) -> some View {
         Section("Agent") {
             LabeledContent {
-                if let steps = s.agent.steps, s.agent.state != "idle" { Text("\(steps) steps").monospacedDigit() }
+                if let steps = s.agent.steps, steps > 0, s.agent.state != "idle" {
+                    Text(steps == 1 ? "1 step" : "\(steps) steps").monospacedDigit()
+                }
             } label: {
                 if s.agent.state == "driving" {
                     Label { Text(agentText(s.agent)) } icon: { SpinningRing(color: .blue) }
@@ -406,17 +408,20 @@ struct NetworksView: View {
     }
 }
 
-/// A slowly turning blue-purple border with a soft glow, like the browser mirror's, for the Agent row while an
-/// agent drives the phone.
+/// A soft blue-purple-pink glow that slowly turns around the Agent row's edges while an agent drives, like Apple
+/// Intelligence's edge glow: a blurred gradient band with no hard stroke.
 struct GlowBackground: View {
     var body: some View {
         TimelineView(.animation) { context in
-            let angle = Angle.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4) * 90)
-            let gradient = AngularGradient(colors: [.blue, .purple, .pink, .cyan, .blue], center: .center, angle: angle)
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemGroupedBackground))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(gradient, lineWidth: 2))
-                .shadow(color: .purple.opacity(0.5), radius: 8)
+            let angle = Angle.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 6) * 60)
+            let gradient = AngularGradient(colors: [.blue, .purple, .pink, .purple, .blue], center: .center, angle: angle)
+            ZStack {
+                Color(.secondarySystemGroupedBackground)
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(gradient, lineWidth: 14)
+                    .blur(radius: 14)
+                    .opacity(0.55)
+            }
         }
     }
 }
