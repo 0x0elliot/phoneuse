@@ -88,6 +88,26 @@ any value is above 1 (the screen is 402 × 874 pt). To tap something, read its
 centre off the screenshot and divide by the image size. Taps land exactly; one
 try is enough.
 
+## Working fast
+
+Every round trip with the phone costs you a turn, so make each one count.
+
+- **Never `sleep`.** `--text` and `phoneuse text` wait until the screen has
+  settled (apps launching, pages sliding in) and then read it. A fixed sleep is
+  either too short or wasted time.
+- **Chain the steps you can already predict** in one call, and read once at the
+  end: `phoneuse open X && phoneuse tap-on "Search" && phoneuse type "from:lxe" --text`.
+  Stop chaining where the next step depends on what appears.
+- **Read with text, not images.** `--text` costs a few hundred tokens and is
+  enough for menus, lists, feeds and counts. Take a screenshot only for
+  pictures, icon-only screens, or when text lands somewhere surprising.
+- **Flicks are swipes with a short duration**: `phoneuse swipe 0.5 0.75 0.5 0.25 0.2`
+  moves a feed (Reels, TikTok, Shorts) to the next item. Longer durations (0.5 s
+  and up) drag without flinging. For exact scrolling, use `scroll` or `scroll-by`.
+- **Repeat cheap actions in one call** when you know the layout, e.g. three
+  flicks with a text read after each:
+  `for i in 1 2 3; do phoneuse swipe 0.5 0.75 0.5 0.25 0.2 --text | head -8; done`.
+
 ## Commands that work (verified on the device)
 
 | Goal | Command |

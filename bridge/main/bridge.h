@@ -54,6 +54,10 @@ int hid_send(uint8_t id, const uint8_t *data, int len, bool skippable);
 // Hover: keep only the newest; it goes out once Bluetooth is free. No answer.
 void hid_latest(uint8_t id, const uint8_t *data, int len);
 void hid_connect_last(void);
+// Type keys: n (modifiers, usage) pairs, pressed and released in order on the
+// bridge. Returns how many were queued; hid_keys_left() counts those not typed yet.
+int hid_keys(const uint8_t *pairs, int n);
+int hid_keys_left(void);
 void hid_discoverable(int seconds);
 
 // link.c

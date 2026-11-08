@@ -222,7 +222,10 @@ def swipe(hid, fx0, fy0, fx1, fy1, duration=0.3, hold_end=0.0):
         k = min(1.0, (time.time() - t0) / max(duration, TICK))
         t.target = (fx0 + (fx1 - fx0) * k, fy0 + (fy1 - fy0) * k)
         left = t.step()
-        if k >= 1.0 and left < 1.0:
+        # Done once what's left is less than the smallest report can move: waiting
+        # longer holds the finger still before the lift, and a resting finger
+        # doesn't fling (it used to sit here for a second, until the timeout).
+        if k >= 1.0 and left < max(1.0, DRAG_PTS[0][1]):
             break
         if k >= 1.0 and time.time() - t0 > duration + 1.0:
             break

@@ -176,7 +176,21 @@ class HID:
     # mouse
     def mouse(self, dx=0, dy=0, wheel=0):
         b = lambda v: v & 0xFF
-        self.send(2, [self.buttons, b(dx), b(dy), b(wheel)])
+        payload = [self.buttons, b(dx), b(dy), b(wheel)]
+        link = bridge_link[0]
+        if link and link.phone:
+            # Through the bridge, scripted swipes go pipelined: waiting for each
+            # report's answer (14-35 ms over Wi-Fi) would stretch a 0.3 s flick
+            # into a slow drag. Every report still goes out, in order: when 5 are
+            # unanswered, wait for room instead of dropping one.
+            end = time.time() + 0.3
+            while not link.send_async(2, payload):
+                if time.time() > end:
+                    self._bridge(2, payload)
+                    return
+                time.sleep(0.002)
+            return
+        self.send(2, payload)
 
     def move(self, dx, dy, step=8, delay=0.008):
         # Small, evenly paced steps keep iOS pointer acceleration predictable.
@@ -530,6 +544,7 @@ def wanted(addr):
 
 def set_mirror(name):
     mirror_name[0] = name.strip() or None
+    save_state()
     log("mirroring phone:", mirror_name[0])
     if hid.connected and not wanted(hid.peer):
         hid.drop(f"{hid.peer} is not the mirroring phone")  # also wakes the reconnect loop
@@ -687,8 +702,51 @@ def release(idle):
         return "released"
 
 
+STATE = "/var/lib/phoneuse/daemon.json"  # survives restarts: bridge and mirroring phone
+
+
+def save_state():
+    import json
+    link = bridge_link[0]
+    d = {"mirror": mirror_name[0], "bridge": [link.addr[0], link.key.hex()] if link else None}
+    try:
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        fd = os.open(STATE + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(d, f)
+        os.replace(STATE + ".tmp", STATE)
+    except OSError as e:
+        log("couldn't save state:", e)
+
+
+def restore_state():
+    import json
+    try:
+        with open(STATE) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return
+    if d.get("mirror"):
+        mirror_name[0] = d["mirror"]
+    if d.get("bridge"):
+        for _ in range(10):  # the network may still be coming up
+            try:
+                log("restoring bridge:", set_bridge(d["bridge"]))
+                return
+            except Exception as e:
+                log("bridge not answering yet:", e)
+                time.sleep(3)
+
+
 def set_bridge(args):
     """Switch input to the bridge (its address and control key) or back to this PC."""
+    try:
+        return _set_bridge(args)
+    finally:
+        save_state()
+
+
+def _set_bridge(args):
     if args[:1] == ["off"] or not args:
         if bridge_link[0]:
             bridge_link[0].close()
@@ -870,7 +928,7 @@ def main():
     threading.Thread(target=accept_loop, daemon=True).start()
     threading.Thread(target=command_server, daemon=True).start()
     threading.Thread(target=tune_loop, daemon=True).start()
-
+    threading.Thread(target=restore_state, daemon=True).start()
     threading.Thread(target=reconnect_loop, daemon=True).start()
     reconnect_now.set()
     GLib.MainLoop().run()

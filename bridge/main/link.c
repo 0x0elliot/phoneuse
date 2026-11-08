@@ -18,6 +18,8 @@
 //   0x07 JOIN nonce(12) sealed -> 0x87, then it changes network; sealed =
 //        AES-GCM(HMAC(control key, "phoneuse wifi change"), "ssid\0password").
 //        Back on the old network if the new one fails (STATUS "err" says why).
+//   0x09 KEYS (mods, usage)*  -> 0x89 queued(u16) left(u16): typed on the bridge, in order
+//   0x0A KEYSLEFT             -> 0x8A left(u16): keys not typed yet
 //   0x08 TUNE what value     -> 0x88 esp_err (experiments): what 1 = coexistence
 //        preference (0 Wi-Fi, 1 Bluetooth, 2 balance), 2 = Wi-Fi TX power (0.25 dBm)
 // Packets after HELLO carry its session and a rising seq; an old seq is dropped,
@@ -196,6 +198,14 @@ static void link_task(void *arg) {
                 wifi_switch(ssid, pass);
             }
             continue;
+        } else if (type == 0x09) {
+            uint16_t r[2];
+            r[0] = hid_keys(body, bn / 2);
+            r[1] = hid_keys_left();
+            m = reply(out, 0x89, sid, seq, r, 4, true);
+        } else if (type == 0x0A) {
+            uint16_t left = hid_keys_left();
+            m = reply(out, 0x8A, sid, seq, &left, 2, true);
         } else if (type == 0x08 && bn >= 2) {
             int32_t e = -1;
 #pragma GCC diagnostic push
