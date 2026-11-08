@@ -44,6 +44,13 @@ points, which is plenty for scrolling and edge gestures.
   lift. Eight 0.45 scrolls in a row then moved 0.426-0.439. The mirror's wheel
   uses the same profile (`pointer.py`) and never grips for less than 15 pt,
   since a shorter press-and-move reads as a tap.
+- iOS hides the iPhone's on-screen keyboard while any Bluetooth keyboard is
+  connected, and Eject only toggles it blindly. So phoneuse lets go of the link
+  when nobody uses it: the page server sends `release` once the phone stops
+  mirroring (no paging either) or after 10 s without input from any page, the
+  mirror window or an agent session. The daemon then declines the iPhone's own
+  reconnects and drops hovers; the next press, key or agent command reconnects
+  first, then goes through.
 - Avoid tapping the top centre of the screen: it hits the Dynamic Island, which
   opens the Screen Mirroring popup with a Stop Mirroring button.
 - Cmd+H doesn't close Control Center or Notification Center; use `phoneuse dismiss`.

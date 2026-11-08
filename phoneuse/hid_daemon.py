@@ -13,6 +13,9 @@ Commands on /run/phoneuse-hid.sock, one per line, reply "ok ..." or "err ...":
   type TEXT         US-layout text
   corner            slam pointer to the top-left corner
   connect           page the paired iPhone now (the daemon also reconnects by itself)
+  release [IDLE]    drop the link while nobody uses it, so the iPhone shows its own keyboard
+                    (iOS hides it while a keyboard is connected); only if nothing was sent
+                    for IDLE seconds (default 0). The next real input reconnects first.
   pair [SECONDS]    discoverable/pairable for SECONDS (0 = always, the startup default)
   m DX DY [W [BTN]] raw mouse report (live input)
   k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
@@ -268,6 +271,10 @@ def accept_loop():
             log("rejected HID connection from", addr[0], "(not in", ALLOW_FILE + ")")
             c.close()
             continue
+        if released.is_set():
+            log("declined HID connection from", addr[0], "(released until phoneuse is used)")
+            c.close()
+            continue
         log("control from", addr[0])
         i, _ = si.accept()
         log("interrupt from", addr[0])
@@ -280,11 +287,14 @@ def accept_loop():
 
 connect_lock = threading.Lock()
 reconnect_now = threading.Event()
+released = threading.Event()  # link dropped on purpose: no reconnecting until real input
+last_use = [0.0]  # when a command last sent real input (not a hover)
 
 
 def connect_out():
     """Page each paired iPhone once and open the HID channels."""
     with connect_lock:
+        released.clear()
         if hid.connected:
             return "already connected"
         errors = []
@@ -325,12 +335,12 @@ def reconnect_loop():
         reconnect_now.wait(30 if hid.connected else pause)
         woke = reconnect_now.is_set()
         reconnect_now.clear()
-        if hid.connected:
+        if hid.connected or released.is_set():
             pause = 0
             continue
         if woke:
             time.sleep(3)  # give the iPhone a moment to reconnect by itself
-            if hid.connected:
+            if hid.connected or released.is_set():
                 continue
         try:
             log("reconnect:", connect_out())
@@ -341,7 +351,7 @@ def reconnect_loop():
 
 
 def on_device_changed(iface, changed, invalidated, path=None):
-    if iface == "org.bluez.Device1" and changed.get("Connected") and not hid.connected:
+    if iface == "org.bluez.Device1" and changed.get("Connected") and not hid.connected and not released.is_set():
         reconnect_now.set()
 
 
@@ -473,14 +483,62 @@ def setup_dbus():
 
 
 # ---------- command socket ----------
+def passive(cmd, args):
+    """Reports that change nothing on the phone by themselves: hovers, motion
+    without a button, all keys up. While released they are dropped instead of
+    reconnecting, so moving the mouse over the mirror doesn't bring the
+    keyboard back."""
+    try:
+        if cmd == "a":
+            return len(args) < 3 or int(args[2]) == 0
+        if cmd == "m":
+            return (len(args) < 3 or int(args[2]) == 0) and (len(args) < 4 or int(args[3]) == 0)
+        if cmd == "k":
+            return int(args[0]) == 0 and not any(int(c) for c in args[1:])
+    except ValueError:
+        return False
+    return cmd in ("move", "corner", "up")
+
+
+def absolute(fx, fy, buttons):
+    """Report 3 payload: buttons, then x and y as 0..32767."""
+    x, y = (max(0, min(32767, round(float(v) * 32767))) for v in (fx, fy))
+    return [buttons & 0x07, x & 0xFF, x >> 8, y & 0xFF, y >> 8]
+
+
+def release(idle):
+    with connect_lock:
+        if time.time() - last_use[0] < idle:
+            return "in use"
+        released.set()
+        if hid.connected:
+            hid.drop("released: nobody is using phoneuse, so the iPhone shows its own keyboard")
+        return "released"
+
+
 def run_command(line):
     parts = line.strip().split(" ", 1)
     cmd, rest = parts[0].lower(), (parts[1] if len(parts) > 1 else "")
     args = rest.split()
     if cmd == "status":
-        return f"ok connected={hid.connected} peer={hid.peer} paired={paired_devices()}"
+        return (f"ok connected={hid.connected} released={released.is_set()} peer={hid.peer} "
+                f"paired={paired_devices()}")
     if cmd == "connect":
         return "ok " + connect_out()
+    if cmd == "release":
+        return "ok " + release(float(args[0]) if args else 0.0)
+    if cmd == "pair":
+        pass
+    elif passive(cmd, args):
+        if released.is_set() and not hid.connected:
+            return "ok released"
+    else:
+        last_use[0] = time.time()
+        if released.is_set() and not hid.connected:
+            log("reconnect on use:", connect_out())
+            if cmd == "a":  # put the pointer there before the press (a press that moves ends the touch)
+                hid.send(3, absolute(args[0], args[1], 0))
+                time.sleep(0.05)
     if cmd == "eject":
         hid.eject()
         return "ok"
@@ -489,9 +547,7 @@ def run_command(line):
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
-        x, y = (max(0, min(32767, round(float(v) * 32767))) for v in args[:2])
-        btn = int(args[2]) & 0x07 if len(args) > 2 else 0
-        hid.send(3, [btn, x & 0xFF, x >> 8, y & 0xFF, y >> 8])
+        hid.send(3, absolute(args[0], args[1], int(args[2]) if len(args) > 2 else 0))
         return "ok"
     if cmd == "m":  # raw mouse report: m DX DY [WHEEL [BUTTONS]], for live input
         dx, dy = (max(-127, min(127, int(v))) for v in args[:2])

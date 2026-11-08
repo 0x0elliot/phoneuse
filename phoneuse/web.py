@@ -92,6 +92,7 @@ class Mirror:
         self.taken_over = False
         self.agent_until = 0.0
         self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
+        self.last_input = time.time()  # last press, key or scroll from a page
 
     def get_hid(self):
         if self.hid is None:
@@ -101,9 +102,22 @@ class Mirror:
     def live(self):
         return self.mirroring and self.hub_live
 
+    RELEASE_IDLE = 10.0  # let go of the link this long after the last input (s)
+
     def bluetooth_up(self):
+        """Whether the link works: connected, or released on purpose (the next
+        input reconnects). While it is connected and nobody uses it (no agent
+        session, no input from any page or the mirror window for RELEASE_IDLE s,
+        or the phone stopped mirroring), release it: iOS hides the iPhone's own
+        keyboard while a keyboard is connected."""
         try:
-            return "connected=True" in self.get_hid().cmd("status")
+            st = self.get_hid().cmd("status")
+            if not self.mirroring and "released=False" in st:
+                st = self.get_hid().cmd("release 0")  # no paging either until phoneuse is used again
+            elif "connected=True" in st and self.agent() != "driving" \
+                    and time.time() - self.last_input >= self.RELEASE_IDLE:
+                self.get_hid().cmd(f"release {self.RELEASE_IDLE}")  # the daemon also checks its own last input
+            return "connected=True" in st or "released=True" in st
         except Exception:
             self.hid = None
             return False
@@ -224,6 +238,8 @@ class Tab:
             self.pointer.release()
             self.keys.release_all()
             return
+        if t in ("down", "scroll", "key", "mod"):
+            self.mirror.last_input = time.time()
         if t == "move":
             self.pointer.hover(msg["x"], msg["y"])
         elif t == "down":
