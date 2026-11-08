@@ -552,7 +552,42 @@ def open_app(h, name):
     refuse_if_locked()
     step(h, "key space gui")
     step(h, "type " + name, quiet=0.35)  # search results arrive in waves
-    step(h, "key enter", quiet=0.3)  # wait for the app to come up
+    spot = spotlight_app(screen_text(), name)
+    if spot:  # the app is a result, but not the top hit (typing "Gmail" puts Mail first)
+        seq = frame_seq()
+        touch.tap(h, *spot)
+        if seq is not None:
+            try:
+                screen.frames_request(f"settle {seq} 0.3 0.6", timeout=6)  # the app comes up
+                acted(None)
+            except OSError:
+                time.sleep(0.8)
+    else:
+        step(h, "key enter", quiet=0.3)  # wait for the app to come up
+
+
+def _plain(text):
+    return "".join(c for c in text.casefold() if c.isalnum())
+
+
+def spotlight_app(lines, name):
+    """Where to tap in Spotlight's results to open the app called `name`, or None
+    when Enter already opens it (it is the top hit) or no app has that exact name.
+    The top hit is the first line under the search field; the Apps section lists
+    one app per line, indented, until the next section's header at the left edge."""
+    want = _plain(name)
+    below = [ln for ln in lines if ln[1] > 0.12]
+    if not want or not below or _plain(below[0][2]) == want:
+        return None
+    apps = False
+    for x, y, text in below:
+        if _plain(text) == "apps" and x < 0.22:
+            apps = True
+        elif apps and x < 0.22:  # the next section's header
+            return None
+        elif apps and _plain(text) == want:
+            return x, y
+    return None
 
 
 def type_text(h, text):
