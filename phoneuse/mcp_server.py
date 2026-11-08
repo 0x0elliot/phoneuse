@@ -11,6 +11,9 @@ value is above 1. Same engine as the `phoneuse` CLI.
 Run it with bin/phoneuse-mcp; it needs `phoneuse up` running.
 """
 import contextlib
+import functools
+import glob
+import importlib
 import io
 import os
 import sys
@@ -20,6 +23,48 @@ from PIL import Image as PILImage
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import cli, touch
+
+# Code changes reach a running server: before each tool call, the phoneuse modules
+# whose files changed since the last call are reloaded in place, dependencies
+# first (a module that does "from .x import y" copies y when it loads). The
+# tools' own names, arguments and descriptions are read once at start, so
+# changes to this file still need a restart.
+RELOAD_ORDER = ["config", "hidclient", "phones", "screen", "touch", "pointer", "calibrate", "unlock", "cli"]
+_PKG = os.path.dirname(os.path.abspath(__file__))
+
+
+def _code_stamp():
+    return max(os.stat(f).st_mtime_ns for f in glob.glob(os.path.join(_PKG, "*.py"))
+               if not f.endswith("mcp_server.py"))
+
+
+_loaded_stamp = _code_stamp()
+
+
+def _reload_changed():
+    global _loaded_stamp
+    stamp = _code_stamp()
+    if stamp == _loaded_stamp:
+        return
+    try:
+        for name in RELOAD_ORDER:
+            mod = sys.modules.get(f"{__package__}.{name}")
+            if mod:
+                importlib.reload(mod)
+        _loaded_stamp = stamp
+        print("phoneuse: reloaded changed code", file=sys.stderr, flush=True)
+    except Exception as e:  # a file mid-edit: keep the code that works, try again next call
+        print(f"phoneuse: reload failed, kept the running code: {type(e).__name__}: {e}", file=sys.stderr,
+              flush=True)
+
+
+def tool(fn):
+    @functools.wraps(fn)
+    def run(*a, **kw):
+        _reload_changed()
+        return fn(*a, **kw)
+    return server.tool(structured_output=False)(run)
+
 
 Look = Literal["strip", "both", "text", "image", "none"]
 STRIP_AT = (0.1, 0.4, 0.8)  # seconds after an action: frames in the strip
@@ -142,7 +187,7 @@ def _pt(x, y):
     return cli.point(str(x), str(y))
 
 
-@server.tool(structured_output=False)
+@tool
 def look(look: Look = "both") -> list:
     """The phone's screen now: one settled screenshot and text lines with positions
     ("both"), or "strip": three frames over 0.8 s, to watch something move."""
@@ -151,7 +196,7 @@ def look(look: Look = "both") -> list:
     return parts + (["\n".join(cli.NOTES)] if cli.NOTES else [])
 
 
-@server.tool(structured_output=False)
+@tool
 def wait(seconds: float = 1.0, look: Look = "strip") -> list:
     """Wait, then look again: for a page or result still loading in the last frames.
     Decide from what you saw how long (0.5-10 s)."""
@@ -167,7 +212,7 @@ def _guard(x, y, force):
     return [f"Not tapped: {why}"] if why else None
 
 
-@server.tool(structured_output=False)
+@tool
 def tap(x: float, y: float, look: Look = "strip", force: bool = False) -> list:
     """Tap at (x, y): fractions of the screen (0..1), or phone points if a value is above 1.
     Refused when the area around (x, y) changed since your last view (look again);
@@ -175,7 +220,7 @@ def tap(x: float, y: float, look: Look = "strip", force: bool = False) -> list:
     return _guard(x, y, force) or _act(lambda h: touch.tap(h, *_pt(x, y)), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def tap_on(target: str, look: Look = "strip") -> list:
     """Tap an element by description. Visible text is tapped exactly; text that isn't on
     screen is refused. Visual descriptions ("gear icon", "back button", "share button")
@@ -183,26 +228,26 @@ def tap_on(target: str, look: Look = "strip") -> list:
     return _act(lambda h: cli.tap_on(h, target), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "strip", force: bool = False) -> list:
     """Press and hold at (x, y). Refused like tap when the area moved since your last view."""
     return _guard(x, y, force) or _act(lambda h: touch.long_press(h, *_pt(x, y), hold=seconds), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def swipe(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.3, look: Look = "strip") -> list:
     """Drag from (x0, y0) to (x1, y1) over `seconds` (sliders, custom gestures)."""
     return _act(lambda h: touch.swipe(h, *_pt(x0, y0), *_pt(x1, y1), duration=seconds), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def scroll(direction: Literal["up", "down"] = "down", amount: float = 1.0, look: Look = "strip") -> list:
     """Scroll the content by `amount` half-screens. It stops where the drag ends
     (no fling)."""
     return _act(lambda h: cli.scroll(h, direction, amount), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def scroll_by(dy: float, x: float = 0.5, look: Look = "strip") -> list:
     """Scroll exactly `dy`: a fraction of the screen height, or phone points if
     above 1. Positive shows what is below, negative what is above. For lining
@@ -210,7 +255,7 @@ def scroll_by(dy: float, x: float = 0.5, look: Look = "strip") -> list:
     return _act(lambda h: cli.scroll_by(h, dy, x), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def type_text(text: str, replace: bool = True, look: Look = "strip") -> list:
     """Type text into the focused field (US layout); "\\n" presses Enter. By default
     the text replaces what the field already holds (Cmd+A first): fields often keep
@@ -223,20 +268,20 @@ def type_text(text: str, replace: bool = True, look: Look = "strip") -> list:
     return _act(act, look)
 
 
-@server.tool(structured_output=False)
+@tool
 def press_key(combo: str, look: Look = "strip") -> list:
     """Press a key or shortcut: enter, escape, backspace, tab, arrows, cmd+space, shift+tab..."""
     return _act(lambda h: cli.key_combo(h, combo), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def toggle_keyboard(look: Look = "strip") -> list:
     """Show or hide the iPhone's on-screen keyboard (it hides while phoneuse's
     Bluetooth keyboard is connected). Useful to see suggestions or emoji."""
     return _act(lambda h: h.cmd("eject"), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def cursor(on: bool | None = None, look: Look = "strip") -> list:
     """Whether the phone's pointer works (AssistiveTouch), or switch it. Taps and
     drags need it on; a newly connected phone often has it off. on=True/False asks
@@ -247,7 +292,7 @@ def cursor(on: bool | None = None, look: Look = "strip") -> list:
     return _act(lambda h: cli.cursor_set(h, on), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def calibrate(look: Look = "strip") -> list:
     """Measure how far the pointer moves on the mirroring phone (about 10 s of
     hovering; nothing is tapped). Drags and swipes use the result. Runs by itself
@@ -257,13 +302,13 @@ def calibrate(look: Look = "strip") -> list:
     return _act(lambda h: cal.calibrate(h, log=lambda *_: None), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def open_app(name: str, look: Look = "strip") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)
 
 
-@server.tool(structured_output=False)
+@tool
 def navigate(to: Literal["home", "back", "switcher", "control-center", "notifications", "dismiss"],
              look: Look = "strip") -> list:
     """System gestures: home screen, back (edge swipe), app switcher, Control Center,
@@ -273,7 +318,7 @@ def navigate(to: Literal["home", "back", "switcher", "control-center", "notifica
     return _act(fn, look)
 
 
-@server.tool(structured_output=False)
+@tool
 def unlock(look: Look = "text") -> list:
     """On the lock screen: ask the owner to approve an unlock with their saved passcode.
     Waits up to 2 minutes for their answer. You never see the passcode."""
@@ -282,7 +327,7 @@ def unlock(look: Look = "text") -> list:
     return [msg if ok else f"error: {msg}"] + _screen(look)
 
 
-@server.tool(structured_output=False)
+@tool
 def end_session() -> str:
     """Call when your task on the phone is done: the user's view stops showing an
     agent at work and their own mouse and keyboard reach the phone again at once.
@@ -290,7 +335,7 @@ def end_session() -> str:
     return _quietly(cli.agent_done)[1]
 
 
-@server.tool(structured_output=False)
+@tool
 def status() -> str:
     """Bluetooth link and mirror state; run first if anything fails."""
     return _quietly(cli.status)[1]
