@@ -215,7 +215,8 @@ def agent_turn():
                                  data=json.dumps({"action": ACTION}).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=2).close()
+        # up to 2 minutes when the owner asked to approve each agent session (SessionRequests in web.py)
+        urllib.request.urlopen(req, timeout=130).close()
     except urllib.error.HTTPError as e:
         if e.code == 409:
             die(json.loads(e.read()).get("result", "the user took over the phone; stop and wait"))

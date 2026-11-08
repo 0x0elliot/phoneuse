@@ -107,6 +107,7 @@ class Mirror:
         self.agent_steps = 0  # actions in this agent session
         self.agent_started = 0.0  # when this agent session started
         self.unlocks = None
+        self.sessions = None
 
     def get_hid(self):
         if self.hid is None:
@@ -221,6 +222,8 @@ class Mirror:
     def take_over(self, take):
         self.taken_over = take
         self.agent_until = 0.0
+        if take and self.sessions:
+            self.sessions.end()
         self.broadcast_state()
 
     def broadcast_state(self):
@@ -447,8 +450,118 @@ class UnlockRequests:
         return web.json_response({"ok": True})
 
 
+ASK_FILE = os.path.join(os.path.dirname(config_path()), "ask-before-session")  # exists: ask before each agent session
+
+
+def ask_before_session():
+    return os.path.exists(ASK_FILE)
+
+
+def set_ask_before_session(on):
+    if on:
+        open(ASK_FILE, "w").close()
+    elif os.path.exists(ASK_FILE):
+        os.remove(ASK_FILE)
+
+
+class SessionRequests:
+    """With "ask before an agent session" on, an agent's first action waits until the owner
+    allows the session: in the companion app's notification, a desktop notification or the
+    browser mirror. Once allowed, the agent keeps the phone until it hands it back
+    (`phoneuse done`), the owner takes over, or it stays idle for ASK_GAP seconds."""
+
+    ASK_GAP = 300.0
+    WAIT = 120.0
+
+    def __init__(self, mirror):
+        self.mirror = mirror
+        self.pending = None  # {"id", "event", "approved", "notice", "since", "action"}
+        self.allowed_until = 0.0  # the allowed session lasts while actions keep coming
+        self.companion = None
+
+    def needed(self):
+        return ask_before_session() and time.time() > self.allowed_until
+
+    def acted(self):
+        if ask_before_session():
+            self.allowed_until = time.time() + self.ASK_GAP
+
+    def end(self):
+        self.allowed_until = 0.0
+
+    def broadcast(self, msg):
+        for tab in list(self.mirror.tabs):
+            asyncio.ensure_future(tab.ws.send_str(json.dumps(msg)))
+
+    async def ask(self, action):
+        """True once the owner allows the session; else the reason it can't start."""
+        p = self.pending
+        if not p:  # concurrent first actions share one request
+            p = self.pending = {"id": secrets.token_hex(8), "event": asyncio.Event(), "approved": False,
+                                "notice": None, "since": time.time(), "action": action}
+            self.broadcast({"type": "session-request", "id": p["id"], "action": action})
+            if self.companion:
+                asyncio.get_running_loop().run_in_executor(None, self.companion.push_session, p["id"], action)
+            asyncio.ensure_future(self._notify(p))
+            log("an agent asks to use the phone; waiting for the owner")
+        try:
+            await asyncio.wait_for(asyncio.shield(p["event"].wait()), self.WAIT)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            if self.pending is p:
+                self.pending = None
+                self.broadcast({"type": "session-done"})
+                if p["notice"] and p["notice"].returncode is None:
+                    p["notice"].kill()
+        if not p["event"].is_set():
+            return "The owner didn't allow the agent session within 2 minutes. Stop and tell the user."
+        if not p["approved"]:
+            log("agent session declined")
+            return "The owner declined the agent session. Stop; don't retry unless the user asks you to."
+        self.allowed_until = time.time() + self.ASK_GAP
+        log("agent session allowed")
+        return True
+
+    def answer_id(self, rid, approve):
+        p = self.pending
+        if not p or rid != p["id"]:
+            return False
+        p["approved"] = bool(approve)
+        p["event"].set()
+        return True
+
+    async def answer(self, req):
+        if not same_origin(req):
+            return web.Response(status=403)
+        body = await req.json()
+        return web.json_response({"ok": self.answer_id(body.get("id"), body.get("approve"))})
+
+    async def setting(self, req):
+        # The browser mirror's settings: ask before an agent session, on or off.
+        if req.method == "POST":
+            if not same_origin(req):
+                return web.Response(status=403)
+            set_ask_before_session(bool((await req.json()).get("on")))
+        return web.json_response({"on": ask_before_session()})
+
+    async def _notify(self, p):
+        try:
+            p["notice"] = await asyncio.create_subprocess_exec(
+                "notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "allow=Allow", "-A", "deny=Deny",
+                "Let an agent use the iPhone?", f"{p['action'] or 'An agent'} wants to start. Answer here or at "
+                f"http://localhost:{PORT}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await p["notice"].communicate()
+            choice = out.decode().strip()
+            if choice in ("allow", "deny"):
+                self.answer_id(p["id"], choice == "allow")
+        except OSError:
+            pass
+
+
 def app(mirror):
     unlocks = mirror.unlocks = UnlockRequests(mirror)
+    sessions = mirror.sessions = SessionRequests(mirror)
 
     async def page(_req):
         return web.FileResponse(PAGE, headers={"Cache-Control": "no-cache"})
@@ -507,7 +620,12 @@ def app(mirror):
             action = str((await req.json()).get("action", ""))[:80]
         except ValueError:
             action = ""
+        if not mirror.taken_over and mirror.sessions.needed():
+            allowed = await mirror.sessions.ask(action)
+            if allowed is not True:
+                return web.json_response({"ok": False, "result": allowed}, status=409)
         if mirror.agent_acts(action):
+            mirror.sessions.acted()
             return web.json_response({"ok": True})
         return web.json_response({"ok": False, "result": "The user took over the phone. Stop and wait; "
                                   "continue only when they tell you to (they resume you on the page)."},
@@ -546,6 +664,7 @@ def app(mirror):
     async def agent_done(_req):
         # The agent's session is over: control goes back to the page at once.
         mirror.agent_until = 0.0
+        mirror.sessions.end()
         mirror.broadcast_state()
         return web.json_response({"ok": True})
 
@@ -570,6 +689,8 @@ def app(mirror):
     from .bridge_web import BridgeRoutes
     BridgeRoutes(same_origin).add(a)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
+    a.router.add_post("/api/session/answer", sessions.answer)
+    a.router.add_route("*", "/api/session/ask", sessions.setting)
 
     async def companion_pair(req):
         # `phoneuse app pair`: a one-time link that pairs the companion app.
@@ -597,7 +718,7 @@ def main():
         asyncio.ensure_future(mirror.keep_awake())
         try:  # the companion app's API on the local network (companion.py)
             from .companion import Companion
-            c = mirror.unlocks.companion = Companion(mirror, mirror.unlocks)
+            c = mirror.unlocks.companion = mirror.sessions.companion = Companion(mirror, mirror.unlocks)
             await c.start()
         except OSError as e:
             log("companion API off:", e)

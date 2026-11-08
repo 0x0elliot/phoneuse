@@ -99,6 +99,9 @@
     <button class="item" id="awake" role="switch" aria-checked="false" style="width: 100%; text-align: left">
       <span class="grow">Keep screen awake</span><span class="sw"></span>
     </button>
+    <button class="item" id="askSession" role="switch" aria-checked="false" style="width: 100%; text-align: left">
+      <span class="grow">Ask before an agent starts</span><span class="sw"></span>
+    </button>
   </div>
   <div class="label">Bluetooth bridge</div>
   <div class="group" id="bridge"></div>
@@ -117,7 +120,7 @@
 </div>
 <div id="ask" class="glass" hidden role="alertdialog" aria-label="Unlock request">
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:.7"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
-  <span>An agent wants to unlock the iPhone</span>
+  <span id="askText">An agent wants to unlock the iPhone</span>
   <button class="btn" id="deny">Deny</button>
   <button class="btn primary" id="approve">Unlock</button>
 </div>
@@ -301,8 +304,10 @@ function connect() {
     if (typeof e.data !== "string") return onFrame(e.data);
     const msg = JSON.parse(e.data);
     if (msg.type === "agent-cursor") return showAgentDot(msg);
-    if (msg.type === "unlock-request") return showAsk(msg.id);
-    if (msg.type === "unlock-done") return showAsk(null);
+    if (msg.type === "unlock-request") return showAsk(msg.id, "unlock");
+    if (msg.type === "unlock-done") return showAsk(null, "unlock");
+    if (msg.type === "session-request") return showAsk(msg.id, "session", msg.action);
+    if (msg.type === "session-done") return showAsk(null, "session");
     if (msg.type !== "state") return;
     const wasLive = state.live;
     state = msg;
@@ -511,15 +516,23 @@ function bridgePassword(n, error) {
   };
 }
 
-// ---- unlock requests from agents: the owner answers here ----
+// ---- requests from agents (an unlock, or a session when "ask before an agent starts"
+// is on): the owner answers here ----
 const ask = document.getElementById("ask");
-let askId = null;
-function showAsk(id) { askId = id; ask.hidden = !id; }
+let askId = null, askKind = "unlock";
+function showAsk(id, kind, action) {
+  if (!id && kind !== askKind) return;  // the other request ended
+  askId = id; askKind = kind; ask.hidden = !id;
+  if (!id) return;
+  document.getElementById("askText").textContent = kind === "session"
+    ? `An agent wants to use the iPhone${action ? ` (${action})` : ""}` : "An agent wants to unlock the iPhone";
+  document.getElementById("approve").textContent = kind === "session" ? "Allow" : "Unlock";
+}
 async function answer(approve) {
   if (!askId) return;
-  await fetch("/api/unlock/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ id: askId, approve }) });
-  showAsk(null);
+  await fetch(`/api/${askKind}/answer`, { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ id: askId, approve }) });
+  showAsk(null, askKind);
 }
 document.getElementById("approve").onclick = () => answer(true);
 document.getElementById("deny").onclick = () => answer(false);
@@ -538,6 +551,14 @@ kbd.onclick = async () => {
 const awakeSw = document.getElementById("awake");
 awakeSw.onclick = () => fetch("/api/awake", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ on: awakeSw.getAttribute("aria-checked") !== "true" }) });
+
+const askSw = document.getElementById("askSession");
+askSw.onclick = async () => {
+  const r = await fetch("/api/session/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ on: askSw.getAttribute("aria-checked") !== "true" }) });
+  if (r.ok) askSw.setAttribute("aria-checked", (await r.json()).on);
+};
+fetch("/api/session/ask").then((r) => r.json()).then((j) => askSw.setAttribute("aria-checked", j.on)).catch(() => {});
 
 // ---- agent sessions ----
 const takeover = document.getElementById("takeover"), takeoverLabel = document.getElementById("takeoverLabel");

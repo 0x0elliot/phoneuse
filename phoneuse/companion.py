@@ -193,10 +193,18 @@ class Companion:
                       "steps": m.agent_steps},
             "awake": m.awake,
             "audio": {"on": not os.path.exists(AUDIO_OFF), "needs_remirror": self.needs_remirror()},
+            "session": {"ask": os.path.exists(self._ask_file()),
+                        "pending": ({"id": sp["id"], "since": int(sp["since"]), "action": sp["action"]}
+                                    if (sp := self.mirror.sessions.pending) else None)},
             "unlock": {"passcode_saved": await self.run(unlock.saved),
                        "pending": {"id": p["id"], "since": int(p.get("since", 0))} if p else None},
             "bridge": bridge_state,
         })
+
+    @staticmethod
+    def _ask_file():
+        from .web import ASK_FILE
+        return ASK_FILE
 
     def needs_remirror(self):
         return bool(self.audio_restarted) and not self.mirror.live()
@@ -217,6 +225,17 @@ class Companion:
         p["approved"] = bool(b.get("approve"))
         p["event"].set()
         return web.json_response({"ok": True})
+
+    async def session_answer(self, req):
+        b = req["json"]
+        if not self.mirror.sessions.answer_id(b.get("id"), b.get("approve")):
+            return web.json_response({"error": "That request is over."}, status=409)
+        return web.json_response({"ok": True})
+
+    async def ask_setting(self, req):
+        from .web import set_ask_before_session, ask_before_session
+        set_ask_before_session(bool(req["json"].get("on")))
+        return web.json_response({"on": ask_before_session()})
 
     async def passcode(self, req):
         try:
@@ -314,6 +333,19 @@ class Companion:
     def _devices(self):
         return [dev for dev in load()["devices"].values() if dev.get("bundle_id")]
 
+    def push_session(self, rid, action):
+        if not apns.configured():
+            return
+        for dev in self._devices():
+            if dev.get("device"):
+                r = apns.send(dev["device"], {"aps": {"alert": {"title": "Let an agent use your phone?",
+                                                                 "body": f"{action or 'An agent'} wants to start."},
+                                                       "category": "SESSION", "sound": "default",
+                                                       "interruption-level": "time-sensitive"},
+                                              "session_id": rid},
+                              dev["bundle_id"], "alert", dev.get("env", "production"))
+                log("session request push:", r)
+
     def push_unlock(self, rid):
         if not apns.configured():
             return
@@ -396,6 +428,8 @@ class Companion:
         r.add_post("/v1/agent/takeover", self.takeover)
         r.add_post("/v1/agent/resume", self.resume)
         r.add_post("/v1/unlock/answer", self.unlock_answer)
+        r.add_post("/v1/session/answer", self.session_answer)
+        r.add_post("/v1/session/ask", self.ask_setting)
         r.add_route("POST", "/v1/passcode", self.passcode)
         r.add_route("DELETE", "/v1/passcode", self.passcode)
         r.add_post("/v1/awake", self.awake)

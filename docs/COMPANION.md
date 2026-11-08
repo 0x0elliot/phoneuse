@@ -50,6 +50,8 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 | `POST /v1/agent/takeover` | `{}` | Stops the agent: its next action fails with "the user took over" |
 | `POST /v1/agent/resume` | `{}` | Lets the agent continue |
 | `POST /v1/unlock/answer` | `{"id", "approve": bool}` | Answers a pending unlock request |
+| `POST /v1/session/ask` | `{"on": bool}` | Ask the owner before each agent session, or not (off by default) |
+| `POST /v1/session/answer` | `{"id", "approve": bool}` | Answers a pending session request |
 | `POST /v1/passcode` | `{"sealed"}` (field `passcode`) | Saves the passcode that unlocks use |
 | `DELETE /v1/passcode` | | Forgets the passcode |
 | `POST /v1/awake` | `{"on": bool}` | Keep the screen awake or not |
@@ -72,13 +74,22 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
   "agent": {"state": "idle | driving | paused", "action": "Opening Gmail", "since": 1794153854},
   "awake": true,
   "audio": {"on": true, "needs_remirror": false},
+  "session": {"ask": false, "pending": {"id": "…", "since": 1794153854, "action": "Opening Gmail"}},
   "unlock": {"passcode_saved": true, "pending": {"id": "…", "since": 1794153854}},
   "bridge": {"saved": true, "id": "…", "ip": "192.168.0.51", "ssid": "Giraffe IoT", "use": true,
              "online": true, "rtt_ms": 15}
 }
 ```
 
-`unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
+`session.pending`, `unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
+
+## Asking before an agent session
+
+When `session.ask` is on, an agent's first action waits until the owner allows the session, for up to 2 minutes.
+The owner can answer in the app's notification, in the app, in a desktop notification or in the browser mirror. If
+the owner declines or doesn't answer, the agent's action fails with a message that tells it to stop. Once allowed,
+the session lasts until the agent hands the phone back (`phoneuse done`), the owner takes over, or the agent sends
+no action for 5 minutes; after that, the next action asks again.
 
 ## Audio
 
@@ -110,6 +121,9 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `event: "update"`, `content-state`.
 - **End**, when the session ends (`phoneuse done`, or 20 s without an action): `event: "end"`, the last
   `content-state`, and `dismissal-date` 10 s later.
+- **Session request** (topic `<bundle id>`, push type `alert`), to the device token: an alert with category
+  `SESSION`, `interruption-level: "time-sensitive"` and `"session_id"` in the payload. The app's notification
+  actions **Allow** and **Deny** call `POST /v1/session/answer`.
 - **Unlock request** (topic `<bundle id>`, push type `alert`), to the device token: an alert with category
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
@@ -128,7 +142,7 @@ with a **Take over** button (a `LiveActivityIntent` that calls `POST /v1/agent/t
 
 The app's own screen shows the PC's state and has these settings, each changing the PC at once:
 
-- the agent session: take over or resume;
+- the agent session: take over or resume, and whether to ask before an agent starts;
 - unlocking: whether a passcode is saved, save or replace it, forget it, and a pending request to approve or deny;
 - keep the screen awake;
 - the on-screen keyboard: show or hide;
