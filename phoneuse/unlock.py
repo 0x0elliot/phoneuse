@@ -69,7 +69,9 @@ def locked(screen_text):
     or the passcode prompt."""
     lines = screen_text()
     words = " ".join(t for _, _, t in lines).lower()
-    if "passcode" in words or ("emergency" in words and "cancel" in words):
+    # iOS's prompt says "Enter Passcode" (other screens, such as the companion app's
+    # settings, mention a passcode too)
+    if re.search(r"\benter (iphone )?passcode\b", words) or ("emergency" in words and "cancel" in words):
         return True
     clock = [y for x, y, t in lines if re.fullmatch(r"\d{1,2}:\d{2}", t.strip()) and 0.1 < y < 0.32 and 0.3 < x < 0.7]
     date = [y for x, y, t in lines if re.match(r"(mon|tue|wed|thu|fri|sat|sun)", t.strip().lower()) and y < 0.2]
