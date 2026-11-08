@@ -19,7 +19,6 @@ actor PushRegistrar {
     static let env = "production"
     #endif
 
-    private let log = Logger(subsystem: "co.lxe.phoneuse", category: "push")
     private var device: String?
     private var pushToStart: String?
     private var watched: Set<String> = []
@@ -30,6 +29,7 @@ actor PushRegistrar {
     }
 
     func setDevice(_ token: Data) async {
+        AppLog.write("device token \(AppLog.short(token))")
         device = CompanionCrypto.hex(token)
         await send(["device": device!], what: "device token")
     }
@@ -39,7 +39,12 @@ actor PushRegistrar {
     /// build's tokens and environment.
     func resendAll() async {
         startWatching()
-        if let data = Activity<AgentActivityAttributes>.pushToStartToken { pushToStart = CompanionCrypto.hex(data) }
+        if let data = Activity<AgentActivityAttributes>.pushToStartToken {
+            AppLog.write("pushToStartToken now: \(AppLog.short(data))")
+            pushToStart = CompanionCrypto.hex(data)
+        } else {
+            AppLog.write("pushToStartToken now: none")
+        }
         var body: [String: Any] = [:]
         if let device { body["device"] = device }
         if let pushToStart { body["push_to_start"] = pushToStart }
@@ -56,6 +61,7 @@ actor PushRegistrar {
         started = true
         Task {
             for await data in Activity<AgentActivityAttributes>.pushToStartTokenUpdates {
+                AppLog.write("pushToStartTokenUpdates yielded \(AppLog.short(data))")
                 pushToStart = CompanionCrypto.hex(data)
                 await send(["push_to_start": pushToStart!], what: "push-to-start token")
             }
@@ -68,11 +74,22 @@ actor PushRegistrar {
 
     private func watch(_ activity: Activity<AgentActivityAttributes>) {
         guard watched.insert(activity.id).inserted else { return }
-        log.info("watching activity \(activity.id, privacy: .public)")
+        AppLog.write("watching activity \(activity.id) state \(activity.activityState) phase \(activity.content.state.phase ?? "-")")
         if let token = activity.pushToken { Task { await sendActivity(activity.id, token) } }
         Task {
-            for await data in activity.pushTokenUpdates { await sendActivity(activity.id, data) }
+            for await data in activity.pushTokenUpdates {
+                AppLog.write("activity \(activity.id) token \(AppLog.short(data))")
+                await sendActivity(activity.id, data)
+            }
         }
+    }
+
+    private func summary(_ fields: [String: Any]) -> String {
+        fields.map { k, v in
+            if let s = v as? String { return "\(k)=\(s.prefix(12))" }
+            if let d = v as? [String: Any] { return "\(k)=\(d["id"] ?? "")/\(String(describing: d["token"] ?? "").prefix(12))" }
+            return k
+        }.sorted().joined(separator: " ")
     }
 
     private func sendActivity(_ id: String, _ token: Data) async {
@@ -82,7 +99,7 @@ actor PushRegistrar {
     private func send(_ fields: [String: Any], what: String) async {
         let client: CompanionClient
         do { client = try CompanionClient.paired() } catch {
-            log.info("not paired; \(what, privacy: .public) not sent")
+            AppLog.write("not paired; \(what) not sent")
             return
         }
         var body = base
@@ -91,9 +108,9 @@ actor PushRegistrar {
         defer { Task { await BackgroundTask.end(task) } }
         do {
             _ = try await client.send("POST", "/v1/push", json: body, timeout: 10)
-            log.info("sent \(what, privacy: .public)")
+            AppLog.write("sent \(what) (env \(Self.env)): \(summary(fields))")
         } catch {
-            log.error("sending \(what, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            AppLog.write("sending \(what) failed: \(error)")
         }
     }
 }
@@ -139,13 +156,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     /// The PC's background push when a request ends without the app answering it:
     /// {"aps": {"content-available": 1}, "request_over": {"kind": "session" | "unlock", "id": "…"}}
-    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any])
-        async -> UIBackgroundFetchResult {
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler done: @escaping (UIBackgroundFetchResult) -> Void) {
         guard let over = userInfo["request_over"] as? [String: Any], let kind = over["kind"] as? String,
-              let id = over["id"] as? String else { return .noData }
-        await RequestNotifications.remove(kind: kind, id: id)
-        await AppModel.shared.refresh()
-        return .newData
+              let id = over["id"] as? String else { return done(.noData) }
+        AppLog.write("request_over \(kind) \(id)")
+        Task {
+            await RequestNotifications.remove(kind: kind, id: id)
+            await AppModel.shared.refresh()
+            done(.newData)
+        }
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

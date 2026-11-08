@@ -157,15 +157,44 @@ final class AppModel: ObservableObject {
     /// Ids of activities started with "Test Live Activity", which the PC knows nothing about.
     private var testActivities: Set<String> = []
 
-    /// When the app comes to the foreground: if the PC says no agent is running, end the PC's activities that are
-    /// still up, in case the PC's end push never arrived.
-    func endFinishedActivities() async {
+    /// The activity stays up while the phone mirrors to the PC, showing idle, asking, driving or paused. When the
+    /// app becomes active and the PC mirrors but no activity is up (the app was ended, or iOS removed it), the app
+    /// starts one in the PC's current state; when the PC doesn't mirror, it ends any left over.
+    func syncActivity() async {
         await refresh()
-        guard reachable, state?.agent.state == "idle" else { return }
-        for a in Activity<AgentActivityAttributes>.activities where !testActivities.contains(a.id) {
-            Logger(subsystem: "co.lxe.phoneuse", category: "activity")
-                .info("the PC is idle; ending activity \(a.id, privacy: .public)")
-            await a.end(nil, dismissalPolicy: .immediate)
+        guard reachable, let s = state else { return }
+        let ours = Activity<AgentActivityAttributes>.activities
+            .filter { !testActivities.contains($0.id) && $0.activityState == .active }
+        guard s.mirroring else {
+            for a in ours {
+                AppLog.write("not mirroring; ending activity \(a.id)")
+                await a.end(nil, dismissalPolicy: .immediate)
+            }
+            return
+        }
+        guard ours.isEmpty else { return }
+        do {
+            let a = try Activity.request(attributes: AgentActivityAttributes(pcName: s.pc.name),
+                                         content: ActivityContent(state: Self.contentState(s), staleDate: nil),
+                                         pushType: .token)
+            AppLog.write("started activity \(a.id) (\(a.content.state.state))")
+        } catch {
+            AppLog.write("starting the activity failed: \(error)")
+        }
+    }
+
+    static func contentState(_ s: PCState) -> AgentActivityAttributes.ContentState {
+        let now = Date().timeIntervalSince1970
+        if let p = s.session?.pending {
+            return .init(state: "asking", phase: "asking", requestId: p.id, action: p.action ?? "", steps: 0,
+                         startedAt: p.since ?? now)
+        }
+        switch s.agent.state {
+        case "driving", "paused":
+            return .init(state: s.agent.state, phase: s.agent.state == "paused" ? "paused" : "thinking", requestId: nil,
+                         action: s.agent.action ?? "", steps: s.agent.steps ?? 0, startedAt: s.agent.since ?? now)
+        default:
+            return .init(state: "idle", phase: nil, requestId: nil, action: "", steps: 0, startedAt: now)
         }
     }
 
@@ -188,7 +217,7 @@ final class AppModel: ObservableObject {
 
     func startTestActivity() {
         let state = AgentActivityAttributes.ContentState(
-            state: "driving", phase: "thinking", action: "Opening Gmail", steps: 12,
+            state: "driving", phase: "thinking", requestId: nil, action: "Opening Gmail", steps: 12,
             startedAt: Date().timeIntervalSince1970 - 95)
         do {
             let a = try Activity.request(attributes: AgentActivityAttributes(pcName: pairing?.name ?? "PC"),

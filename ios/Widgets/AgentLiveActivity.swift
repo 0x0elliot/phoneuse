@@ -13,7 +13,15 @@ struct PhoneUseWidgets: WidgetBundle {
 struct AgentLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: AgentActivityAttributes.self) { context in
-            LockScreenView(state: context.state, pcName: context.attributes.pcName)
+            Group {
+                if context.state.asking {
+                    AskingView(state: context.state, pcName: context.attributes.pcName)
+                } else if context.state.idle {
+                    IdleView(pcName: context.attributes.pcName)
+                } else {
+                    LockScreenView(state: context.state, pcName: context.attributes.pcName)
+                }
+            }
                 .padding()
                 .activityBackgroundTint(Color.black.opacity(0.6))
                 .activitySystemActionForegroundColor(.white)
@@ -29,23 +37,38 @@ struct AgentLiveActivity: Widget {
                     .foregroundStyle(phaseColor(s))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text("\(s.steps) steps").font(.caption).monospacedDigit().contentTransition(.numericText())
+                    if s.asking || s.idle {
+                        Text(context.attributes.pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        Text("\(s.steps) steps").font(.caption).monospacedDigit().contentTransition(.numericText())
+                    }
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(s.action).font(.headline).lineLimit(1)
+                    Text(s.idle ? "You're in control" : s.paused ? "You took over" : s.action)
+                        .font(.headline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
+                    if s.asking {
+                        AnswerButtons(requestId: s.requestId ?? "")
+                    } else if !s.idle {
                     HStack {
                         Text(timerInterval: s.startDate...Date.distantFuture, countsDown: false)
                             .monospacedDigit().foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
                         Spacer()
                         ControlButton(paused: s.paused)
                     }
+                    }
                 }
             } compactLeading: {
                 PhaseIcon(state: s)
             } compactTrailing: {
-                Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
+                if s.asking {
+                    Text("Allow?").font(.caption).foregroundStyle(phaseColor(s))
+                } else if s.idle {
+                    EmptyView()
+                } else {
+                    Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
+                }
             } minimal: {
                 PhaseIcon(state: s)
             }
@@ -70,6 +93,8 @@ struct PhaseIcon: View {
 func phaseSymbol(_ s: AgentActivityAttributes.ContentState) -> String {
     switch s.currentPhase {
     case "paused": return "pause.circle.fill"
+    case "asking": return "hand.raised.fill"
+    case "idle": return "cursorarrow"  // the PhoneUse glyph, quiet
     case "thinking": return "rays"  // a spinner
     case "reading": return "eye.fill"
     case "acting": return "cursorarrow.click.2"  // a pointer with a tap ripple
@@ -79,7 +104,9 @@ func phaseSymbol(_ s: AgentActivityAttributes.ContentState) -> String {
 
 func phaseColor(_ s: AgentActivityAttributes.ContentState) -> Color {
     switch s.currentPhase {
-    case "paused": return .orange
+    case "paused": return .yellow
+    case "asking": return .orange
+    case "idle": return .secondary
     case "thinking": return .purple
     case "reading": return .mint
     default: return .cyan
@@ -89,6 +116,8 @@ func phaseColor(_ s: AgentActivityAttributes.ContentState) -> Color {
 func phaseName(_ s: AgentActivityAttributes.ContentState) -> String {
     switch s.currentPhase {
     case "paused": return "Paused"
+    case "asking": return "Agent wants to start"
+    case "idle": return "PhoneUse"
     case "thinking": return "Thinking"
     case "reading": return "Reading"
     case "acting": return "Acting"
@@ -106,7 +135,7 @@ struct LockScreenView: View {
                 .font(.title)
                 .frame(width: 36)
             VStack(alignment: .leading, spacing: 2) {
-                Text(state.paused ? "Paused" : state.action).font(.headline).lineLimit(1)
+                Text(state.paused ? "You took over" : state.action).font(.headline).lineLimit(1)
                     .contentTransition(.opacity)
                 HStack(spacing: 4) {
                     Text("\(state.steps) steps ·").fixedSize().contentTransition(.numericText())
@@ -120,6 +149,61 @@ struct LockScreenView: View {
             Spacer()
             ControlButton(paused: state.paused)
         }
+    }
+}
+
+/// No agent: a quiet line while the phone mirrors to the PC.
+struct IdleView: View {
+    var pcName: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "cursorarrow").font(.title3).foregroundStyle(.secondary)
+            Text("You're in control").font(.subheadline)
+            Spacer()
+            Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
+/// A session request: the agent waits for Allow or Deny before its first action.
+struct AskingView: View {
+    var state: AgentActivityAttributes.ContentState
+    var pcName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                PhaseIcon(state: state)
+                    .font(.title)
+                    .frame(width: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent wants to start").font(.caption).foregroundStyle(.secondary)
+                    Text(state.action).font(.headline).lineLimit(2)
+                    Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+            }
+            AnswerButtons(requestId: state.requestId ?? "")
+        }
+    }
+}
+
+struct AnswerButtons: View {
+    var requestId: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(intent: DenySessionIntent(requestId: requestId)) {
+                Label("Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
+            }
+            .tint(.red)
+            Button(intent: AllowSessionIntent(requestId: requestId)) {
+                Label("Allow", systemImage: "checkmark").lineLimit(1).frame(maxWidth: .infinity)
+            }
+            .tint(.green)
+        }
+        .buttonStyle(.borderedProminent)
     }
 }
 

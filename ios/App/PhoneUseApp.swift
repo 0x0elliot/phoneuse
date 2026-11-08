@@ -17,7 +17,7 @@ struct PhoneUseApp: App {
                         UIApplication.shared.registerForRemoteNotifications()  // iOS answers with the device token again
                         Task {
                             await PushRegistrar.shared.resendAll()
-                            await model.endFinishedActivities()
+                            await model.syncActivity()
                         }
                     } else {
                         model.stopPolling()

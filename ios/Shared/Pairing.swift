@@ -48,9 +48,23 @@ enum PairingStore {
     }()
     private static let service = "co.lxe.phoneuse.pairing"
 
+    /// The PC's id, name and address, also kept in the Keychain so the pairing survives deleting and reinstalling
+    /// the app (iOS keeps Keychain items; it deletes the app's defaults).
+    private static let metaAccount = "current"
+    private static let metaService = "co.lxe.phoneuse.pairing.meta"
+
     static func load() -> Pairing? {
+        if defaults.string(forKey: "pc.id") == nil, let data = Keychain.read(service: metaService, account: metaAccount),
+           let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let id = meta["id"] as? String, let host = meta["host"] as? String {
+            defaults.set(id, forKey: "pc.id")
+            defaults.set(meta["name"] as? String ?? id, forKey: "pc.name")
+            defaults.set(host, forKey: "pc.host")
+            defaults.set(meta["port"] as? Int ?? 8778, forKey: "pc.port")
+        }
         guard let id = defaults.string(forKey: "pc.id"), let host = defaults.string(forKey: "pc.host"),
               let key = Keychain.read(service: service, account: id) else { return nil }
+        if Keychain.read(service: metaService, account: metaAccount) == nil { saveMeta() }
         return Pairing(id: id, name: defaults.string(forKey: "pc.name") ?? id, host: host,
                        port: defaults.integer(forKey: "pc.port"), key: key)
     }
@@ -62,15 +76,28 @@ enum PairingStore {
         defaults.set(p.name, forKey: "pc.name")
         defaults.set(p.host, forKey: "pc.host")
         defaults.set(p.port, forKey: "pc.port")
+        saveMeta()
+    }
+
+    private static func saveMeta() {
+        guard let id = defaults.string(forKey: "pc.id") else { return }
+        let meta: [String: Any] = ["id": id, "name": defaults.string(forKey: "pc.name") ?? id,
+                                   "host": defaults.string(forKey: "pc.host") ?? "",
+                                   "port": defaults.integer(forKey: "pc.port")]
+        if let data = try? JSONSerialization.data(withJSONObject: meta) {
+            Keychain.write(data, service: metaService, account: metaAccount)
+        }
     }
 
     static func updateAddress(host: String, port: Int) {
         defaults.set(host, forKey: "pc.host")
         defaults.set(port, forKey: "pc.port")
+        saveMeta()
     }
 
     static func forget() {
         if let id = defaults.string(forKey: "pc.id") { Keychain.delete(service: service, account: id) }
+        Keychain.delete(service: metaService, account: metaAccount)
         for k in ["pc.id", "pc.name", "pc.host", "pc.port"] { defaults.removeObject(forKey: k) }
     }
 }
