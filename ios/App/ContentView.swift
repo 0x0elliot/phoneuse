@@ -89,14 +89,16 @@ struct SettingsView: View {
                 bridgeSection(s)
                 Section {
                     Toggle(isOn: binding(s.audio.on) { on in await model.setAudio(on) }) {
-                        row("Mirror Audio", "speaker.wave.2", busy: "audio")
+                        row("Sound on the PC", "speaker.wave.2", busy: "audio")
                     }
                     .accessibilityIdentifier("audio")
                     if s.audio.needsRemirror == true {
                         Label("Start Screen Mirroring to PhoneUse again.", systemImage: "airplayvideo")
                             .foregroundStyle(.orange)
                     }
-                } header: { Text("Mirror") }
+                } header: { Text("Mirror") } footer: {
+                    Text("Off mutes it; iOS can't keep sound on the phone while mirroring.")
+                }
                 }
                 .disabled(offline)
             }
@@ -179,10 +181,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("resume")
             }
             if let session = s.session {
-                Toggle(isOn: binding(session.ask) { on in await model.setSessionAsk(on) }) {
-                    Label("Ask before agent starts", systemImage: "hand.raised.square")
-                }
-                .accessibilityIdentifier("sessionAsk")
+                StartModeRow(session: session)
             }
         }
     }
@@ -448,25 +447,42 @@ struct RequestSheet: View {
     @EnvironmentObject var model: AppModel
     var request: PCState.Pending
 
+    private var deadline: Date? {
+        request.deadline.map { Date(timeIntervalSince1970: $0) }.flatMap { $0 > Date() ? $0 : nil }
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             Image("pu.asking").font(.system(size: 54)).foregroundStyle(.orange)
             VStack(spacing: 6) {
-                Text("Agent wants to start").font(.title2.bold())
-                if let action = request.action, !action.isEmpty {
-                    Text(action).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                if let deadline {
+                    HStack(spacing: 6) {
+                        Text("Agent starts in")
+                        Text(timerInterval: Date()...deadline, countsDown: true).monospacedDigit()
+                    }
+                    .font(.title2.bold())
+                    if let action = request.action, !action.isEmpty {
+                        Text("First step: \(action)").font(.headline).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                } else {
+                    Text("Agent wants control of your iPhone").font(.title2.bold()).multilineTextAlignment(.center)
+                    if let action = request.action, !action.isEmpty {
+                        Text(action).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
                 }
                 if let name = model.pairing?.name { Text(name).font(.subheadline).foregroundStyle(.secondary) }
             }
             HStack(spacing: 14) {
                 Button(role: .destructive) { Task { await model.answerSession(id: request.id, approve: false) } } label: {
-                    Text("Deny").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
+                    Text(deadline == nil ? "Deny" : "Stop").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .accessibilityIdentifier("sheetDeny")
                 Button { Task { await model.answerSession(id: request.id, approve: true) } } label: {
-                    Text("Allow").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
+                    Text(deadline == nil ? "Allow" : "Start now").font(.title3.bold())
+                        .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
@@ -475,5 +491,57 @@ struct RequestSheet: View {
             .disabled(model.busy.contains("session"))
         }
         .padding(24)
+    }
+}
+
+/// "When an agent starts": go ahead, wait N seconds (5-30), or ask.
+struct StartModeRow: View {
+    @EnvironmentObject var model: AppModel
+    var session: PCState.Session
+    @State private var seconds: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("When an agent starts")
+                if model.busy.contains("sessionMode") { Spacer(); ProgressView() }
+            }
+            Picker("When an agent starts", selection: Binding(
+                get: { session.currentMode },
+                set: { mode in Task { await model.setSessionMode(mode) } }
+            )) {
+                Text("Go ahead").tag("auto")
+                Text("Wait").tag("countdown")
+                Text("Ask me").tag("ask")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("sessionMode")
+            if session.currentMode == "countdown" {
+                let shown = Int(seconds ?? Double(session.seconds ?? 10))
+                HStack {
+                    Slider(value: Binding(get: { seconds ?? Double(session.seconds ?? 10) }, set: { seconds = $0 }),
+                           in: 5...30, step: 1) { editing in
+                        if !editing, let seconds {
+                            Task {
+                                await model.setSessionSeconds(Int(seconds))
+                                self.seconds = nil
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("sessionSeconds")
+                    Text("\(shown) s").monospacedDigit().frame(width: 40, alignment: .trailing)
+                }
+            }
+            Text(hint).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private var hint: String {
+        switch session.currentMode {
+        case "countdown": return "You get \(Int(seconds ?? Double(session.seconds ?? 10))) seconds to stop an agent, then it starts."
+        case "ask": return "Agents wait until you allow them."
+        default: return "Agents take control right away."
+        }
     }
 }

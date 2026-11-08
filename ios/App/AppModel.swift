@@ -111,7 +111,11 @@ final class AppModel: ObservableObject {
         if await run("agent", "POST", "/v1/agent/resume", [:]) != nil { await setActivitiesState("driving") }
     }
 
-    func setSessionAsk(_ on: Bool) async { await run("sessionAsk", "POST", "/v1/session/ask", ["on": on]) }
+    func setSessionMode(_ mode: String) async { await run("sessionMode", "POST", "/v1/session/ask", ["mode": mode]) }
+
+    func setSessionSeconds(_ seconds: Int) async {
+        await run("sessionMode", "POST", "/v1/session/ask", ["seconds": seconds])
+    }
 
     func answerSession(id: String, approve: Bool) async {
         await run("session", "POST", "/v1/session/answer", ["id": id, "approve": approve])
@@ -254,8 +258,11 @@ final class AppModel: ObservableObject {
     static func contentState(_ s: PCState) -> AgentActivityAttributes.ContentState {
         let now = Date().timeIntervalSince1970
         if let p = s.session?.pending {
-            return .init(state: "asking", phase: "asking", requestId: p.id, action: p.action ?? "", steps: 0,
-                         startedAt: p.since ?? now, updatedAt: now)
+            var c = AgentActivityAttributes.ContentState(state: "asking", phase: "asking", requestId: p.id,
+                                                         action: p.action ?? "", steps: 0, startedAt: p.since ?? now,
+                                                         updatedAt: now)
+            c.deadline = p.deadline
+            return c
         }
         switch s.agent.state {
         case "driving", "paused":

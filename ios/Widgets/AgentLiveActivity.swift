@@ -47,16 +47,21 @@ struct AgentLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 2) {
-                        Text(look.title(s)).font(.caption).foregroundStyle(look.color(s))
-                        if look != .idle {
-                            Text(s.action).font(.headline).lineLimit(1)
+                        if look == .asking, let deadline = s.deadlineDate {
+                            CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
+                            Text("First step: \(s.action)").font(.headline).lineLimit(1)
+                        } else {
+                            Text(look.title(s)).font(.caption).foregroundStyle(look.color(s))
+                            if look != .idle {
+                                Text(s.action).font(.headline).lineLimit(1)
+                            }
                         }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     switch look {
                     case .idle: EmptyView()
-                    case .asking: AnswerButtons(requestId: s.requestId ?? "")
+                    case .asking: AnswerButtons(requestId: s.requestId ?? "", countdown: s.deadlineDate != nil)
                     case .driving:
                         HStack {
                             Text(timerInterval: s.startDate...Date.distantFuture, countsDown: false)
@@ -73,7 +78,13 @@ struct AgentLiveActivity: Widget {
             } compactTrailing: {
                 switch look {
                 case .idle: EmptyView()
-                case .asking: Text("Allow?").font(.caption).foregroundStyle(.orange)
+                case .asking:
+                    if let deadline = s.deadlineDate {
+                        Text(timerInterval: Date()...deadline, countsDown: true)
+                            .font(.caption).monospacedDigit().foregroundStyle(.orange).frame(maxWidth: 40)
+                    } else {
+                        Text("Allow?").font(.caption).foregroundStyle(.orange)
+                    }
                 case .driving, .paused:
                     if s.steps > 0 {
                         Text("\(s.steps)").monospacedDigit().contentTransition(.identity)
@@ -126,7 +137,7 @@ enum Look {
     func title(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
         case .idle: return "You're in control"
-        case .asking: return "Agent wants to start"
+        case .asking: return "Agent wants control of your iPhone"
         case .paused: return "You took over"
         case .driving:
             switch s.phase {
@@ -191,17 +202,35 @@ struct AskingView: View {
     var pcName: String
 
     var body: some View {
+        let deadline = state.deadlineDate
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 StateIcon(state: state, size: 36)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Agent wants to start").font(.caption).foregroundStyle(.orange)
-                    Text(state.action).font(.headline).lineLimit(2)
+                    if let deadline {
+                        CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
+                        Text("First step: \(state.action)").font(.headline).lineLimit(2)
+                    } else {
+                        Text("Agent wants control of your iPhone").font(.caption).foregroundStyle(.orange)
+                        Text(state.action).font(.headline).lineLimit(2)
+                    }
                     Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
             }
-            AnswerButtons(requestId: state.requestId ?? "")
+            AnswerButtons(requestId: state.requestId ?? "", countdown: deadline != nil)
+        }
+    }
+}
+
+/// "Agent starts in 0:08", counting down on its own.
+struct CountdownTitle: View {
+    var deadline: Date
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Agent starts in")
+            Text(timerInterval: Date()...deadline, countsDown: true).monospacedDigit()
         }
     }
 }
@@ -252,15 +281,18 @@ struct PausedView: View {
 
 struct AnswerButtons: View {
     var requestId: String
+    /// With a countdown the buttons read Stop and Start now; otherwise Deny and Allow.
+    var countdown = false
 
     var body: some View {
         HStack(spacing: 12) {
             Button(intent: DenySessionIntent(requestId: requestId)) {
-                Label("Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
+                Label(countdown ? "Stop" : "Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
             }
             .tint(.red)
             Button(intent: AllowSessionIntent(requestId: requestId)) {
-                Label("Allow", systemImage: "checkmark").lineLimit(1).frame(maxWidth: .infinity)
+                Label(countdown ? "Start now" : "Allow", systemImage: "checkmark").lineLimit(1)
+                    .frame(maxWidth: .infinity)
             }
             .tint(.green)
         }

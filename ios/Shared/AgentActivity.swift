@@ -21,6 +21,9 @@ struct AgentActivityAttributes: ActivityAttributes {
         var updatedAt: Double?
         /// Counts up by one with each of the PC's 1 s refreshes while driving; the ring turns 45 degrees per frame.
         var frame: Int?
+        /// While asking with a countdown: unix seconds when the PC starts the agent by itself. Nil means wait for
+        /// an answer.
+        var deadline: Double?
 
         init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double,
              updatedAt: Double? = nil) {
@@ -41,6 +44,7 @@ struct AgentActivityAttributes: ActivityAttributes {
             startedAt = (try? c.decodeIfPresent(Double.self, forKey: .startedAt)) ?? Date().timeIntervalSince1970
             updatedAt = try? c.decodeIfPresent(Double.self, forKey: .updatedAt)
             frame = try? c.decodeIfPresent(Int.self, forKey: .frame)
+            deadline = try? c.decodeIfPresent(Double.self, forKey: .deadline)
         }
 
         /// "1 step", "12 steps", or nil before the first step.
@@ -52,6 +56,8 @@ struct AgentActivityAttributes: ActivityAttributes {
         var idle: Bool { state == "idle" }
         var asking: Bool { state == "asking" }
         var startDate: Date { Date(timeIntervalSince1970: startedAt) }
+        /// The countdown's end, if the request has one that hasn't passed.
+        var deadlineDate: Date? { deadline.map { Date(timeIntervalSince1970: $0) }.flatMap { $0 > Date() ? $0 : nil } }
     }
 
     var pcName: String

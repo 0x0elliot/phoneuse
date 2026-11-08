@@ -10,9 +10,24 @@ struct PCState: Decodable, Equatable {
         var needsRemirror: Bool?
         enum CodingKeys: String, CodingKey { case on, needsRemirror = "needs_remirror" }
     }
-    struct Pending: Decodable, Equatable, Identifiable { var id: String; var since: Double?; var action: String? }
+    struct Pending: Decodable, Equatable, Identifiable {
+        var id: String
+        var since: Double?
+        var action: String?
+        /// "countdown" or "ask".
+        var mode: String?
+        /// Countdown only: unix seconds when the PC starts the agent by itself.
+        var deadline: Double?
+    }
     /// Asking the owner before an agent session. Older PCs don't send it.
-    struct Session: Decodable, Equatable { var ask: Bool; var pending: Pending? }
+    /// When an agent starts: mode "auto" (go ahead), "countdown" (wait `seconds`, 5-30), or "ask".
+    struct Session: Decodable, Equatable {
+        var ask: Bool
+        var mode: String?
+        var seconds: Int?
+        var pending: Pending?
+        var currentMode: String { mode ?? (ask ? "ask" : "auto") }
+    }
     struct Unlock: Decodable, Equatable {
         var passcodeSaved: Bool
         var pending: Pending?
