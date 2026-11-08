@@ -397,10 +397,10 @@ class Companion:
         for dev in self._devices():
             if dev.get("device") and not (dev.get("activity") or {}).get("token"):
                 p = self.mirror.sessions.pending or {}
-                title = (f"Agent starts in {round(p['deadline'] - time.time())} s" if p.get("deadline")
-                         else "Agent wants control of your iPhone")
+                title = (f"Agent taking control in {round(p['deadline'] - time.time())} s" if p.get("deadline")
+                         else "Agent requests control")
                 r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": title,
-                                                                 "body": f"First step: {action or 'using the phone'}"},
+                                                                 "body": action or "Using the phone"},
                                                        "category": "SESSION", "sound": "default",
                                                        "interruption-level": "time-sensitive"},
                                               "session_id": rid},
@@ -494,8 +494,8 @@ class Companion:
         alert = None
         if want and want[0] == "asking" and (not before or before[0] != "asking"):
             dl = want[5] if len(want) > 5 else None
-            alert = {"title": f"Agent starts in {round(dl - time.time())} s" if dl else "Agent wants control of your iPhone",
-                     "body": f"First step: {want[2]}", "sound": "default"}
+            alert = {"title": f"Agent taking control in {round(dl - time.time())} s" if dl else "Agent requests control",
+                     "body": want[2], "sound": "default"}
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
             # iOS ignores an update whose timestamp isn't newer than the last one it applied

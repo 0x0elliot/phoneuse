@@ -707,13 +707,13 @@ class SessionRequests:
     async def _notify(self, p):
         try:
             p["notice"] = await asyncio.create_subprocess_exec(
-                *(["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "deny=Stop",
-                   "-A", "allow=Start now", f"Agent starts in {round(p['deadline'] - time.time())} s",
-                   f"First step: {p['action'] or 'using the phone'}. Stop it here or at http://localhost:{PORT}"]
+                *(["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "deny=Cancel",
+                   "-A", "allow=Allow now", f"Agent taking control in {round(p['deadline'] - time.time())} s",
+                   f"{p['action'] or 'Using the phone'}. Cancel here or at http://localhost:{PORT}"]
                   if p["deadline"] else
                   ["notify-send", "-a", "phoneuse", "-u", "critical", "--wait", "-A", "allow=Allow", "-A", "deny=Deny",
-                   "Agent wants control of your iPhone",
-                   f"First step: {p['action'] or 'using the phone'}. Answer here or at http://localhost:{PORT}"]),
+                   "Agent requests control",
+                   f"{p['action'] or 'Using the phone'}. Answer here or at http://localhost:{PORT}"]),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await p["notice"].communicate()
             choice = out.decode().strip()

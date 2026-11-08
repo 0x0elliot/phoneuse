@@ -85,21 +85,22 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 
 `session.pending`, `unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
 
-## When an agent starts
+## Agent control
 
 One setting decides what happens when an agent's first action arrives (`session.mode`):
 
 | Mode | In the app | What happens |
 |---|---|---|
-| `auto` | Go ahead | Agents take control right away. |
-| `countdown` | Wait (`seconds`, 5–30) | You get N seconds to stop an agent, then it starts. |
-| `ask` | Ask me | Agents wait until you allow them (up to 2 minutes). |
+| `auto` | Instant | An agent can take control at any time. |
+| `countdown` | Delayed (notice: `seconds`, 5–30) | An agent takes control after an N-second countdown, unless you cancel it. |
+| `ask` | Approval | An agent takes control only with your approval (it waits up to 2 minutes). |
 
 In `countdown` and `ask`, the request reaches the Live Activity (state `asking`), the app, a desktop
 notification and the browser mirror. With a countdown, `pending.deadline` (and the Live Activity's `deadline`)
-is when the agent starts; the request reads "Agent starts in N s" with **Stop** (`approve: false`) and
-**Start now** (`approve: true`), and when the time runs out the PC allows it by itself. Without one, it reads
-"Agent wants control of your iPhone" with **Deny** and **Allow**. If the owner declines or (in `ask`) doesn't
+is when the agent takes control; the request reads "Agent taking control in N s" over the first step ("Opening
+Settings"), with **Cancel** (`approve: false`) and **Allow now** (`approve: true`), and when the time runs out the
+PC allows it by itself. Without one, it reads "Agent requests control" over the first step, with **Deny** and
+**Allow**. If the owner declines or (in `ask`) doesn't
 answer, the agent's action fails with a message that tells it to stop. Once allowed, the session lasts until the
 agent hands the phone back (`phoneuse done`), the owner takes over, or the agent sends no action for 60 seconds,
 which is also when the agent session ends everywhere; after that, the next action asks again. The HID daemon

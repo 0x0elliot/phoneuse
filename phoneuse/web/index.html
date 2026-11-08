@@ -115,6 +115,7 @@
   .seg button { flex: 1; height: 30px; border-radius: 8px; font-size: 13px; color: rgba(235, 235, 245, .7); }
   .seg button[aria-checked="true"] { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 600; }
   #startSeconds { flex: 1; accent-color: #ff9f0a; letter-spacing: 0; }
+  .notice { color: rgba(235, 235, 245, .7); font-size: 14px; }
   .secs { width: 40px; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
   #startSecondsRow[hidden] { display: none; }
   #startHint { margin: 7px 6px 14px; }
@@ -170,15 +171,16 @@
       <span class="grow">Keep screen awake</span><span class="sw"></span>
     </button>
   </div>
-  <div class="label">When an agent starts</div>
+  <div class="label">Agent control</div>
   <div class="group" id="startMode">
-    <div class="item seg" role="radiogroup" aria-label="When an agent starts">
-      <button role="radio" data-mode="auto">Go ahead</button>
-      <button role="radio" data-mode="countdown">Wait</button>
-      <button role="radio" data-mode="ask">Ask me</button>
+    <div class="item seg" role="radiogroup" aria-label="Agent control">
+      <button role="radio" data-mode="auto">Instant</button>
+      <button role="radio" data-mode="countdown">Delayed</button>
+      <button role="radio" data-mode="ask">Approval</button>
     </div>
     <div class="item" id="startSecondsRow" hidden>
-      <input type="range" id="startSeconds" min="5" max="30" step="1" value="10" aria-label="Seconds to wait">
+      <span class="notice">Notice</span>
+      <input type="range" id="startSeconds" min="5" max="30" step="1" value="10" aria-label="Notice in seconds">
       <span id="startSecondsLabel" class="secs">10 s</span>
     </div>
   </div>
@@ -201,7 +203,7 @@
 <div id="ask" hidden role="alertdialog" aria-labelledby="askTitle" aria-describedby="askText">
   <div class="sheet">
     <div class="ico" id="askIcon"></div>
-    <div id="askTitle">Agent wants control of your iPhone</div>
+    <div id="askTitle">Agent requests control</div>
     <div id="askText"></div>
     <div class="btns"><button class="btn" id="deny">Deny</button><button class="btn primary" id="approve">Allow</button></div>
     <div class="timer"><i id="askTimer"></i></div>
@@ -621,21 +623,20 @@ function showAsk(id, kind, action, deadline) {
   if (!id) return;
   const title = document.getElementById("askTitle"), timer = document.getElementById("askTimer");
   document.getElementById("askIcon").innerHTML = ICONS[kind];
-  const step = action ? `First step: ${action}.` : "";
   if (kind === "session" && deadline) {  // countdown: the agent starts unless stopped
     const tick = () => {
       const left = Math.max(0, Math.ceil(deadline - Date.now() / 1000));
-      title.textContent = `Agent starts in ${left} s`;
+      title.textContent = `Agent taking control in ${left} s`;
     };
     tick();
     askTick = setInterval(tick, 250);
-    document.getElementById("askText").textContent = `${step} Stop it if you're using the phone.`.trim();
-    document.getElementById("approve").textContent = "Start now";
-    document.getElementById("deny").textContent = "Stop";
+    document.getElementById("askText").textContent = action || "";
+    document.getElementById("approve").textContent = "Allow now";
+    document.getElementById("deny").textContent = "Cancel";
   } else {
-    title.textContent = kind === "session" ? "Agent wants control of your iPhone" : "Agent wants to unlock your iPhone";
+    title.textContent = kind === "session" ? "Agent requests control" : "Agent requests an unlock";
     document.getElementById("askText").textContent = kind === "session"
-      ? `${step} Allow it to use the phone until it's done?`.trim() : "Allow it to enter your saved passcode once?";
+      ? (action || "") : "It types your saved passcode once.";
     document.getElementById("approve").textContent = kind === "session" ? "Allow" : "Unlock";
     document.getElementById("deny").textContent = "Deny";
   }
@@ -671,11 +672,11 @@ const awakeSw = document.getElementById("awake");
 awakeSw.onclick = () => fetch("/api/awake", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ on: awakeSw.getAttribute("aria-checked") !== "true" }) });
 
-// When an agent starts: go ahead, wait N seconds (the owner can stop it), or ask.
+// Agent control: instant, delayed (a countdown the owner can cancel), or approval.
 const START_HINTS = {
-  auto: "Agents take control right away.",
-  countdown: (n) => `You get ${n} seconds to stop an agent, then it starts.`,
-  ask: "Agents wait until you allow them.",
+  auto: "An agent can take control at any time.",
+  countdown: (n) => `An agent takes control after a ${n}-second countdown, unless you cancel it.`,
+  ask: "An agent takes control only with your approval.",
 };
 const startSeconds = document.getElementById("startSeconds");
 function showStart(st) {
