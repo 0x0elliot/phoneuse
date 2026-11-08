@@ -566,6 +566,57 @@ def type_text(h, text):
 
 # ---------- screen ----------
 
+LOOK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-look.npy")
+
+
+def _small(rgb):
+    """Grey, a quarter of the size: enough to tell whether an area moved."""
+    import numpy as np
+    return np.asarray(rgb, dtype=np.float32)[::4, ::4].mean(axis=2)
+
+
+def save_look(rgb):
+    """Remember what the agent was just shown (a screenshot, a text read, or the
+    frame an MCP action returned): taps by position are checked against it."""
+    import numpy as np
+    try:
+        np.save(LOOK, _small(rgb))
+    except OSError:
+        pass
+
+
+def moved_since_look(fx, fy):
+    """Has the area around (fx, fy) changed since the agent's last look? Taps go
+    by position, so a tap computed from an old picture of a feed that has since
+    scrolled lands on something else. Returns a reason, or None."""
+    import numpy as np
+    try:
+        if time.time() - os.path.getmtime(LOOK) > 300:
+            return None  # no recent look: the agent isn't working from a picture
+        then = np.load(LOOK)
+        settle()
+        now = _small(screen.grab_rgb())
+    except (OSError, ValueError, RuntimeError):
+        return None
+    if now.shape != then.shape:
+        return None
+    h, w = now.shape
+    x0, x1 = int(max(0, fx - 0.08) * w), int(min(1, fx + 0.08) * w)
+    y0, y1 = int(max(0, fy - 0.04) * h), int(min(1, fy + 0.04) * h)
+    a, b = then[y0:y1, x0:x1], now[y0:y1, x0:x1]
+    # Compare content, not background: text on a plain page is a few percent of
+    # the pixels, so measure the changed pixels against the content ones.
+    ink = (np.abs(a - np.median(a)) > 24) | (np.abs(b - np.median(b)) > 24)
+    if ink.sum() < 30:
+        return None  # an empty area: nothing there to miss
+    changed = float(((np.abs(b - a) > 24) & ink).sum() / ink.sum())
+    if changed > 0.4:  # the pointer alone is far smaller than this
+        return (f"the screen around ({fx:.2f}, {fy:.2f}) changed since your last look ({changed:.0%} of it): "
+                "the content moved, so this position may hit something else. Look again (screenshot or "
+                "--text), then tap. Add --force to tap anyway (e.g. a fixed tab bar after a page change).")
+    return None
+
+
 def screenshot(path):
     need_mirror()
     settle()
@@ -577,7 +628,9 @@ def screenshot(path):
         f.write(png)
     from PIL import Image
     import io
-    w, hgt = Image.open(io.BytesIO(png)).size
+    img = Image.open(io.BytesIO(png))
+    save_look(img.convert("RGB"))
+    w, hgt = img.size
     print(f"{path} ({w}x{hgt} px = {PT[0]}x{PT[1]} pt; tap with fractions of this image or points)")
 
 
@@ -965,6 +1018,12 @@ def main():
     if cmd == "screenshot":
         paths = [x for x in args if not x.startswith("--")]  # (--keep-pointer: now always)
         return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse.png"))
+    force = "--force" in args
+    args = [a for a in args if a != "--force"]
+    if cmd in ("tap", "longpress", "swipe") and not force and len(args) >= 2:
+        why = moved_since_look(*point(*args[:2]))
+        if why:
+            die("Not tapped: " + why)
     h = hid()
     seq_before = frame_seq()
     if cmd == "tap":

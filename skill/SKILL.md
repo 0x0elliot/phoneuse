@@ -101,9 +101,17 @@ Every round trip with the phone costs you a turn, so make each one count.
 - **Read with text, not images.** `--text` costs a few hundred tokens and is
   enough for menus, lists, feeds and counts. Take a screenshot only for
   pictures, icon-only screens, or when text lands somewhere surprising.
-- **Flicks are swipes with a short duration**: `phoneuse swipe 0.5 0.75 0.5 0.25 0.2`
-  moves a feed (Reels, TikTok, Shorts) to the next item. Longer durations (0.5 s
-  and up) drag without flinging. For exact scrolling, use `scroll` or `scroll-by`.
+- **Feeds you act on (X, Instagram home, lists): `scroll`, then look, then tap.**
+  `phoneuse scroll down 0.6` moves the content without momentum, so it stops where
+  the finger lifts and your next screenshot stays true. A flick keeps the feed
+  gliding after your screenshot, and a tap from that picture hits the wrong post.
+- **Flicks only for snap feeds**: `phoneuse swipe 0.5 0.75 0.5 0.25 0.2` moves
+  Reels, TikTok or Shorts to the next item.
+- **Taps by position are checked**: `tap`, `longpress` and `swipe` refuse when the
+  area around the point changed since your last look (screenshot, `--text`, or an
+  MCP action's frames), because the position then belongs to something else. Look
+  again and tap. `--force` (MCP: `force=True`) taps anyway, for fixed controls like
+  a tab bar right after a page change.
 - **Repeat cheap actions in one call** when you know the layout, e.g. three
   flicks with a text read after each:
   `for i in 1 2 3; do phoneuse swipe 0.5 0.75 0.5 0.25 0.2 --text | head -8; done`.

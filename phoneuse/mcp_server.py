@@ -89,6 +89,7 @@ def _strip():
             frames.append(PILImage.open(io.BytesIO(png)).convert("RGB"))
     if not frames:
         return ["error: no picture of the phone"]
+    cli.save_look(frames[-1])  # the agent's newest view: taps by position are checked against it
     # Frames identical to the one before add nothing: keep only the ones that
     # changed. A still screen comes back as a single frame.
     import numpy as np
@@ -160,10 +161,18 @@ def wait(seconds: float = 1.0, look: Look = "strip") -> list:
     return _strip() if look == "strip" else _screen(look)
 
 
+def _guard(x, y, force):
+    """Refuse a positional tap when the area moved since the agent's last view."""
+    why = None if force else cli.moved_since_look(*_pt(x, y))
+    return [f"Not tapped: {why}"] if why else None
+
+
 @server.tool(structured_output=False)
-def tap(x: float, y: float, look: Look = "strip") -> list:
-    """Tap at (x, y): fractions of the screen (0..1), or phone points if a value is above 1."""
-    return _act(lambda h: touch.tap(h, *_pt(x, y)), look)
+def tap(x: float, y: float, look: Look = "strip", force: bool = False) -> list:
+    """Tap at (x, y): fractions of the screen (0..1), or phone points if a value is above 1.
+    Refused when the area around (x, y) changed since your last view (look again);
+    force=True taps anyway (e.g. a fixed tab bar after a page change)."""
+    return _guard(x, y, force) or _act(lambda h: touch.tap(h, *_pt(x, y)), look)
 
 
 @server.tool(structured_output=False)
@@ -175,9 +184,9 @@ def tap_on(target: str, look: Look = "strip") -> list:
 
 
 @server.tool(structured_output=False)
-def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "strip") -> list:
-    """Press and hold at (x, y)."""
-    return _act(lambda h: touch.long_press(h, *_pt(x, y), hold=seconds), look)
+def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "strip", force: bool = False) -> list:
+    """Press and hold at (x, y). Refused like tap when the area moved since your last view."""
+    return _guard(x, y, force) or _act(lambda h: touch.long_press(h, *_pt(x, y), hold=seconds), look)
 
 
 @server.tool(structured_output=False)
