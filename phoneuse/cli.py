@@ -27,6 +27,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                the field holds (Cmd+A first) unless --append
   phoneuse key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
   phoneuse keyboard             show or hide the iPhone's on-screen keyboard (Eject key)
+  phoneuse cursor [on|off]      whether the pointer works (AssistiveTouch); on/off asks
+                                Siri out loud on this PC's speakers to switch it
   phoneuse where                debugging: where the pointer appears (needs Pointer
                                Control colour Orange)
 
@@ -387,6 +389,64 @@ def refuse_if_locked():
     if unlock.locked(screen_text):  # the passcode prompt, or the lock screen's clock and date
         die("The phone is locked (passcode screen). Nothing was typed. Run `phoneuse unlock` to "
             "ask the owner to approve an unlock, or ask them to unlock it.")
+
+
+# Spoken to Siri to switch AssistiveTouch, which the phone's pointer needs (rendered
+# with Piper, voice en_US-lessac-medium).
+SOUNDS = os.path.join(PKG, "sounds")
+
+
+def cursor_state(h):
+    """Is the phone's pointer working (AssistiveTouch on)? Moves the pointer between
+    two spots and back: with AssistiveTouch on, the pointer is part of the mirrored
+    picture, so the picture changes at both spots; with it off, nothing changes.
+    Returns "on", "off", or "unknown" when the screen keeps changing by itself."""
+    import numpy as np
+    spots = [(0.30, 0.42), (0.70, 0.58)]
+    shots = []
+    for x, y in spots + spots[:1]:
+        h.cmd(f"a {x} {y} 0")
+        time.sleep(0.45)
+        shots.append(screen.grab_rgb().astype(np.int16))
+    if any(s.shape != shots[0].shape for s in shots):
+        return "unknown"
+
+    def changed(a, b, spot=None):  # share of pixels that changed, near a spot or overall
+        if spot is not None:
+            H, W, _ = a.shape
+            r, cx, cy = int(W * 0.07), int(spot[0] * W), int(spot[1] * H)
+            a, b = a[max(cy - r, 0):cy + r, max(cx - r, 0):cx + r], b[max(cy - r, 0):cy + r, max(cx - r, 0):cx + r]
+        return float((np.abs(a - b).max(axis=2) > 40).mean())
+
+    if changed(shots[0], shots[2]) > 0.01:  # pointer back where it was, yet the picture differs
+        return "unknown"
+    return "on" if min(changed(shots[0], shots[1], s) for s in spots) > 0.02 else "off"
+
+
+def cursor_set(h, on):
+    """Turn AssistiveTouch on or off by asking Siri out loud: hold the Siri key, play
+    the request on this PC's speakers (the phone must hear them), let go. Asks a
+    second time if the first request didn't take."""
+    refuse_if_locked()
+    want = "on" if on else "off"
+    wav = os.path.join(SOUNDS, f"assistivetouch-{want}.wav")
+    for _ in range(2):
+        h.cmd("consumer siri down")
+        try:
+            time.sleep(1.0)  # Siri starts listening
+            subprocess.run(["pw-play", wav], check=True, timeout=15)
+            time.sleep(0.3)
+        finally:
+            h.cmd("consumer siri up")
+        # Siri switches it, answers, and closes; its animation reads as "unknown" meanwhile.
+        state, until = "unknown", time.time() + 10
+        while time.time() < until:
+            time.sleep(1.0)
+            state = cursor_state(h)
+            if state == want:
+                return f"cursor {state}"
+    return (f"cursor {state} (wanted {want}): Siri didn't switch it. Check that the phone "
+            "is near this PC's speakers and their volume is up, then try again.")
 
 
 def open_app(h, name):
@@ -828,6 +888,13 @@ def main():
         key_combo(h, args[0])
     elif cmd == "keyboard":  # Eject: show or hide the on-screen keyboard
         h.cmd("eject")
+    elif cmd == "cursor":  # cursor [on|off]: report, or switch AssistiveTouch through Siri
+        if not args:
+            print("cursor", cursor_state(h))
+        elif args[0] in ("on", "off"):
+            print(cursor_set(h, args[0] == "on"))
+        else:
+            die("usage: phoneuse cursor [on|off]")
     elif cmd == "tap-on":
         print(tap_on(h, " ".join(args)))
     elif cmd == "where":

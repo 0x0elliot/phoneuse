@@ -33,7 +33,7 @@ the full list.
 
 ## MCP or CLI
 
-If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`,
+If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`, `cursor`,
 `type_text`, `open_app`, `navigate`, `wait`, `unlock`, ...), use them. Every action
 returns, in the same call, frames from just after it (0.1, 0.4 and 0.8 s; frames
 that didn't change are dropped, so a still screen is one frame) plus the last
@@ -104,6 +104,8 @@ try is enough.
 | Close those overlays | `phoneuse dismiss` (Cmd+H does not close them) |
 | Type text / keys | `phoneuse type "hello\n"` · `phoneuse key cmd+space` |
 | Show / hide the iPhone keyboard | `phoneuse keyboard` (Eject; it hides while phoneuse's keyboard is connected) |
+| Does the pointer work? | `phoneuse cursor` (on / off / unknown). Taps and drags need AssistiveTouch on |
+| Turn the pointer on | `phoneuse cursor on`: holds the Siri key and asks out loud on this PC's speakers; the phone must be unlocked and in earshot |
 | Where is the pointer | `phoneuse where` |
 
 ``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read

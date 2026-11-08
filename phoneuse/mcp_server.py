@@ -228,6 +228,17 @@ def toggle_keyboard(look: Look = "strip") -> list:
 
 
 @server.tool(structured_output=False)
+def cursor(on: bool | None = None, look: Look = "strip") -> list:
+    """Whether the phone's pointer works (AssistiveTouch), or switch it. Taps and
+    drags need it on; a newly connected phone often has it off. on=True/False asks
+    Siri out loud through this PC's speakers, so the phone must be unlocked and
+    within earshot. Returns "cursor on", "cursor off" or "cursor unknown"."""
+    if on is None:
+        return _act(lambda h: "cursor " + cli.cursor_state(h), look)
+    return _act(lambda h: cli.cursor_set(h, on), look)
+
+
+@server.tool(structured_output=False)
 def open_app(name: str, look: Look = "strip") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)

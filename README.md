@@ -58,7 +58,9 @@ attached: without it the signal can be too weak to pair reliably.
 
 4. **Set up the iPhone** under Settings → Accessibility:
    - Touch → AssistiveTouch: **on**; Dwell Control: **off** (otherwise the
-     pointer taps by itself when it rests).
+     pointer taps by itself when it rests). Once the phone is mirroring and
+     paired, `phoneuse cursor on` can do the first part for you: it holds the
+     Siri key and asks Siri out loud, through this PC's speakers.
    - Optional, for the debugging tools: Accessibility → Accessories → Pointer
      Control colour **Orange**, large,
      with Automatically Hide Pointer off. `phoneuse where` and the telemetry tools

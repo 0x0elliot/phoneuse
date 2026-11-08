@@ -18,6 +18,7 @@ points, which is plenty for scrolling and edge gestures.
 
 | Goal | Command | What it does |
 |---|---|---|
+| Pointer on | `phoneuse cursor on` | holds the Siri key (consumer usage 0xCF) for the whole request and plays "Turn on AssistiveTouch" on the PC speakers; `phoneuse cursor` checks by moving the pointer between two spots and looking for it in the picture |
 | Tap | `phoneuse tap X Y` | press and release at the point |
 | Long press | `phoneuse longpress X Y [S]` | hold 0.8 s by default; opens context menus |
 | Home | `phoneuse home` | Cmd+H; works from any app |
