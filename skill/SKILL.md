@@ -34,12 +34,15 @@ the full list.
 ## MCP or CLI
 
 If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`, `cursor`, `calibrate`,
-`type_text`, `open_app`, `navigate`, `wait`, `unlock`, ...), use them. Every action
-returns, in the same call, frames from just after it (0.1, 0.4 and 0.8 s; frames
-that didn't change are dropped, so a still screen is one frame) plus the last
-frame as text lines with exact positions. You see motion yourself: a page still
-sliding in, a spinner, a video. If the last frame isn't final yet, call
-`wait(seconds)` with a duration you choose, and look again. Otherwise use the
+`type_text`, `open_app`, `navigate`, `wait`, `unlock`, `read_notifications`, ...), use them.
+Every action first waits (up to 3 s) for the phone's first visible change, then
+returns frames from it (0.1, 0.4 and 0.8 s; frames that didn't change are
+dropped, so a still screen is one frame) plus the last frame as text lines with
+exact positions. You see motion yourself: a page still sliding in, a spinner, a
+video. If the last frame isn't final yet, call `wait(seconds)` with a duration you
+choose, and look again. When a result says no change showed, the action may have
+done nothing or the phone is slow: look before repeating it, never just repeat.
+When it says the phone is slow, leave time between actions. Otherwise use the
 `phoneuse` CLI below; the rules are the same.
 
 ## The loop
@@ -50,7 +53,6 @@ tokens, where a screenshot image costs about 1,300.
 ```bash
 phoneuse text                         # every text line on screen: "x y  text"
 phoneuse tap-on "Wi-Fi"               # tap a text label (exact position from OCR)
-phoneuse tap-on "gear icon"           # tap something visual (grounding model)
 phoneuse tap 0.5 0.35 --text          # any action + --text: act, then print the screen
 ```
 
@@ -61,16 +63,15 @@ them), shows the back chevron as `[back]`, and lists on/off switches as
 `[switch on]` / `[switch off]` at their positions, since OCR can't read them
 (dark mode only).
 
-`tap-on` first looks for the words among the screen's text and taps that line
-exactly. Plain words that aren't on screen are refused, so scroll first. Only
-descriptions of visual things (icon, button, arrow, switch, avatar, ...) go to
-the GoClick grounding model, which always answers even when the element isn't
-there: check the result. `phoneuse find` gives a grounding position without
-tapping. The models run locally through a service that starts on first use
+`tap-on` looks for the words among the screen's text and taps that line exactly.
+Words that aren't on screen are refused, so scroll first. It is also refused when
+that part of the screen changed since your last look (you decided from an older
+picture): look again. Icons and pictures have no text: take a screenshot and tap
+them by position. OCR runs locally through a service that starts on first use
 (the first call takes a few seconds).
 
 Take a real screenshot when text isn't enough: pictures, icon-only screens,
-checking a layout, or when `find` lands somewhere surprising.
+checking a layout.
 
 ```bash
 phoneuse screenshot $SCRATCH/s1.png   # then look at the image with the Read tool
@@ -150,9 +151,13 @@ their mouse and keyboard pause). When your task is done, run `phoneuse done`
 
 ## When the user takes over
 
-If an action fails with "The user took over the phone", stop and wait. Continue
-only when the user tells you to. A note that the screen changed without your
-action means someone may be using the phone: look again before acting.
+If an action fails with "The user took over the phone", or a result starts with
+PAUSED, stop and wait. Continue only when the user tells you to. A note that the
+picture is old means the phone's screen is off or mirroring stalled: ask the user.
+
+To see notifications, use `read_notifications` (CLI: `phoneuse notifications-read`):
+it opens Notification Center, reads it and closes it. They are private: use only
+what the task needs.
 
 ## Typing
 

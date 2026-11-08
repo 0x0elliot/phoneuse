@@ -114,7 +114,7 @@ only after you approve.
 ```sh
 phoneuse open Settings
 phoneuse text                 # print the screen as text, with positions
-phoneuse tap-on "Wi-Fi"       # tap the element that matches the description
+phoneuse tap-on "Wi-Fi"       # tap the on-screen text that matches
 phoneuse screenshot shot.png
 phoneuse done                 # hand the phone back to you
 ```
