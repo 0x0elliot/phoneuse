@@ -34,10 +34,10 @@ from .config import CFG, NAME, SCREEN_PT, config_path  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
 
-# Where the pointer rests after Bluetooth (re)connects, and where keep-awake nudges
-# it until someone moves it: the bottom middle, above the home bar, where a resting
-# pointer covers nothing and touches nothing.
-PARK = (0.5, 0.94)
+# Where the pointer rests while nobody uses the phone (after Bluetooth reconnects,
+# after an agent session, and during keep-awake nudges): the very bottom middle,
+# below the dock, where a resting pointer covers nothing and touches nothing.
+PARK = (0.5, 0.995)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 PAGE = os.path.join(HERE, "web", "index.html")
@@ -149,8 +149,8 @@ class Mirror:
                 continue
             before = self.last_frame_at
             try:
-                x, y = self.hover_at
-                x = min(max(x, 0.02), 0.98) + 0.01 * sign
+                x, y = PARK
+                x += 0.01 * sign
                 r = await loop.run_in_executor(None, self.get_hid().cmd, f"a {x:.4f} {min(max(y, 0.0), 1.0):.4f} 0")
             except Exception:
                 self.hid = None
@@ -218,8 +218,19 @@ class Mirror:
             self.loop.call_soon_threadsafe(self.loop.call_later, self.AGENT_IDLE + 0.1, self._agent_expired)
         return True
 
+    def park(self):
+        """Move the pointer to PARK, out of the way (in a thread: the link can be slow)."""
+        def go():
+            try:
+                self.get_hid().cmd(f"a {PARK[0]} {PARK[1]} 0")
+            except Exception:
+                self.hid = None
+        if self.live():
+            threading.Thread(target=go, daemon=True).start()
+
     def _agent_expired(self):
         if self.agent() == "idle":
+            self.park()
             self.broadcast_state()
 
     def take_over(self, take):
@@ -407,6 +418,8 @@ class UnlockRequests:
         finally:
             self.pending = None
             self.broadcast({"type": "unlock-done"})
+            if self.companion:
+                asyncio.get_running_loop().run_in_executor(None, self.companion.push_request_over, "unlock", rid)
             if p["notice"] and p["notice"].returncode is None:
                 p["notice"].kill()
         if not p["event"].is_set():
@@ -489,50 +502,74 @@ class SessionRequests:
         if ask_before_session():
             self.allowed_until = time.time() + self.ASK_GAP
 
-    def end(self):
-        self.allowed_until = 0.0
-
     def broadcast(self, msg):
         for tab in list(self.mirror.tabs):
             asyncio.ensure_future(tab.ws.send_str(json.dumps(msg)))
 
     async def ask(self, action):
-        """True once the owner allows the session; else the reason it can't start."""
+        """True once the owner allows the session; else the reason it can't start.
+        Concurrent first actions share one request. The request ends for everyone when
+        the owner answers, after WAIT seconds, when the agent ends its session, or when
+        every waiting agent gives up (its request was cancelled); the browser mirror,
+        the desktop notification and the companion app all drop it then."""
         p = self.pending
-        if not p:  # concurrent first actions share one request
+        if not p:
             p = self.pending = {"id": secrets.token_hex(8), "event": asyncio.Event(), "approved": False,
-                                "notice": None, "since": time.time(), "action": action}
+                                "notice": None, "since": time.time(), "action": action, "waiters": 0,
+                                "answered": False}
             self.broadcast({"type": "session-request", "id": p["id"], "action": action})
             if self.companion:
                 asyncio.get_running_loop().run_in_executor(None, self.companion.push_session, p["id"], action)
             asyncio.ensure_future(self._notify(p))
             log("an agent asks to use the phone; waiting for the owner")
+        p["waiters"] += 1
         try:
-            await asyncio.wait_for(asyncio.shield(p["event"].wait()), self.WAIT)
+            await asyncio.wait_for(asyncio.shield(p["event"].wait()), self.WAIT - (time.time() - p["since"]))
         except asyncio.TimeoutError:
-            pass
+            self._close(p, "timed out")
         finally:
-            if self.pending is p:
-                self.pending = None
-                self.broadcast({"type": "session-done"})
-                if p["notice"] and p["notice"].returncode is None:
-                    p["notice"].kill()
-        if not p["event"].is_set():
+            p["waiters"] -= 1
+            if p["waiters"] == 0 and not p["event"].is_set():
+                self._close(p, "the agent stopped waiting")  # cancelled: nobody waits any more
+        if not p["answered"]:
             return "The owner didn't allow the agent session within 2 minutes. Stop and tell the user."
         if not p["approved"]:
             log("agent session declined")
             return "The owner declined the agent session. Stop; don't retry unless the user asks you to."
         self.allowed_until = time.time() + self.ASK_GAP
-        log("agent session allowed")
         return True
+
+    def _close(self, p, why):
+        """End a request everywhere: the page's prompt, the desktop notification and
+        the companion app's notification."""
+        if not p["event"].is_set():
+            p["event"].set()
+        if self.pending is not p:
+            return
+        self.pending = None
+        self.broadcast({"type": "session-done"})
+        if p["notice"] and p["notice"].returncode is None:
+            p["notice"].kill()
+        if self.companion:
+            asyncio.get_running_loop().run_in_executor(None, self.companion.push_request_over, "session", p["id"])
+        log(f"agent session request over: {why}")
 
     def answer_id(self, rid, approve):
         p = self.pending
         if not p or rid != p["id"]:
             return False
-        p["approved"] = bool(approve)
-        p["event"].set()
+        p["approved"], p["answered"] = bool(approve), True
+        if p["approved"]:
+            log("agent session allowed")
+        self._close(p, "allowed" if p["approved"] else "declined")
         return True
+
+    def end(self):
+        """The agent handed the phone back (or the owner took over): forget the allowed
+        session, and drop a request nobody needs now."""
+        self.allowed_until = 0.0
+        if self.pending:
+            self._close(self.pending, "the agent ended its session")
 
     async def answer(self, req):
         if not same_origin(req):
@@ -668,6 +705,7 @@ def app(mirror):
         # The agent's session is over: control goes back to the page at once.
         mirror.agent_until = 0.0
         mirror.sessions.end()
+        mirror.park()
         mirror.broadcast_state()
         return web.json_response({"ok": True})
 

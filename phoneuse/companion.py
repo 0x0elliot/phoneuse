@@ -321,11 +321,12 @@ class Companion:
     async def push(self, req):
         b, d = req["json"], load()
         dev = d["devices"][req["device"]]
-        for k in ("bundle_id", "env", "device", "push_to_start"):
-            if b.get(k):
+        if b.get("env") and b["env"] != dev.get("env"):
+            dev.pop("token_env", None)  # another build: every token's environment is the app's again
+        for k in ("bundle_id", "env", "device", "push_to_start", "activity"):
+            if b.get(k) and b[k] != dev.get(k):
                 dev[k] = b[k]
-        if b.get("activity"):
-            dev["activity"] = b["activity"]
+                dev.get("token_env", {}).pop(k, None)  # a new token: its environment is the app's
         save(d)
         return web.json_response({"ok": True})
 
@@ -333,17 +334,47 @@ class Companion:
     def _devices(self):
         return [dev for dev in load()["devices"].values() if dev.get("bundle_id")]
 
+    def _send(self, dev, field, token, payload, topic, push_type, priority=10):
+        """Send to one of a device's tokens. A token from another build can belong to the
+        other APNs environment (a TestFlight token on a development build): on
+        BadDeviceToken, try the other one and remember it for that token."""
+        envs = dev.get("token_env", {})
+        env = envs.get(field) or dev.get("env", "production")
+        r = apns.send(token, payload, topic, push_type, env, priority)
+        if r[0] == 400 and "BadDeviceToken" in r[1]:
+            other = "production" if env == "sandbox" else "sandbox"
+            r2 = apns.send(token, payload, topic, push_type, other, priority)
+            if r2[0] == 200:
+                d = load()
+                for v in d["devices"].values():
+                    if v.get(field) == token or (v.get(field) or {}).get("token") == token:
+                        v.setdefault("token_env", {})[field] = other
+                save(d)
+                return r2
+        return r
+
+    def push_request_over(self, kind, rid):
+        """Tell the app a session or unlock request is over, so it removes its notification."""
+        if not apns.configured():
+            return
+        for dev in self._devices():
+            if dev.get("device"):
+                r = self._send(dev, "device", dev["device"],
+                               {"aps": {"content-available": 1}, "request_over": {"kind": kind, "id": rid}},
+                               dev["bundle_id"], "background", priority=5)
+                log(f"{kind} request over push:", r)
+
     def push_session(self, rid, action):
         if not apns.configured():
             return
         for dev in self._devices():
             if dev.get("device"):
-                r = apns.send(dev["device"], {"aps": {"alert": {"title": "Let an agent use your phone?",
+                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Let an agent use your phone?",
                                                                  "body": f"{action or 'An agent'} wants to start."},
                                                        "category": "SESSION", "sound": "default",
                                                        "interruption-level": "time-sensitive"},
                                               "session_id": rid},
-                              dev["bundle_id"], "alert", dev.get("env", "production"))
+                              dev["bundle_id"], "alert")
                 log("session request push:", r)
 
     def push_unlock(self, rid):
@@ -351,11 +382,11 @@ class Companion:
             return
         for dev in self._devices():
             if dev.get("device"):
-                r = apns.send(dev["device"], {"aps": {"alert": {"title": "Unlock the iPhone?",
+                r = self._send(dev, "device", dev["device"], {"aps": {"alert": {"title": "Unlock the iPhone?",
                                                                  "body": "An agent asks to enter your saved passcode."},
                                                        "category": "UNLOCK", "sound": "default"},
                                               "unlock_id": rid},
-                              dev["bundle_id"], "alert", dev.get("env", "production"))
+                              dev["bundle_id"], "alert")
                 log("unlock push:", r)
 
     async def activities(self):
@@ -386,7 +417,7 @@ class Companion:
                 aps.update({"event": "start", "content-state": content(now_state),
                             "attributes-type": "AgentActivityAttributes", "attributes": {"pcName": pc_name()},
                             "alert": {"title": "PhoneUse", "body": "An agent is using your iPhone"}})
-                r = apns.send(dev["push_to_start"], {"aps": aps}, topic, "liveactivity", env)
+                r = self._send(dev, "push_to_start", dev["push_to_start"], {"aps": aps}, topic, "liveactivity")
                 self.activity_started = time.time()
             else:
                 act = dev.get("activity") or {}
@@ -397,7 +428,7 @@ class Companion:
                 else:
                     aps.update({"event": "end", "content-state": content(before),
                                 "dismissal-date": int(time.time()) + 10})
-                r = apns.send(act["token"], {"aps": aps}, topic, "liveactivity", env)
+                r = self._send(dev, "activity", act["token"], {"aps": aps}, topic, "liveactivity")
                 if r[0] == 410 or (r[0] == 400 and "BadDeviceToken" in r[1]):  # that activity is gone
                     d = load()
                     for v in d["devices"].values():
