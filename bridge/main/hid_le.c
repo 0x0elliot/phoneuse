@@ -194,7 +194,10 @@ static TaskHandle_t out_task;
 
 static void out_loop(void *arg) {
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+        // Wait for a hover; while one waits for a free queue, check every millisecond
+        // (nothing signals when the link's queue empties).
+        if (latest_set && busy()) vTaskDelay(1);
+        else ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
         if (!latest_set || phone_conn == 0xFFFF || busy()) continue;
         uint8_t id, buf[8], n;
         portENTER_CRITICAL(&latest_mux);
