@@ -50,7 +50,7 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 | `POST /v1/agent/takeover` | `{}` | Stops the agent: its next action fails with "the user took over" |
 | `POST /v1/agent/resume` | `{}` | Lets the agent continue |
 | `POST /v1/unlock/answer` | `{"id", "approve": bool}` | Answers a pending unlock request |
-| `POST /v1/session/ask` | `{"on": bool}` | Ask the owner before each agent session, or not (off by default) |
+| `POST /v1/session/ask` | `{"mode": "auto" \| "countdown" \| "ask", "seconds": 5-30}` | When an agent starts (either field alone; the older `{"on": bool}` means ask / auto) |
 | `POST /v1/session/answer` | `{"id", "approve": bool}` | Answers a pending session request |
 | `POST /v1/passcode` | `{"sealed"}` (field `passcode`) | Saves the passcode that unlocks use |
 | `DELETE /v1/passcode` | | Forgets the passcode |
@@ -74,7 +74,9 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
   "agent": {"state": "idle | driving | paused", "action": "Opening Gmail", "since": 1794153854},
   "awake": true,
   "audio": {"on": true, "needs_remirror": false},
-  "session": {"ask": false, "pending": {"id": "…", "since": 1794153854, "action": "Opening Gmail"}},
+  "session": {"ask": true, "mode": "countdown", "seconds": 10,
+              "pending": {"id": "…", "since": 1794153854, "action": "Opening Gmail", "mode": "countdown",
+                          "deadline": 1794153864}},
   "unlock": {"passcode_saved": true, "pending": {"id": "…", "since": 1794153854}},
   "bridge": {"saved": true, "id": "…", "ip": "192.168.0.51", "ssid": "Giraffe IoT", "use": true,
              "online": true, "rtt_ms": 15}
@@ -83,13 +85,25 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 
 `session.pending`, `unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
 
-## Asking before an agent session
+## When an agent starts
 
-When `session.ask` is on, an agent's first action waits until the owner allows the session, for up to 2 minutes.
-The owner can answer in the app's notification, in the app, in a desktop notification or in the browser mirror. If
-the owner declines or doesn't answer, the agent's action fails with a message that tells it to stop. Once allowed,
-the session lasts until the agent hands the phone back (`phoneuse done`), the owner takes over, or the agent sends
-no action for 60 seconds, which is also when the agent session ends everywhere; after that, the next action asks again.
+One setting decides what happens when an agent's first action arrives (`session.mode`):
+
+| Mode | In the app | What happens |
+|---|---|---|
+| `auto` | Go ahead | Agents take control right away. |
+| `countdown` | Wait (`seconds`, 5–30) | You get N seconds to stop an agent, then it starts. |
+| `ask` | Ask me | Agents wait until you allow them (up to 2 minutes). |
+
+In `countdown` and `ask`, the request reaches the Live Activity (state `asking`), the app, a desktop
+notification and the browser mirror. With a countdown, `pending.deadline` (and the Live Activity's `deadline`)
+is when the agent starts; the request reads "Agent starts in N s" with **Stop** (`approve: false`) and
+**Start now** (`approve: true`), and when the time runs out the PC allows it by itself. Without one, it reads
+"Agent wants control of your iPhone" with **Deny** and **Allow**. If the owner declines or (in `ask`) doesn't
+answer, the agent's action fails with a message that tells it to stop. Once allowed, the session lasts until the
+agent hands the phone back (`phoneuse done`), the owner takes over, or the agent sends no action for 60 seconds,
+which is also when the agent session ends everywhere; after that, the next action asks again. The HID daemon
+enforces it: agents' input is refused there until the session is allowed.
 
 ## Audio
 
@@ -128,7 +142,7 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
 
-`content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>}`.
+`content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "deadline": <unix seconds or null>, "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>, "frame": n}`.
 
 While an agent drives, the PC refreshes the activity every second (priority 10: iOS held back priority-5 frames), with `frame` counting up by one
 each time; the app draws one animation frame per value (a rotation or a different icon), so the icon keeps moving
