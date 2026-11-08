@@ -255,11 +255,9 @@
 				TargetAttributes = {
 					9CBA5485E4D90443AF549E1F = {
 						DevelopmentTeam = 9592R2Q8PP;
-						ProvisioningStyle = Automatic;
 					};
 					A2FBCF8ADD9B89727802BF4C = {
 						DevelopmentTeam = 9592R2Q8PP;
-						ProvisioningStyle = Automatic;
 					};
 					BDED8706616F00F0322E7861 = {
 						DevelopmentTeam = 9592R2Q8PP;
@@ -523,6 +521,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Widgets/PhoneUseWidgets.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Widgets/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -531,6 +531,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = co.lxe.phoneuse.widgets;
 				PRODUCT_NAME = PhoneUseWidgets;
+				PROVISIONING_PROFILE_SPECIFIER = "PhoneUse Widgets AppStore";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -595,7 +596,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/PhoneUse.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PhoneUse;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -604,6 +606,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = co.lxe.phoneuse;
 				PRODUCT_NAME = PhoneUse;
+				PROVISIONING_PROFILE_SPECIFIER = "PhoneUse AppStore";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

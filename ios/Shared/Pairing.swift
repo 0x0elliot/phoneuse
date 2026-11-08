@@ -31,8 +31,21 @@ struct Pairing: Equatable {
     }
 }
 
+/// Whether the build has the app group entitlement. Builds without it keep everything in the app's own storage;
+/// the Live Activity's intents still work, because a LiveActivityIntent runs in the app's process.
+let appGroupAvailable = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) != nil
+
 enum PairingStore {
-    static let defaults = UserDefaults(suiteName: appGroup) ?? .standard
+    static let defaults: UserDefaults = {
+        guard appGroupAvailable, let group = UserDefaults(suiteName: appGroup) else { return .standard }
+        // A build that gains the app group moves the pairing over from the app's own defaults.
+        if group.string(forKey: "pc.id") == nil, UserDefaults.standard.string(forKey: "pc.id") != nil {
+            for k in ["pc.id", "pc.name", "pc.host", "pc.port", "pointer.on"] {
+                group.set(UserDefaults.standard.object(forKey: k), forKey: k)
+            }
+        }
+        return group
+    }()
     private static let service = "co.lxe.phoneuse.pairing"
 
     static func load() -> Pairing? {
@@ -62,8 +75,8 @@ enum PairingStore {
     }
 }
 
-/// Generic-password items in the app group's keychain access group. When the group isn't available (an
-/// unsigned simulator build), it falls back to the app's own keychain.
+/// Generic-password items in the app group's keychain access group when the build has the group, and in the
+/// app's own keychain otherwise. Reads look in both.
 enum Keychain {
     private static func query(_ service: String, _ account: String, group: Bool) -> [String: Any] {
         var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
@@ -84,7 +97,7 @@ enum Keychain {
 
     static func write(_ data: Data, service: String, account: String) {
         delete(service: service, account: account)
-        for group in [true, false] {
+        for group in [appGroupAvailable, false] {
             var q = query(service, account, group: group)
             q[kSecValueData as String] = data
             q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly

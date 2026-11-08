@@ -33,7 +33,8 @@ struct AgentLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
-                        Text(s.startDate, style: .timer).monospacedDigit().foregroundStyle(.secondary)
+                        Text(timerInterval: s.startDate...Date.distantFuture, countsDown: false)
+                            .monospacedDigit().foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
                         Spacer()
                         ControlButton(paused: s.paused)
                     }
@@ -65,10 +66,11 @@ struct LockScreenView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.paused ? "Paused" : state.action).font(.headline).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("\(state.steps) steps ·")
-                    Text(state.startDate, style: .timer)
+                    Text("\(state.steps) steps ·").fixedSize()
+                    Text(timerInterval: state.startDate...Date.distantFuture, countsDown: false)
+                        .frame(width: 72, alignment: .leading)
                 }
-                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                 Text(pcName).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -82,10 +84,10 @@ struct ControlButton: View {
 
     var body: some View {
         if paused {
-            Button(intent: ResumeIntent()) { Label("Resume", systemImage: "play.fill") }
+            Button(intent: ResumeIntent()) { Label("Resume", systemImage: "play.fill").lineLimit(1).fixedSize() }
                 .tint(.green)
         } else {
-            Button(intent: TakeOverIntent()) { Label("Take over", systemImage: "hand.raised.fill") }
+            Button(intent: TakeOverIntent()) { Label("Take over", systemImage: "hand.raised.fill").lineLimit(1).fixedSize() }
                 .tint(.orange)
         }
     }
