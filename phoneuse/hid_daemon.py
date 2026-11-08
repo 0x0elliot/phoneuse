@@ -21,6 +21,7 @@ Commands on /run/phoneuse-hid.sock, one per line, reply "ok ..." or "err ...":
   k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
   status
 """
+import unicodedata
 import os
 import socket
 import struct
@@ -271,6 +272,10 @@ def accept_loop():
             log("declined HID connection from", addr[0], "(released until phoneuse is used)")
             c.close()
             continue
+        if not wanted(addr[0]):
+            log("declined HID connection from", addr[0], f"(not the mirroring phone, {mirror_name[0]!r})")
+            c.close()
+            continue
         log("control from", addr[0])
         i, _ = si.accept()
         log("interrupt from", addr[0])
@@ -294,7 +299,7 @@ def connect_out():
         if hid.connected:
             return "already connected"
         errors = []
-        for addr in paired_devices():
+        for addr in [a for a in paired_devices() if wanted(a)]:
             socks = []
             try:
                 for psm in (PSM_CTRL, PSM_INTR):
@@ -357,6 +362,44 @@ bus = None
 
 def adapter():
     return dbus.Interface(bus.get_object("org.bluez", "/org/bluez/hci0"), "org.freedesktop.DBus.Properties")
+
+
+def device_name(addr):
+    try:
+        props = dbus.Interface(bus.get_object("org.bluez", "/org/bluez/hci0/dev_" + addr.upper().replace(":", "_")),
+                               "org.freedesktop.DBus.Properties")
+        return str(props.Get("org.bluez.Device1", "Alias"))
+    except dbus.DBusException:
+        return None
+
+
+def same_name(a, b):
+    n = lambda x: unicodedata.normalize("NFKC", x or "").replace("\u2019", "'").casefold().strip()
+    return bool(a and b) and n(a) == n(b)
+
+
+# The phone that is screen mirroring, by device name: `phoneuse up` reads it from UxPlay
+# and sends "mirror NAME". AirPlay and Bluetooth both carry the name set in Settings ->
+# General -> About -> Name, so HID goes to the phone whose screen we see.
+mirror_name = [None]
+
+
+def wanted(addr):
+    """May this device use the HID channels? Only the mirroring phone, when it is paired;
+    any paired device while no phone mirrors or the mirroring one isn't paired yet."""
+    if not mirror_name[0] or not any(same_name(device_name(a), mirror_name[0]) for a in paired_devices()):
+        return True
+    return same_name(device_name(addr), mirror_name[0])
+
+
+def set_mirror(name):
+    mirror_name[0] = name.strip() or None
+    log("mirroring phone:", mirror_name[0])
+    if hid.connected and not wanted(hid.peer):
+        hid.drop(f"{hid.peer} is not the mirroring phone")  # also wakes the reconnect loop
+    else:
+        reconnect_now.set()
+    return f"mirror={mirror_name[0]!r} connected={hid.connected} peer={hid.peer}"
 
 
 def paired_devices():
@@ -499,9 +542,11 @@ def run_command(line):
     args = rest.split()
     if cmd == "status":
         return (f"ok connected={hid.connected} released={released.is_set()} peer={hid.peer} "
-                f"paired={paired_devices()}")
+                f"paired={paired_devices()} mirror={mirror_name[0]!r}")
     if cmd == "connect":
         return "ok " + connect_out()
+    if cmd == "mirror":  # mirror NAME: the phone that is screen mirroring
+        return "ok " + set_mirror(rest)
     if cmd == "release":
         return "ok " + release(float(args[0]) if args else 0.0)
     if cmd == "pair":

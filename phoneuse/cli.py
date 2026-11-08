@@ -45,6 +45,8 @@ of ~1,300 for a screenshot):
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off.
 """
 import os
+import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -70,6 +72,29 @@ MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-nh",  # -nh: no "@hostname" after t
                # buffer at 40 ms (pulsesink default is up to 200 ms) and ask the phone to
                # plan for 0.1 s instead of 0.25 s
                "-as", "pulsesink buffer-time=40000 latency-time=10000", "-al", "0.1"]
+
+
+# UxPlay buffers its output when it goes to a pipe; stdbuf makes it line-buffered.
+UNBUFFERED = ["stdbuf", "-oL", "-eL"] if shutil.which("stdbuf") else []
+UXPLAY_LOG = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-uxplay.log")
+SENDER = re.compile(r"connection request from (.+) \((.*)\) with deviceID = (\S+)")
+
+
+def follow_sender(stream):
+    """Log UxPlay's output and tell the HID daemon which phone is mirroring, so the
+    Bluetooth mouse and keyboard go to that phone."""
+    with open(UXPLAY_LOG, "a") as log:
+        for line in stream:
+            log.write(line)
+            log.flush()
+            m = SENDER.search(line)
+            if not m:
+                continue
+            print(time.strftime("%H:%M:%S"), f"mirroring: {m[1]} ({m[2]})", flush=True)
+            try:
+                print(time.strftime("%H:%M:%S"), Hid().cmd("mirror " + m[1]), flush=True)
+            except Exception as e:
+                print(time.strftime("%H:%M:%S"), f"could not tell the HID daemon: {e}", flush=True)
 
 
 def die(msg):
@@ -630,7 +655,12 @@ def up():
             if os.environ.get("PHONEUSE_TRACE"):  # per-element GStreamer latency, for tuning
                 env.update(GST_TRACERS="latency(flags=pipeline+element)", GST_DEBUG="GST_TRACER:7")
                 out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-gst-trace.log"), "w")
-            procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=out, stderr=out, env=env)
+            if out is subprocess.DEVNULL:  # read UxPlay's output for the sender's name
+                procs["mirror"] = subprocess.Popen(UNBUFFERED + MIRROR_ARGS, stdout=subprocess.PIPE,
+                                                   stderr=subprocess.STDOUT, env=env, text=True, errors="replace")
+                threading.Thread(target=follow_sender, args=(procs["mirror"].stdout,), daemon=True).start()
+            else:
+                procs["mirror"] = subprocess.Popen(MIRROR_ARGS, stdout=out, stderr=out, env=env)
             rc = procs["mirror"].wait()
             if stop.is_set():
                 break
