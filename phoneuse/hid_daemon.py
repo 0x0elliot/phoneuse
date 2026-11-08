@@ -837,6 +837,18 @@ def run_command(line):
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
+    if cmd == "tap":  # tap FX FY HOLD: press, hold HOLD seconds, release, as one unit
+        fx, fy, hold = float(args[0]), float(args[1]), float(args[2]) if len(args) > 2 else 0.06
+        if bridge_link[0] and bridge_link[0].can_tap():
+            if not bridge_link[0].phone:
+                raise RuntimeError("no iPhone connected to the bridge (pair it with PhoneUse Bridge)")
+            bridge_link[0].tap(fx, fy, hold)  # timed on the bridge
+            time.sleep(hold + 0.03)  # answer once the release is out, as the local path does
+        else:
+            hid.send(3, absolute(args[0], args[1], 1))
+            time.sleep(hold)
+            hid.send(3, absolute(args[0], args[1], 0))
+        return "ok"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
         buttons = int(args[2]) if len(args) > 2 else 0
         if not buttons and not hid.buttons:
@@ -901,7 +913,7 @@ def run_command(line):
 # `phoneuse up`) always pass, and only they may move the gate: the browser mirror
 # sends "gate open" / "gate closed" / "gate until <unix time>".
 OWNER_MODULES = ("phoneuse.web", "phoneuse.window")
-INPUT_COMMANDS = {"a", "m", "md", "k", "consumer", "eject", "move", "corner", "click", "down", "up", "scroll",
+INPUT_COMMANDS = {"a", "tap", "m", "md", "k", "consumer", "eject", "move", "corner", "click", "down", "up", "scroll",
                   "key", "type"}
 gate_until = [0.0]  # agents may send input while time.time() < this; closed until the browser mirror opens it
 

@@ -800,7 +800,7 @@ def app(mirror):
     a.router.add_post("/api/agent/act", agent_act)
     a.router.add_post("/api/agent/phase", agent_phase)
     a.router.add_get("/api/picture", lambda _r: web.json_response(
-        {"live": mirror.live(), "stale": mirror.stale, "frame_age": round(time.time() - mirror.last_frame_at, 1)
+        {"live": mirror.live(), "stale": mirror.stale, "paused": mirror.taken_over, "frame_age": round(time.time() - mirror.last_frame_at, 1)
          if mirror.last_frame_at else None}))
     a.router.add_post("/api/agent/takeover", agent_takeover)
     a.router.add_post("/api/agent/cursor", agent_cursor)

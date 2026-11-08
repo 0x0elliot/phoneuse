@@ -9,7 +9,9 @@ request:
   status       "ok live=1 seq=N": live while it has a picture of the phone; N
                counts meaningful picture changes (not pointer moves or carets)
   settle [N|-] [Q] [C]  wait until the picture is still for Q seconds (default 0.1);
-               with N, first up to C seconds (default 1) for a change after N
+               with N, first up to C seconds (default 0.6) for a change after N;
+               the answer's reacted= says how long that change took ("-": none)
+  react N [L]  wait up to L seconds (default 3) for the first change after N
   shot         PNG of the current picture (2 px per phone point):
                "ok LENGTH\\n" + bytes
 """
@@ -53,6 +55,7 @@ class Frames:
         self.big_at = 0.0  # when the picture last changed in a big way (>= BIG)
         self.last_still = True
         self.ambient = False
+        self.reacted = None
         self.last_move = self.moving_since = None  # (time, change vs last counted frame, change vs previous frame)
         self.shot_lock = threading.Lock()
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
@@ -154,10 +157,14 @@ class Frames:
         `change` seconds (an action may change nothing). Then wait until nothing
         meaningful has changed for `quiet` seconds. At once when nothing happens."""
         start = time.time()
+        self.reacted = None  # seconds until the action's first visible change, if one came
         with self.cv:
             if since is not None:
                 while self.seq <= since and time.time() - start < change:
                     self.cv.wait(change - (time.time() - start))
+                if self.seq > since:
+                    self.reacted = time.time() - start
+                start = time.time()  # the stillness wait starts at the change
             still = False
             ambient = False
             while time.time() - start < limit:
@@ -232,8 +239,19 @@ class Frames:
                         quiet = float(a[1]) if len(a) > 1 else 0.1
                         change = float(a[2]) if len(a) > 2 else 0.6
                         seq = self.settle(since, change=change, quiet=quiet)
+                        reacted = "-" if self.reacted is None else f"{self.reacted:.2f}"
                         conn.sendall(f"ok seq={seq} still={int(self.last_still)} ambient={int(self.ambient)} "
-                                     f"ignored={self.dynamic_frac:.3f}\n".encode())
+                                     f"ignored={self.dynamic_frac:.3f} reacted={reacted}\n".encode())
+                    elif cmd == "react":  # react SINCE [LIMIT]: wait for the first change after SINCE
+                        a = arg.split()
+                        since, limit = int(a[0]), (float(a[1]) if len(a) > 1 else 3.0)
+                        t0 = time.time()
+                        with self.cv:
+                            while self.seq <= since and time.time() - t0 < limit:
+                                self.cv.wait(limit - (time.time() - t0))
+                            seq = self.seq
+                        reacted = f"{time.time() - t0:.2f}" if seq > since else "-"
+                        conn.sendall(f"ok seq={seq} reacted={reacted}\n".encode())
                     elif cmd == "history":  # history SINCE_EPOCH: frames after that time, as JSON
                         import json
                         t0 = float(arg or 0)

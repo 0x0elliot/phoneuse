@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define BRIDGE_FW "0.1.0"
+#define BRIDGE_FW "0.2.0"  // 0.2: TAP (0x0C)
 #define BRIDGE_NAME "PhoneUse Bridge"  // the name the iPhone sees in Bluetooth settings
 
 typedef enum {
@@ -59,6 +59,9 @@ void hid_connect_last(void);
 int hid_keys(const uint8_t *pairs, int n);
 int hid_keys_left(void);
 void hid_discoverable(int seconds);
+// A tap at the absolute position (x, y: 0..32767): press, hold hold_ms, release, all on
+// the bridge. 0 queued, -1 not.
+int hid_tap(uint16_t x, uint16_t y, uint16_t hold_ms);
 
 // link.c
 void link_start(void);

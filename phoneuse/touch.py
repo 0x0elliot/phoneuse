@@ -203,10 +203,22 @@ def scroll_drag(hid, fx0, fy0, fx1, fy1):
 # ---------- scripted gestures (for agents) ----------
 
 def tap(hid, fx, fy, hold=0.06):
-    t = Touch(hid)
-    t.press(fx, fy)
-    time.sleep(hold)
-    t.release()
+    """Move the pointer to (fx, fy), let it settle, then tap: the press and release go
+    as one daemon command (timed on the bridge, when there is one), so a slow link
+    can't turn a tap into a long press."""
+    fx, fy = _clamp(fx), _clamp(fy)
+    hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
+    time.sleep(0.2)  # the pointer may jump far; pressing mid-jump starts a drag
+    try:
+        hid.cmd(f"tap {fx:.5f} {fy:.5f} {hold:.3f}")
+    except RuntimeError as e:
+        if "unknown command" not in str(e):
+            raise
+        t = Touch(hid)  # an older daemon: press and release separately
+        t.pos = (fx, fy)
+        t.press(fx, fy)
+        time.sleep(hold)
+        t.release()
 
 
 def long_press(hid, fx, fy, hold=0.8):

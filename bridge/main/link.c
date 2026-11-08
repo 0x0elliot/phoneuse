@@ -18,6 +18,7 @@
 //   0x07 JOIN nonce(12) sealed -> 0x87, then it changes network; sealed =
 //        AES-GCM(HMAC(control key, "phoneuse wifi change"), "ssid\0password").
 //        Back on the old network if the new one fails (STATUS "err" says why).
+//   0x0C TAP x y hold_ms      -> 0x8C err: a whole tap (press, hold, release) done on the bridge
 //   0x09 KEYS (mods, usage)*  -> 0x89 queued(u16) left(u16): typed on the bridge, in order
 //   0x0A KEYSLEFT             -> 0x8A left(u16): keys not typed yet
 //   0x08 TUNE what value     -> 0x88 esp_err (experiments): what 1 = coexistence
@@ -214,6 +215,9 @@ static void link_task(void *arg) {
 #pragma GCC diagnostic pop
             if (body[0] == 2) e = esp_wifi_set_max_tx_power((int8_t)body[1]);
             m = reply(out, 0x88, sid, seq, &e, 4, true);
+        } else if (type == 0x0C && bn >= 6) {  // TAP x(u16) y(u16) hold_ms(u16), little-endian
+            int8_t e = (int8_t)hid_tap(body[0] | body[1] << 8, body[2] | body[3] << 8, body[4] | body[5] << 8);
+            m = reply(out, 0x8C, sid, seq, &e, 1, true);
         } else if (type == 0x05) {
             setup_ble_open(true);
             m = reply(out, 0x85, sid, seq, "", 0, true);

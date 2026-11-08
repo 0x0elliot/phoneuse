@@ -80,9 +80,11 @@ STRIP_AT = (0.1, 0.4, 0.8)  # seconds after an action: frames in the strip
 server = MCPServer(
     "phoneuse",
     instructions=(
-        "Operate the user's real iPhone. Every action returns three frames from just after it (one image) "
-        "plus the screen's text with positions, so you rarely need `look` on its own. If the last frame "
-        "is still mid-transition, call look. Prefer tap_on for visible text. "
+        "Operate the user's real iPhone. Every action waits for the phone's first visible reaction, then "
+        "returns three frames from it (one image) plus the screen's text with positions, so you rarely need "
+        "`look` on its own. If the last frame is still mid-transition, call wait. When a result says no "
+        "change showed, look before repeating the action. Prefer tap_on for visible text; tap icons by "
+        "position. A result starting PAUSED means the user took over: stop until they resume you. "
         "On the lock screen call unlock (the owner approves each unlock); never type a passcode. "
         "When your task is done, call end_session to hand the phone back to the user. "
         "This is the user's personal phone: ask before sending, posting, buying, deleting, or changing "
@@ -125,12 +127,20 @@ def _screen(look):
     return parts
 
 
-def _strip():
-    """Three frames right after an action, side by side in one image (~625
-    tokens), with the text of the last one. No waiting for the screen to settle:
-    the agent sees what moved (a page sliding in, video, a spinner) itself."""
+def _strip(since=None):
+    """Three frames from the phone's reaction on, side by side in one image (~625
+    tokens), with the text of the last one. After an action (`since`, the frame
+    count before it), first wait up to cli.REACT_WAIT s for its first visible
+    change, so a slow phone's result isn't mistaken for "nothing happened"; then
+    no waiting for the screen to settle: the agent sees what moved itself."""
     import time
     from phoneuse import screen
+    if since is not None:
+        try:
+            line, _ = screen.frames_request(f"react {since} {cli.REACT_WAIT}", timeout=cli.REACT_WAIT + 2)
+            cli.reaction_note(line.split("reacted=")[1].split()[0])
+        except (OSError, IndexError):
+            pass
     t0, frames = time.time(), []
     for at in STRIP_AT:
         time.sleep(max(0.0, t0 + at - time.time()))
@@ -178,16 +188,23 @@ def _strip():
 
 
 def _act(action, look):
+    seq = {}
+
     def run():
         h = cli.hid()
         r = action(h)
+        seq["before"] = h.first_seq
         cli.acted(h.first_seq)
         return r if isinstance(r, str) else "ok"
     cli.NOTES.clear()
     ok, msg = _quietly(run)
     if not ok:
-        return [f"error: {msg}"]
-    screen_parts = _strip() if look == "strip" else _screen(look)  # may add notes
+        return [f"error: {msg}"] + (["\n".join(cli.NOTES)] if cli.NOTES else [])
+    if look == "strip":
+        screen_parts = _strip(seq.get("before"))
+    else:
+        screen_parts = _screen(look)  # settles first, which waits for the reaction too
+    cli.picture_note()
     return ["\n".join([msg] + cli.NOTES)] + screen_parts
 
 
@@ -211,7 +228,8 @@ def wait(seconds: float = 1.0, look: Look = "strip") -> list:
     import time
     time.sleep(min(max(seconds, 0.0), 10.0))
     cli.NOTES.clear()
-    return _strip() if look == "strip" else _screen(look)
+    parts = _strip() if look == "strip" else _screen(look)
+    return parts + (["\n".join(cli.NOTES)] if cli.NOTES else [])
 
 
 def _guard(x, y, force):
@@ -229,11 +247,20 @@ def tap(x: float, y: float, look: Look = "strip", force: bool = False) -> list:
 
 
 @tool
-def tap_on(target: str, look: Look = "strip") -> list:
-    """Tap an element by description. Visible text is tapped exactly; text that isn't on
-    screen is refused. Visual descriptions ("gear icon", "back button", "share button")
-    use a grounding model: check the returned screen."""
-    return _act(lambda h: cli.tap_on(h, target), look)
+def tap_on(target: str, look: Look = "strip", force: bool = False) -> list:
+    """Tap on-screen text that matches `target` (OCR). Refused when the text isn't on
+    screen, or when that area changed since your last view (look again); for icons and
+    pictures, tap by position from the screenshot instead."""
+    return _act(lambda h: cli.tap_on(h, target, force), look)
+
+
+@tool
+def read_notifications() -> str:
+    """Open Notification Center, return the text of what it shows (scrolling once for
+    older ones), and close it again. Private: use only what the task needs."""
+    cli.NOTES.clear()
+    ok, msg = _quietly(lambda: cli.read_notifications(cli.hid()))
+    return msg if ok else f"error: {msg}"
 
 
 @tool

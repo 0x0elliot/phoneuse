@@ -140,6 +140,8 @@ void hid_init(void) {
     xTaskCreatePinnedToCore(out_loop, "hidout", 3072, NULL, 19, &out_task, 0);
     keyq = xQueueCreate(512, 2);
     xTaskCreatePinnedToCore(key_loop, "keys", 3072, NULL, 18, NULL, 0);
+    tapq = xQueueCreate(8, sizeof(tap_t));
+    xTaskCreatePinnedToCore(tap_loop, "taps", 3072, NULL, 18, NULL, 0);
 }
 
 static void out_loop(void *arg) {
@@ -169,6 +171,27 @@ static void key_loop(void *arg) {
         hid_send(1, up, 8, false);
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+// A tap, done here as one unit: press, hold, release at the bridge's own pace, so
+// Wi-Fi delays between the PC's packets can't stretch a tap into a long press.
+typedef struct { uint16_t x, y, hold_ms; } tap_t;
+static QueueHandle_t tapq;
+
+static void tap_loop(void *arg) {
+    tap_t t;
+    for (;;) {
+        xQueueReceive(tapq, &t, portMAX_DELAY);
+        uint8_t down[5] = {1, t.x & 0xFF, t.x >> 8, t.y & 0xFF, t.y >> 8}, up[5] = {0, t.x & 0xFF, t.x >> 8, t.y & 0xFF, t.y >> 8};
+        for (int i = 0; i < 50 && hid_send(3, down, 5, false) == 1; i++) vTaskDelay(1);
+        vTaskDelay(pdMS_TO_TICKS(t.hold_ms));
+        for (int i = 0; i < 50 && hid_send(3, up, 5, false) == 1; i++) vTaskDelay(1);
+    }
+}
+
+int hid_tap(uint16_t x, uint16_t y, uint16_t hold_ms) {
+    tap_t t = {x, y, hold_ms > 3000 ? 3000 : hold_ms};
+    return tapq && xQueueSend(tapq, &t, 0) == pdTRUE ? 0 : -1;
 }
 
 int hid_keys(const uint8_t *pairs, int n) {

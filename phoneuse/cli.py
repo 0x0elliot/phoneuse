@@ -48,9 +48,10 @@ of ~1,300 for a screenshot):
   phoneuse text [--json] [--all] every line of text on screen with its centre (x, y), and
                                on/off switches as [switch on] / [switch off]; --all keeps
                                the status bar and stray icon glyphs
-  phoneuse find WHAT            where an element is, from a plain description
-                               ("clear search (X) button", "Settings app icon")
-  phoneuse tap-on WHAT          find it and tap it; prints where it tapped
+  phoneuse tap-on TEXT          tap the on-screen text that matches (OCR); prints where it
+                               tapped; refused when the text isn't on screen, or when that
+                               area changed since your last look (--force taps anyway)
+  phoneuse notifications-read   open Notification Center, print what it shows, close it
 
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off.
 """
@@ -205,9 +206,7 @@ def agent_phase(phase):
 
 def agent_turn():
     """Before an agent action: tell the browser mirror an agent is driving (it
-    glows and locks its own input), and stop if the user has taken over. Also
-    notes when the screen changed since the agent last looked without it acting
-    (the user may be using the phone, or something is animating)."""
+    glows and locks its own input), and stop if the user has taken over."""
     import atexit, json
     if sys.argv[0].endswith("phoneuse"):  # a CLI command: the agent thinks again once it exits
         atexit.register(agent_phase, "thinking")
@@ -229,17 +228,6 @@ def agent_turn():
         if asks:
             die(f"Couldn't get the owner's approval for this session ({e}). Nothing was done.")
         # else: no browser mirror running, nothing to tell
-    try:
-        seen_at = os.path.getmtime(LAST_SEEN)
-        acted_at = os.path.getmtime(LAST_ACTION) if os.path.exists(LAST_ACTION) else 0
-        # only when the agent looked after its own last action (else its own frames count)
-        if time.time() - seen_at < 600 and seen_at >= acted_at:
-            seen, now = int(open(LAST_SEEN).read()), frame_seq()
-            if now is not None and now > seen + 1:  # one late change is usually the end of an animation
-                NOTES.append("note: the screen changed since your last look without an action from you "
-                             "(someone may be using the phone, or it is animating); look before relying on it")
-    except (OSError, ValueError):
-        pass
 
 
 def hid():
@@ -324,7 +312,7 @@ class AgentHid:
 
     def cmd(self, line):
         if self.first_seq is None and line != "status":
-            # Taken here, after any OCR or grounding lookup the action did first:
+            # Taken here, after any OCR lookup the action did first:
             # changes during a lookup must not count as this action's result.
             self.first_seq = frame_seq()
         r = self.h.cmd(line)
@@ -332,6 +320,9 @@ class AgentHid:
             parts = line.split()
             if parts[0] == "a":
                 self.dot = (float(parts[1]), float(parts[2]), parts[3] != "0")
+                self.dots.show_now(self.dot)
+            elif parts[0] == "tap":
+                self.dot = (float(parts[1]), float(parts[2]), False)
                 self.dots.show_now(self.dot)
             elif parts[0] == "m" and self.dot:
                 ux, uy = int(parts[1]), int(parts[2])
@@ -365,6 +356,34 @@ def acted(seq_before=None):
     agent_phase("reading")
 
 
+REACT_WAIT = 3.0  # s: how long to wait for an action's first visible change before saying there was none
+REACTIONS = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-reactions")
+SLOW = 0.8  # s: a median reaction above this means the mirror is slow (a recording, a busy phone)
+
+
+def reaction_note(reacted):
+    """After an action: note when the phone showed no change, and keep a running
+    record of how long changes take to show, so agents hear when the mirror is slow."""
+    if reacted == "-":
+        NOTES.append(f"note: no change showed within {REACT_WAIT:.0f} s of this action: it may have done "
+                     "nothing (a tap on nothing, a field already empty), or the phone is slow. Look again "
+                     "before repeating it, so it doesn't happen twice")
+        return
+    try:
+        r = float(reacted)
+        with open(REACTIONS, "a") as f:
+            f.write(f"{time.time():.0f} {r:.2f}\n")
+        recent = [float(l.split()[1]) for l in open(REACTIONS).read().split("\n")[-11:] if l.strip()
+                  if time.time() - float(l.split()[0]) < 300]
+        med = sorted(recent)[len(recent) // 2] if recent else 0
+        if len(recent) >= 3 and med > SLOW:
+            NOTES.append(f"note: the phone is slow to show changes right now (about {med:.1f} s after each "
+                         "action; a screen recording or a busy app does this). Results above waited for it, "
+                         "but leave time before acting again")
+    except (OSError, ValueError):
+        pass
+
+
 def settle():
     """Wait until the phone's screen is still: after a recent action, until its
     first frame has arrived and frames have stopped; otherwise at once. Driven
@@ -377,9 +396,12 @@ def settle():
     except (FileNotFoundError, ValueError):
         pass
     try:
-        line, _ = screen.frames_request(f"settle {since}" if since is not None else "settle", timeout=6)
-        with open(LAST_SEEN, "w") as f:  # what the agent has now seen (see agent_turn)
+        req = f"settle {since} 0.1 {REACT_WAIT}" if since is not None else "settle"
+        line, _ = screen.frames_request(req, timeout=REACT_WAIT + 4)
+        with open(LAST_SEEN, "w") as f:  # what the agent has now seen
             f.write(line.split("seq=")[1].split()[0])
+        if since is not None and "reacted=" in line:
+            reaction_note(line.split("reacted=")[1].split()[0])
         note = None
         if "still=0" in line:
             note = "note: the screen was still changing when read; look again if it matters"
@@ -422,6 +444,26 @@ def control_center(h):
 
 def notifications(h):
     touch.swipe(h, 0.15, 0.0, 0.15, 0.7, duration=0.6)
+
+
+def read_notifications(h, pages=2):
+    """Open Notification Center, read what it shows (scrolling once for older ones),
+    close it, and return the text. Notifications are private: use only what the
+    task needs."""
+    notifications(h)
+    settle()
+    seen, out = set(), []
+    for page in range(pages):
+        for x, y, t in screen_text():
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+        if page < pages - 1:
+            scroll(h, "down", 1.2)  # older notifications are further down the list
+            settle()
+    dismiss(h)
+    settle()
+    return "Notification Center:\n" + "\n".join(out) if out else "Notification Center is empty"
 
 
 def dismiss(h):
@@ -673,15 +715,28 @@ def save_look(rgb):
         pass
 
 
-def moved_since_look(fx, fy):
-    """Has the area around (fx, fy) changed since the agent's last look? Taps go
-    by position, so a tap computed from an old picture of a feed that has since
-    scrolled lands on something else. Returns a reason, or None."""
+def load_look():
+    """The agent's last look (save_look), or None when there is no recent one."""
     import numpy as np
     try:
         if time.time() - os.path.getmtime(LOOK) > 300:
             return None  # no recent look: the agent isn't working from a picture
-        then = np.load(LOOK)
+        return np.load(LOOK)
+    except (OSError, ValueError):
+        return None
+
+
+def moved_since_look(fx, fy, then=None):
+    """Has the area around (fx, fy) changed since the agent's last look (or `then`,
+    a look loaded earlier)? Taps go by position, so a tap computed from an old
+    picture of a feed that has since scrolled lands on something else. Returns a
+    reason, or None."""
+    import numpy as np
+    try:
+        if then is None:
+            then = load_look()
+        if then is None:
+            return None
         settle()
         now = _small(screen.grab_rgb())
     except (OSError, ValueError, RuntimeError):
@@ -722,7 +777,7 @@ def screenshot(path):
     print(f"{path} ({w}x{hgt} px = {PT[0]}x{PT[1]} pt; tap with fractions of this image or points)")
 
 
-# ---------- vision (OCR + grounding, see vision.py) ----------
+# ---------- vision (OCR, see vision.py) ----------
 
 VISION_SOCK = VISION_SOCKET
 
@@ -772,13 +827,19 @@ BACK_GLYPHS = {"く", "<", "‹", "〈", "〈"}  # how OCR reads the back chevro
 
 
 def picture_note():
-    """A warning when the mirror shows an old picture (web.py check_stale)."""
+    """Notes about the session for every screen read: the user took over (paused),
+    or the mirror shows an old picture (web.py check_stale)."""
     import json
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{CFG['web_port']}/api/picture", timeout=1) as r:
             p = json.load(r)
     except (OSError, ValueError):
         return
+    if p.get("paused"):
+        note = ("PAUSED: the user took over the phone. Don't act; wait until they resume you "
+                "(any action now is refused).")
+        if note not in NOTES:
+            NOTES.insert(0, note)
     if p.get("stale"):
         note = ("note: the mirror's picture isn't updating (last frame "
                 f"{p.get('frame_age')} s ago): the phone's screen is off or mirroring stalled; "
@@ -788,11 +849,11 @@ def picture_note():
 
 
 def screen_text(show_all=False, shot=None):
-    picture_note()
     """The screen as text lines [(x, y, text)]: OCR plus the state of on/off
     switches, which OCR can't read. Drops the status bar and icon glyphs OCR
     mistakes for text (lines without a letter or digit) unless show_all. Takes a
     settled screenshot unless given one (`shot`, a PNG path, which it leaves)."""
+    picture_note()
     import numpy as np
     from PIL import Image
     own = shot is None
@@ -823,15 +884,11 @@ def text_cmd(args):
 
 
 FILLER = {"row", "button", "icon", "link", "tab", "cell", "item", "the", "label", "option"}
-# Descriptions of things that aren't text; only these fall back to the grounding model.
-VISUAL = {"icon", "button", "image", "picture", "logo", "symbol", "glyph", "arrow", "switch",
-          "toggle", "avatar", "photo", "thumbnail", "chevron", "x", "plus", "+", "gear", "badge"}
 
 
 def text_target(what):
     """Position of an on-screen text line matching `what` (ignoring words like
-    "row" or "button"), or None. Exact, unlike the grounding model, which always
-    answers even when the element isn't on screen."""
+    "row" or "button"), or None."""
     words = [w for w in what.lower().replace('"', "").split() if w not in FILLER]
     if not words:
         return None
@@ -852,35 +909,21 @@ def text_target(what):
     return None
 
 
-def tap_on(h, what):
-    """Tap an element by description: on-screen text exactly (OCR), else, for
-    visual descriptions only, the grounding model. Returns what it did."""
+def tap_on(h, what, force=False):
+    """Tap the on-screen text that matches `what` (OCR). Refused when the text isn't
+    on screen, or when the area around it changed since the agent's last look (the
+    agent decided from an older picture). Returns what it did."""
+    seen = load_look()  # before reading the text: that read is a new look of its own
     hit = text_target(what)
-    if hit:
-        x, y = hit
-        how = "text"
-    elif not VISUAL.intersection(what.lower().replace('"', "").split()):
-        die(f"'{what}' isn't on screen as text, so nothing was tapped. Scroll to it, or describe "
-            "something visual (\"gear icon\", \"back button\") to use the grounding model.")
-    else:
-        x, y = find(what)
-        how = "grounding (check the result)"
-        # find always answers, even when the element isn't there; it then tends to
-        # point at the status bar. Never tap there: the Dynamic Island in its middle
-        # opens the Stop Mirroring popup.
-        if y < 0.06:
-            die(f"refusing to tap the status bar at {x:.3f} {y:.3f}: '{what}' is probably not on screen")
+    if not hit:
+        die(f"'{what}' isn't on screen as text, so nothing was tapped. Scroll to it, or tap by "
+            "position (x, y) from the screenshot.")
+    x, y = hit
+    why = None if force or seen is None else moved_since_look(x, y, then=seen)
+    if why:
+        die(f"Not tapped: {why}")
     touch.tap(h, x, y)
-    return f"tapped {x:.3f} {y:.3f} by {how}"
-
-
-def find(what):
-    shot = fresh_screenshot()
-    r = vision({"op": "find", "image": shot, "what": what})
-    os.unlink(shot)
-    if "error" in r:
-        die(f"not found: {what}")
-    return r["x"], r["y"]
+    return f"tapped {x:.3f} {y:.3f} ('{what}')"
 
 
 # ---------- up / install / status ----------
@@ -914,7 +957,7 @@ def up():
                 time.sleep(1)
 
     def start_vision():
-        # The screen-reading models (OCR and grounding) load as soon as phoneuse
+        # The screen-reading model (OCR) loads as soon as phoneuse
         # starts, not on an agent's first look. Skipped if they aren't installed.
         if os.path.exists(os.path.join(ROOT, ".venv-vision", "bin", "python")):
             try:
@@ -1122,7 +1165,7 @@ def main():
     ACTION = describe(cmd, " ".join(x for x in args if x != "--text"))
     # `--text` at the end of an action: print the screen as text afterwards, saving
     # a second call (only as the last argument, so `type` can still type it).
-    then_text = bool(args) and args[-1] == "--text" and cmd not in ("text", "find", "screenshot")
+    then_text = bool(args) and args[-1] == "--text" and cmd not in ("text", "screenshot")
     if then_text:
         args = args[:-1]
     if cmd == "install":
@@ -1153,10 +1196,6 @@ def main():
         return view("--print" in args)
     if cmd == "text":
         return text_cmd(args)
-    if cmd == "find":
-        x, y = find(" ".join(args))
-        print(f"{x:.3f} {y:.3f}")
-        return
     if cmd == "screenshot":
         paths = [x for x in args if not x.startswith("--")]  # (--keep-pointer: now always)
         return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse.png"))
@@ -1207,7 +1246,9 @@ def main():
     elif cmd == "calibrate":  # measure the mirroring phone's pointer (drags use it)
         print(calibrate.calibrate(h, alive=agent_turn))
     elif cmd == "tap-on":
-        print(tap_on(h, " ".join(args)))
+        print(tap_on(h, " ".join(a for a in args if a != "--force"), force="--force" in args))
+    elif cmd == "notifications-read":
+        print(read_notifications(h))
     elif cmd == "where":
         p = screen.find_orange(screen.grab_rgb())
         print(f"{p[0]:.3f} {p[1]:.3f}" if p else "not found")

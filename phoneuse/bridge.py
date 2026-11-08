@@ -434,6 +434,25 @@ class Link:
         self.waiting, self.phone = r[1], r[0] != 2
         return ("sent", "skipped", "no phone")[min(r[0], 2)]
 
+    def can_tap(self):
+        """Whether the bridge's firmware does whole taps (0.2.0 and later)."""
+        if getattr(self, "_can_tap", None) is None:
+            try:
+                fw = self.status().get("fw", "0")
+                self._can_tap = tuple(int(p) for p in fw.split(".")[:2]) >= (0, 2)
+            except (RuntimeError, ValueError, OSError):
+                return False
+        return self._can_tap
+
+    def tap(self, fx, fy, hold):
+        """A whole tap on the bridge: press at (fx, fy) (screen fractions), hold `hold`
+        seconds, release. The bridge times it, so Wi-Fi can't stretch the hold."""
+        x, y = (max(0, min(32767, round(float(v) * 32767))) for v in (fx, fy))
+        ms = max(0, min(3000, round(hold * 1000)))
+        r = self._call(0x0C, bytes([x & 0xFF, x >> 8, y & 0xFF, y >> 8, ms & 0xFF, ms >> 8]))
+        if not r or r[0] != 0:
+            raise RuntimeError("the bridge couldn't queue the tap")
+
     def status(self):
         return json.loads(self._call(0x03).decode())
 
