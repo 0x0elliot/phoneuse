@@ -34,9 +34,12 @@ actor PushRegistrar {
         await send(["device": device!], what: "device token")
     }
 
-    /// Re-sends every token: after pairing, and whenever the app becomes active.
+    /// Re-sends every token, with "env": at launch, after pairing, and whenever the app becomes active. A PC that
+    /// last heard from another build (TestFlight is production, a development build is sandbox) gets this
+    /// build's tokens and environment.
     func resendAll() async {
         startWatching()
+        if let data = Activity<AgentActivityAttributes>.pushToStartToken { pushToStart = CompanionCrypto.hex(data) }
         var body: [String: Any] = [:]
         if let device { body["device"] = device }
         if let pushToStart { body["push_to_start"] = pushToStart }
@@ -130,8 +133,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         ])
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         application.registerForRemoteNotifications()
-        Task { await PushRegistrar.shared.startWatching() }
+        Task { await PushRegistrar.shared.resendAll() }  // also on background launches
         return true
+    }
+
+    /// The PC's background push when a request ends without the app answering it:
+    /// {"aps": {"content-available": 1}, "request_over": {"kind": "session" | "unlock", "id": "…"}}
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any])
+        async -> UIBackgroundFetchResult {
+        guard let over = userInfo["request_over"] as? [String: Any], let kind = over["kind"] as? String,
+              let id = over["id"] as? String else { return .noData }
+        await RequestNotifications.remove(kind: kind, id: id)
+        await AppModel.shared.refresh()
+        return .newData
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -144,7 +158,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        let info = notification.request.content.userInfo
+        if info["session_id"] != nil || info["unlock_id"] != nil { Task { await AppModel.shared.refresh() } }
+        return [.banner, .list, .sound]
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
@@ -172,5 +188,33 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
         BackgroundTask.end(task)
         await AppModel.shared.refresh()
+    }
+}
+
+/// The delivered SESSION and UNLOCK notifications, kept in step with the PC's pending requests.
+enum RequestNotifications {
+    private static let keys = ["session": "session_id", "unlock": "unlock_id"]
+
+    /// Removes the notifications for one request that has ended.
+    static func remove(kind: String, id: String) async {
+        guard let key = keys[kind] else { return }
+        await removeWhere { ($0[key] as? String) == id }
+    }
+
+    /// Removes the notifications for requests that are no longer pending.
+    static func prune(session: String?, unlock: String?) async {
+        await removeWhere { info in
+            if let id = info["session_id"] as? String { return id != session }
+            if let id = info["unlock_id"] as? String { return id != unlock }
+            return false
+        }
+    }
+
+    private static func removeWhere(_ match: @escaping ([AnyHashable: Any]) -> Bool) async {
+        let center = UNUserNotificationCenter.current()
+        let ids = await center.deliveredNotifications()
+            .filter { match($0.request.content.userInfo) }
+            .map(\.request.identifier)
+        if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
     }
 }

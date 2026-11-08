@@ -63,6 +63,7 @@ final class AppModel: ObservableObject {
             let s = try await client.get("/v1/state", as: PCState.self)
             if s != state { state = s }
             reachable = true
+            await RequestNotifications.prune(session: s.session?.pending?.id, unlock: s.unlock.pending?.id)
             if let p = PairingStore.load(), p != pairing { pairing = p }
         } catch CompanionError.server(let status, let message) where status == 401 {
             reachable = false

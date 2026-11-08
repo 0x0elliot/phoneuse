@@ -14,6 +14,7 @@ struct PhoneUseApp: App {
                 .onChange(of: phase, initial: true) { _, phase in
                     if phase == .active {
                         model.startPolling()
+                        UIApplication.shared.registerForRemoteNotifications()  // iOS answers with the device token again
                         Task {
                             await PushRegistrar.shared.resendAll()
                             await model.endFinishedActivities()

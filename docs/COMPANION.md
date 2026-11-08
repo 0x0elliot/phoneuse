@@ -100,7 +100,9 @@ from Control Center. iOS doesn't let apps start Screen Mirroring.
 
 ## Push
 
-The app sends its tokens whenever iOS gives it new ones:
+The app sends its tokens whenever iOS gives it new ones, and all of them again at every launch and whenever it
+becomes active, so the PC always has the current build's tokens and `env` (a TestFlight build is `production`, a
+development build `sandbox`):
 
 ```json
 {"bundle_id": "…", "env": "sandbox | production",
@@ -127,6 +129,11 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
 - **Unlock request** (topic `<bundle id>`, push type `alert`), to the device token: an alert with category
   `UNLOCK` and `"unlock_id"` in the payload. The app's notification actions **Unlock** (with
   `.authenticationRequired`) and **Deny** call `POST /v1/unlock/answer`.
+- **Request over** (topic `<bundle id>`, push type `background`, priority 5), to the device token, when a session
+  or unlock request ends without the app answering it (answered elsewhere, timed out, or the agent gave up or ended
+  its session): `{"aps": {"content-available": 1}, "request_over": {"kind": "session" | "unlock", "id": "…"}}`.
+  The app removes the delivered notifications for that request and refreshes the state. Whenever the app refreshes
+  the state, it also removes any delivered request notification whose id isn't pending any more.
 
 `content-state` is `{"state": "driving | paused", "phase": "acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "startedAt": <unix seconds>}`.
 
