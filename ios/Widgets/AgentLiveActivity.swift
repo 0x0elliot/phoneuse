@@ -39,7 +39,7 @@ struct AgentLiveActivity: Widget {
                     case .driving, .paused:
                         if let steps = s.stepsText {
                             Text(steps).font(.caption).monospacedDigit()
-                                .contentTransition(.numericText()).foregroundStyle(.secondary)
+                                .contentTransition(.identity).foregroundStyle(.secondary)
                         }
                     case .idle, .asking:
                         Text(context.attributes.pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -76,7 +76,7 @@ struct AgentLiveActivity: Widget {
                 case .asking: Text("Allow?").font(.caption).foregroundStyle(.orange)
                 case .driving, .paused:
                     if s.steps > 0 {
-                        Text("\(s.steps)").monospacedDigit().contentTransition(.numericText())
+                        Text("\(s.steps)").monospacedDigit().contentTransition(.identity)
                             .foregroundStyle(look.color(s))
                     }
                 }
@@ -141,7 +141,7 @@ enum Look {
 /// The state's icon. While driving, a ring with a gap turns around it: a Live Activity can't loop an animation, and
 /// timer-driven views don't animate in the compact Dynamic Island, so the PC sends a refresh every second with
 /// `frame` counting up. Each frame turns the ring 45 degrees, animated linearly over the second, so the turns join
-/// into steady motion. The icon swaps with a symbol transition when the phase changes.
+/// into steady motion. Nothing else animates on an update, so the icon and text stay still while the ring turns.
 struct StateIcon: View {
     var state: AgentActivityAttributes.ContentState
     var size: CGFloat
@@ -163,7 +163,9 @@ struct StateIcon: View {
             Image(look.symbol(state))
                 .font(.system(size: size * (look == .driving ? 0.45 : 0.7), weight: .semibold))
                 .foregroundStyle(look.color(state))
-                .contentTransition(.symbolEffect(.replace))
+                // Still on every update: only the ring moves with the 1 s frames. A new phase swaps the icon at once.
+                .contentTransition(.identity)
+                .transition(.identity)
         }
         .frame(width: size, height: size)
     }
@@ -212,11 +214,11 @@ struct DrivingView: View {
             StateIcon(state: state, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(look.title(state)).font(.caption.weight(.semibold)).foregroundStyle(look.color(state))
-                    .contentTransition(.opacity)
-                Text(state.action).font(.headline).lineLimit(1).contentTransition(.opacity)
+                    .contentTransition(.identity)
+                Text(state.action).font(.headline).lineLimit(1).contentTransition(.identity)
                 HStack(spacing: 4) {
                     if let steps = state.stepsText {
-                        Text("\(steps) ·").fixedSize().contentTransition(.numericText())
+                        Text("\(steps) ·").fixedSize().contentTransition(.identity)
                     }
                     Text(timerInterval: state.startDate...Date.distantFuture, countsDown: false)
                         .frame(width: 72, alignment: .leading)
