@@ -46,8 +46,8 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["takeover"].waitForExistence(timeout: 6))
 
         // Ask before an agent session, and allow the pending request.
-        app.buttons["Ask me"].tap()
-        XCTAssertTrue(app.staticTexts["Agents wait until you allow them."].waitForExistence(timeout: 6))
+        app.buttons["Approval"].tap()
+        XCTAssertTrue(app.staticTexts["An agent takes control only with your approval."].waitForExistence(timeout: 6))
         XCTAssertTrue(app.staticTexts["sessionRequest"].exists || app.otherElements["sessionRequest"].exists
                       || app.buttons["allowSession"].exists)
         app.buttons["allowSession"].tap()

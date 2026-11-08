@@ -457,16 +457,16 @@ struct RequestSheet: View {
             VStack(spacing: 6) {
                 if let deadline {
                     HStack(spacing: 6) {
-                        Text("Agent starts in")
+                        Text("Agent taking control in")
                         Text(timerInterval: Date()...deadline, countsDown: true).monospacedDigit()
                     }
                     .font(.title2.bold())
                     if let action = request.action, !action.isEmpty {
-                        Text("First step: \(action)").font(.headline).foregroundStyle(.secondary)
+                        Text(action).font(.headline).foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
                 } else {
-                    Text("Agent wants control of your iPhone").font(.title2.bold()).multilineTextAlignment(.center)
+                    Text("Agent requests control").font(.title2.bold()).multilineTextAlignment(.center)
                     if let action = request.action, !action.isEmpty {
                         Text(action).font(.headline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
@@ -475,13 +475,13 @@ struct RequestSheet: View {
             }
             HStack(spacing: 14) {
                 Button(role: .destructive) { Task { await model.answerSession(id: request.id, approve: false) } } label: {
-                    Text(deadline == nil ? "Deny" : "Stop").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
+                    Text(deadline == nil ? "Deny" : "Cancel").font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .accessibilityIdentifier("sheetDeny")
                 Button { Task { await model.answerSession(id: request.id, approve: true) } } label: {
-                    Text(deadline == nil ? "Allow" : "Start now").font(.title3.bold())
+                    Text(deadline == nil ? "Allow" : "Allow now").font(.title3.bold())
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.borderedProminent)
@@ -494,7 +494,7 @@ struct RequestSheet: View {
     }
 }
 
-/// "When an agent starts": go ahead, wait N seconds (5-30), or ask.
+/// "Agent control": Instant, Delayed (a 5-30 s notice), or Approval.
 struct StartModeRow: View {
     @EnvironmentObject var model: AppModel
     var session: PCState.Session
@@ -503,16 +503,16 @@ struct StartModeRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("When an agent starts")
+                Text("Agent control")
                 if model.busy.contains("sessionMode") { Spacer(); ProgressView() }
             }
-            Picker("When an agent starts", selection: Binding(
+            Picker("Agent control", selection: Binding(
                 get: { session.currentMode },
                 set: { mode in Task { await model.setSessionMode(mode) } }
             )) {
-                Text("Go ahead").tag("auto")
-                Text("Wait").tag("countdown")
-                Text("Ask me").tag("ask")
+                Text("Instant").tag("auto")
+                Text("Delayed").tag("countdown")
+                Text("Approval").tag("ask")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -520,6 +520,7 @@ struct StartModeRow: View {
             if session.currentMode == "countdown" {
                 let shown = Int(seconds ?? Double(session.seconds ?? 10))
                 HStack {
+                    Text("Notice")
                     Slider(value: Binding(get: { seconds ?? Double(session.seconds ?? 10) }, set: { seconds = $0 }),
                            in: 5...30, step: 1) { editing in
                         if !editing, let seconds {
@@ -539,9 +540,10 @@ struct StartModeRow: View {
 
     private var hint: String {
         switch session.currentMode {
-        case "countdown": return "You get \(Int(seconds ?? Double(session.seconds ?? 10))) seconds to stop an agent, then it starts."
-        case "ask": return "Agents wait until you allow them."
-        default: return "Agents take control right away."
+        case "countdown":
+            return "An agent takes control after a \(Int(seconds ?? Double(session.seconds ?? 10)))-second countdown, unless you cancel it."
+        case "ask": return "An agent takes control only with your approval."
+        default: return "An agent can take control at any time."
         }
     }
 }

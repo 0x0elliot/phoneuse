@@ -49,7 +49,7 @@ struct AgentLiveActivity: Widget {
                     VStack(spacing: 2) {
                         if look == .asking, let deadline = s.deadlineDate {
                             CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
-                            Text("First step: \(s.action)").font(.headline).lineLimit(1)
+                            Text(s.action).font(.headline).lineLimit(1)
                         } else {
                             Text(look.title(s)).font(.caption).foregroundStyle(look.color(s))
                             if look != .idle {
@@ -82,8 +82,6 @@ struct AgentLiveActivity: Widget {
                     if let deadline = s.deadlineDate {
                         Text(timerInterval: Date()...deadline, countsDown: true)
                             .font(.caption).monospacedDigit().foregroundStyle(.orange).frame(maxWidth: 40)
-                    } else {
-                        Text("Allow?").font(.caption).foregroundStyle(.orange)
                     }
                 case .driving, .paused:
                     if s.steps > 0 {
@@ -137,7 +135,7 @@ enum Look {
     func title(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
         case .idle: return "You're in control"
-        case .asking: return "Agent wants control of your iPhone"
+        case .asking: return "Agent requests control"
         case .paused: return "You took over"
         case .driving:
             switch s.phase {
@@ -209,9 +207,9 @@ struct AskingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if let deadline {
                         CountdownTitle(deadline: deadline).font(.caption).foregroundStyle(.orange)
-                        Text("First step: \(state.action)").font(.headline).lineLimit(2)
+                        Text(state.action).font(.headline).lineLimit(2)
                     } else {
-                        Text("Agent wants control of your iPhone").font(.caption).foregroundStyle(.orange)
+                        Text("Agent requests control").font(.caption).foregroundStyle(.orange)
                         Text(state.action).font(.headline).lineLimit(2)
                     }
                     Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -223,13 +221,13 @@ struct AskingView: View {
     }
 }
 
-/// "Agent starts in 0:08", counting down on its own.
+/// "Agent taking control in 0:08", counting down on its own.
 struct CountdownTitle: View {
     var deadline: Date
 
     var body: some View {
         HStack(spacing: 4) {
-            Text("Agent starts in")
+            Text("Agent taking control in")
             Text(timerInterval: Date()...deadline, countsDown: true).monospacedDigit()
         }
     }
@@ -281,17 +279,17 @@ struct PausedView: View {
 
 struct AnswerButtons: View {
     var requestId: String
-    /// With a countdown the buttons read Stop and Start now; otherwise Deny and Allow.
+    /// With a countdown the buttons read Cancel and Allow now; otherwise Deny and Allow.
     var countdown = false
 
     var body: some View {
         HStack(spacing: 12) {
             Button(intent: DenySessionIntent(requestId: requestId)) {
-                Label(countdown ? "Stop" : "Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
+                Label(countdown ? "Cancel" : "Deny", systemImage: "xmark").lineLimit(1).frame(maxWidth: .infinity)
             }
             .tint(.red)
             Button(intent: AllowSessionIntent(requestId: requestId)) {
-                Label(countdown ? "Start now" : "Allow", systemImage: "checkmark").lineLimit(1)
+                Label(countdown ? "Allow now" : "Allow", systemImage: "checkmark").lineLimit(1)
                     .frame(maxWidth: .infinity)
             }
             .tint(.green)
