@@ -27,8 +27,16 @@ void screen_start(void);
 
 static void bt_start(void) {
     esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+#ifdef BRIDGE_HID_LE
+    // LE only: Classic would take radio time from Wi-Fi for nothing.
+    esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    cfg.mode = ESP_BT_MODE_BLE;
+    ESP_ERROR_CHECK(esp_bt_controller_init(&cfg));
+    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BLE));
+#else
     ESP_ERROR_CHECK(esp_bt_controller_init(&cfg));
     ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BTDM));
+#endif
     esp_bluedroid_config_t bc = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_bluedroid_init_with_cfg(&bc));
     ESP_ERROR_CHECK(esp_bluedroid_enable());
