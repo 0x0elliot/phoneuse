@@ -11,7 +11,11 @@
 //        flags bit 0: skippable (motion and hovers; never keys or buttons)
 //   0x03 STATUS               -> 0x83 JSON
 //   0x04 CONNECT              -> 0x84 (page the last iPhone)
-//   0x05 SETUP                -> 0x85 (open BLE setup again, to change network)
+//   0x05 SETUP                -> 0x85 (open BLE setup again)
+//   0x06 SCAN                 -> 0x86 JSON list of networks it sees (takes ~2 s)
+//   0x07 JOIN nonce(12) sealed -> 0x87, then it changes network; sealed =
+//        AES-GCM(HMAC(control key, "phoneuse wifi change"), "ssid\0password").
+//        Back on the old network if the new one fails (STATUS "err" says why).
 // Packets after HELLO carry its session and a rising seq; an old seq is dropped,
 // the same seq again gets the same answer again (a lost reply), nothing is redone.
 #include <stdio.h>
@@ -31,9 +35,15 @@
 #define MAC 8
 
 static const char *TAG = "link";
-static uint32_t session, last_seq;
-static uint8_t last_reply[300];
-static int last_reply_len;
+// Several programs talk to the bridge at once (the HID daemon, the page's status,
+// the CLI): each HELLO gets its own session; the least recently used one goes.
+#define SESSIONS 4
+typedef struct {
+    uint32_t sid, last_seq, used_ms;
+    uint8_t reply[600];
+    int reply_len;
+} session_t;
+static session_t sessions[SESSIONS];
 
 static bool mac_ok(const uint8_t *b, int n) {
     uint8_t m[32];
@@ -61,17 +71,19 @@ static int reply(uint8_t *out, uint8_t type, uint32_t sid, uint32_t seq, const v
 static int status_json(char *j, int cap) {
     return snprintf(j, cap,
                     "{\"id\":\"%s\",\"fw\":\"%s\",\"phone\":\"%s\",\"connected\":%s,\"rssi\":%d,\"reports\":%lu,"
-                    "\"skipped\":%lu,\"waiting\":%d,\"battery_mv\":%d,\"uptime\":%llu,\"ssid\":\"%s\"}",
+                    "\"skipped\":%lu,\"waiting\":%d,\"battery_mv\":%d,\"uptime\":%llu,\"ssid\":\"%s\","
+                    "\"online\":%s,\"err\":\"%s\"}",
                     bridge.id, BRIDGE_FW, bridge.phone, bridge.phone_connected ? "true" : "false", bridge.wifi_rssi,
                     (unsigned long)bridge.reports, (unsigned long)bridge.skipped, bridge.pending, bridge.battery_mv,
-                    (unsigned long long)(esp_timer_get_time() / 1000000), settings.ssid);
+                    (unsigned long long)(esp_timer_get_time() / 1000000), settings.ssid,
+                    bridge.state == ST_ONLINE ? "true" : "false", bridge.err);
 }
 
 static void link_task(void *arg) {
     int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(PORT), .sin_addr.s_addr = htonl(INADDR_ANY)};
     bind(s, (struct sockaddr *)&a, sizeof a);
-    uint8_t in[300], out[300];
+    static uint8_t in[300], out[600];
     for (;;) {
         struct sockaddr_in from;
         socklen_t fl = sizeof from;
@@ -93,42 +105,72 @@ static void link_task(void *arg) {
         if (!settings.configured || n < HDR + MAC || !mac_ok(in, n)) continue;
         const uint8_t *body = in + HDR;
         int bn = n - HDR - MAC;
+        uint32_t now_ms = esp_timer_get_time() / 1000;
         if (type == 0x01) {  // HELLO
             if (bn != 8) continue;
-            crypto_random(&session, 4);
-            last_seq = 0;
-            last_reply_len = 0;
-            m = reply(out, 0x81, session, 0, body, 8, true);
+            session_t *v = &sessions[0];
+            for (int i = 1; i < SESSIONS; i++)
+                if (sessions[i].used_ms < v->used_ms) v = &sessions[i];
+            crypto_random(&v->sid, 4);
+            v->last_seq = 0;
+            v->reply_len = 0;
+            v->used_ms = now_ms;
+            m = reply(out, 0x81, v->sid, 0, body, 8, true);
             sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
             continue;
         }
-        if (sid != session || !session) continue;
-        if (seq == last_seq && last_reply_len) {  // the reply got lost: same answer, no redo
-            sendto(s, last_reply, last_reply_len, 0, (struct sockaddr *)&from, fl);
+        session_t *ss = NULL;
+        for (int i = 0; i < SESSIONS && sid; i++)
+            if (sessions[i].sid == sid) ss = &sessions[i];
+        if (!ss) continue;
+        ss->used_ms = now_ms;
+        if (seq == ss->last_seq && ss->reply_len) {  // the reply got lost: same answer, no redo
+            sendto(s, ss->reply, ss->reply_len, 0, (struct sockaddr *)&from, fl);
             continue;
         }
-        if (seq < last_seq) continue;
-        last_seq = seq;
-        bridge.last_cmd_ms = esp_timer_get_time() / 1000;
+        if (seq < ss->last_seq) continue;
+        ss->last_seq = seq;
+        bridge.last_cmd_ms = now_ms;
         if (type == 0x02 && bn >= 2) {  // REPORT
             uint8_t r[2];
             r[0] = hid_send(body[1], body + 2, bn - 2, body[0] & 1);
             r[1] = bridge.pending;
             m = reply(out, 0x82, sid, seq, r, 2, true);
         } else if (type == 0x03) {
-            char j[256];
+            char j[400];
             m = reply(out, 0x83, sid, seq, j, status_json(j, sizeof j), true);
         } else if (type == 0x04) {
             hid_connect_last();
             m = reply(out, 0x84, sid, seq, "", 0, true);
+        } else if (type == 0x06) {
+            static char j[512];
+            int jn = wifi_scan_json(j, sizeof j);
+            m = reply(out, 0x86, sid, seq, j, jn, true);
+        } else if (type == 0x07) {
+            uint8_t k[32], plain[100];
+            crypto_hmac(settings.key, (const uint8_t *)"phoneuse wifi change", 20, k);
+            int pn = crypto_open(k, body, bn, plain, sizeof plain - 1);
+            uint8_t ok = pn > 0;
+            m = reply(out, 0x87, sid, seq, &ok, 1, true);
+            memcpy(ss->reply, out, m);
+            ss->reply_len = m;
+            sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
+            if (ok) {
+                plain[pn] = 0;
+                const char *ssid = (char *)plain, *pass = ssid + strlen(ssid) + 1;
+                if (pass > (char *)plain + pn) pass = "";
+                vTaskDelay(pdMS_TO_TICKS(50));  // let the answer leave on the old network
+                wifi_switch(ssid, pass);
+            }
+            continue;
         } else if (type == 0x05) {
             setup_ble_open(true);
             m = reply(out, 0x85, sid, seq, "", 0, true);
         } else {
             continue;
         }
-        memcpy(last_reply, out, m);
-        last_reply_len = m;
+        memcpy(ss->reply, out, m);
+        ss->reply_len = m;
         sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
     }
 }

@@ -532,6 +532,19 @@ def set_mirror(name):
     return f"mirror={mirror_name[0]!r} connected={hid.connected} peer={hid.peer}"
 
 
+def disconnect_all():
+    """Close this PC's Bluetooth connections to the paired phones (BlueZ Device1)."""
+    om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+    for path, ifaces in om.GetManagedObjects().items():
+        d = ifaces.get("org.bluez.Device1")
+        if d and d.get("Paired") and d.get("Connected"):
+            try:
+                dbus.Interface(bus.get_object("org.bluez", path), "org.bluez.Device1").Disconnect()
+                log("disconnected", str(d["Address"]), "(input goes through the bridge)")
+            except dbus.DBusException as e:
+                log("couldn't disconnect", str(d["Address"]), e)
+
+
 def paired_devices():
     om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
     out = []
@@ -685,6 +698,7 @@ def set_bridge(args):
     released.set()  # this PC's own link to the phone would be a second keyboard: drop it
     if hid.intr:
         hid.drop("input goes through the bridge now")
+    disconnect_all()  # the Bluetooth link itself too, or the phone still lists PhoneUse as connected
     log(f"bridge on: {args[0]}, phone {st.get('phone') or 'not paired'}")
     threading.Thread(target=watch_bridge, args=(link,), daemon=True).start()
     return f"bridge {args[0]} phone={st.get('phone')!r} connected={st.get('connected')}"

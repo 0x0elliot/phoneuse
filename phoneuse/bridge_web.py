@@ -94,8 +94,16 @@ class BridgeRoutes:
 
     async def networks(self, req):
         self._guard(req)
-        if not self.session:
-            return web.json_response({"error": "setup ended; start again"})
+        if not self.session:  # a set-up bridge: ask it over the network
+            cfg = bridge.saved()
+            if not cfg:
+                return web.json_response({"error": "setup ended; start again"})
+            try:
+                nets = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: bridge.Link(bridge.resolve(cfg) or cfg).networks())
+            except Exception as e:
+                return web.json_response({"error": f"the bridge didn't answer: {e}"})
+            return web.json_response({"networks": nets})
         async with self.lock:
             try:
                 nets = await self.session.networks()
@@ -109,7 +117,7 @@ class BridgeRoutes:
         body = await req.json()
         ssid, password = body["ssid"], body.get("password", "")
         if not self.session:
-            return web.json_response({"error": "setup ended; start again"})
+            return await self.change_network(ssid, password)
         loop = asyncio.get_running_loop()
         async with self.lock:
             s = self.session
@@ -143,6 +151,39 @@ class BridgeRoutes:
         answer = await loop.run_in_executor(None, use_bridge, cfg)
         return web.json_response({"ok": True, "ip": ip, "ssid": ssid, "daemon": answer})
 
+    async def change_network(self, ssid, password):
+        """A set-up bridge moves to another network over the control link; it goes
+        back to the old one if the new one fails."""
+        loop = asyncio.get_running_loop()
+        cfg = bridge.resolve() or bridge.saved()
+        if not cfg:
+            return web.json_response({"error": "no bridge set up"})
+        old = cfg.get("ssid")
+        try:
+            await loop.run_in_executor(None, lambda: bridge.Link(cfg).change_network(ssid, password))
+        except Exception as e:
+            return web.json_response({"error": f"the bridge didn't answer: {e}"})
+        await asyncio.sleep(4)  # it leaves the old network and tries the new one
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            found = await loop.run_in_executor(None, bridge.resolve, dict(cfg, ip=None))
+            if found:
+                try:
+                    st = await loop.run_in_executor(None, lambda: bridge.Link(found).status())
+                except Exception:
+                    st = {}
+                if st.get("online") and st.get("ssid") == ssid:
+                    found["ssid"] = ssid
+                    bridge.save(found)
+                    await loop.run_in_executor(None, use_bridge, found)
+                    return web.json_response({"ok": True, "ip": found["ip"], "ssid": ssid})
+                if st.get("online") and st.get("err"):
+                    await loop.run_in_executor(None, use_bridge, found)
+                    return web.json_response({"error": f"{st['err']}; it's back on {old}", "retry": True})
+            await asyncio.sleep(1.5)
+        return web.json_response({"error": f"The bridge left {old} and this PC can't find it. If {ssid} is "
+                                           "another network, this PC must be on it too."})
+
     async def cancel(self, req):
         self._guard(req)
         async with self.lock:
@@ -160,8 +201,8 @@ class BridgeRoutes:
         return web.json_response({"use": cfg["use"], "daemon": answer})
 
     async def change(self, req):
-        """Change the bridge's network: it opens BLE setup again (keeping the old
-        network until a new one works); the page then runs setup."""
+        """Set the bridge up again over BLE (it keeps its network until a new one
+        works). Changing networks doesn't need this: see change_network."""
         self._guard(req)
         cfg = bridge.saved()
         try:

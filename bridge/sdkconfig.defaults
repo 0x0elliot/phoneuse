@@ -36,3 +36,6 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # The HID service record (descriptor and all) is bigger than the default SDP pad.
 CONFIG_BT_SDP_ATTR_LEN=512
 CONFIG_BT_SDP_PAD_LEN=1024
+# Wi-Fi and Bluetooth on different cores (ESP-IDF's coexistence advice).
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+CONFIG_WIFI_RMT_TASK_PINNED_TO_CORE_1=y

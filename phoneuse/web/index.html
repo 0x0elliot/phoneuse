@@ -452,11 +452,7 @@ async function bridgeShow() {
         st.error ? "!" + esc(st.error) : "");
   const use = bridgeBox.querySelector("#bUse");
   use.onclick = async () => { await bapi("/use", { on: !sv.use }); bridgeShow(); };
-  on("#bChange", async () => {
-    const r = await bapi("/change", {});
-    if (r.error) return bview(bridgeBox.innerHTML, "!" + esc(r.error));
-    bridgeFind();
-  });
+  on("#bChange", bridgeNetworks);  // over the network: no BLE, no code
   bForget.hidden = false;
 }
 async function bridgeFind() {

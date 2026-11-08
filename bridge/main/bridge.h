@@ -36,6 +36,8 @@ void screen_update(void);  // redraw what changed (cheap to call often)
 // wifi.c
 void wifi_init(void);
 void wifi_join(const char *ssid, const char *pass);
+// Change to another network; back to the current one if it doesn't work (err says why).
+void wifi_switch(const char *ssid, const char *pass);
 // Scan and write JSON [{"s":ssid,"r":rssi,"l":locked},...] into out. Blocks ~2 s.
 int wifi_scan_json(char *out, int cap);
 

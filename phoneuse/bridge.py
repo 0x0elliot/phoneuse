@@ -309,12 +309,12 @@ class Link:
         return len(b) >= 20 and hmac.compare_digest(
             b[-8:], hmac.new(self.key, b[:-8], hashlib.sha256).digest()[:8])
 
-    def _call(self, type_, body=b"", tries=4):
+    def _call(self, type_, body=b"", tries=4, wait=None):
         pkt = self._pack(type_, body)
         for i in range(tries):
             t0 = time.time()
             self.sock.sendto(pkt, self.addr)
-            self.sock.settimeout(self.TIMEOUT * (i + 1))
+            self.sock.settimeout(wait or self.TIMEOUT * (i + 1))
             while True:
                 try:
                     b = self.sock.recv(512)
@@ -342,7 +342,7 @@ class Link:
                     return True
             raise RuntimeError(f"the bridge at {self.addr[0]} didn't answer")
 
-    def _next(self, type_, body=b""):
+    def _next(self, type_, body=b"", **kw):
         with self.lock:
             if not self.session:
                 self.lock.release()
@@ -352,7 +352,7 @@ class Link:
                     self.lock.acquire()
             self.seq += 1
             try:
-                return self._call(type_, body)
+                return self._call(type_, body, **kw)
             except RuntimeError:
                 # The bridge restarted (its session is gone) or a burst got lost:
                 # start a new session and try once more.
@@ -362,7 +362,7 @@ class Link:
                 finally:
                     self.lock.acquire()
                 self.seq += 1
-                return self._call(type_, body)
+                return self._call(type_, body, **kw)
 
     def report(self, report_id, payload, skippable=False):
         r = self._next(0x02, bytes([1 if skippable else 0, report_id]) + bytes(payload))
@@ -377,6 +377,20 @@ class Link:
 
     def open_setup(self):
         self._next(0x05)
+
+    def networks(self):
+        """Wi-Fi networks the bridge sees (it scans while staying online, ~2 s)."""
+        return json.loads(self._next(0x06, tries=2, wait=6).decode() or "[]")
+
+    def change_network(self, ssid, password):
+        """Move the bridge to another network. It answers first, then switches, and
+        goes back to the current network if the new one fails (status "err")."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        k = hmac.new(self.key, b"phoneuse wifi change", hashlib.sha256).digest()
+        nonce = os.urandom(12)
+        sealed = nonce + AESGCM(k).encrypt(nonce, ssid.encode() + b"\0" + password.encode(), None)
+        if self._next(0x07, sealed)[:1] != b"\x01":
+            raise RuntimeError("the bridge couldn't read the network details")
 
 
 # ---------- CLI ----------
