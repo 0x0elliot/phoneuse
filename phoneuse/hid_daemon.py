@@ -21,12 +21,14 @@ Commands on /run/phoneuse-hid.sock, one per line, reply "ok ..." or "err ...":
   k MODS [CODE..]   raw keyboard report: held modifiers + up to 6 HID usage codes
   status
 """
-import unicodedata
+import fcntl
 import os
 import socket
 import struct
+import termios
 import threading
 import time
+import unicodedata
 
 import dbus
 import dbus.mainloop.glib
@@ -113,6 +115,15 @@ class HID:
             except OSError as e:
                 self.drop(f"send failed: {e}")
                 raise RuntimeError("connection lost")
+
+    def backlog(self):
+        """Bytes of earlier reports still waiting in the kernel to reach the phone
+        (TIOCOUTQ on a Bluetooth socket is the free send space)."""
+        try:
+            free = struct.unpack("i", fcntl.ioctl(self.intr.fileno(), termios.TIOCOUTQ, b"\0" * 4))[0]
+            return max(0, self.intr.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF) - free)
+        except (OSError, AttributeError):
+            return 0
 
     def drop(self, why):
         log("disconnect:", why)
@@ -604,7 +615,13 @@ def run_command(line):
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
-        hid.send(3, absolute(args[0], args[1], int(args[2]) if len(args) > 2 else 0))
+        buttons = int(args[2]) if len(args) > 2 else 0
+        if not buttons and not hid.buttons and hid.backlog():
+            # A hover while earlier reports still wait to go out: skip it, so the
+            # pointer jumps to the newest position instead of trailing a queue.
+            # The sender sends its newest position again on its next tick.
+            return "ok dropped"
+        hid.send(3, absolute(args[0], args[1], buttons))
         return "ok"
     if cmd == "m":  # raw mouse report: m DX DY [WHEEL [BUTTONS]], for live input
         dx, dy = (max(-127, min(127, int(v))) for v in args[:2])

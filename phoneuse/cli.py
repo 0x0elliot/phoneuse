@@ -27,6 +27,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                the field holds (Cmd+A first) unless --append
   phoneuse key COMBO            e.g. enter, escape, cmd+h, cmd+space, shift+tab
   phoneuse keyboard             show or hide the iPhone's on-screen keyboard (Eject key)
+  phoneuse awake [on|off]       keep the screen awake: a tiny pointer nudge every second
+                                while nobody uses the phone (also in the page's settings)
   phoneuse cursor [on|off]      whether the pointer works (AssistiveTouch); on/off asks
                                 Siri out loud on this PC's speakers to switch it
   phoneuse where                debugging: where the pointer appears (needs Pointer
@@ -46,6 +48,7 @@ of ~1,300 for a screenshot):
 
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off.
 """
+import json
 import os
 import re
 import shutil
@@ -449,6 +452,23 @@ def cursor_set(h, on):
             "is near this PC's speakers and their volume is up, then try again.")
 
 
+def awake_cmd(arg):
+    """Keep the screen awake (or not): the browser mirror's server nudges the pointer
+    about once a second while nobody uses the phone, so Auto-Lock never fires."""
+    if arg not in (None, "on", "off"):
+        die("usage: phoneuse awake [on|off]")
+    url = f"http://127.0.0.1:{CFG['web_port']}/api/awake"
+    data = None if arg is None else json.dumps({"on": arg == "on"}).encode()
+    req = urllib.request.Request(url, data=data, method="GET" if data is None else "POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            on = json.load(r)["on"]
+    except OSError as e:
+        die(f"The browser mirror's server isn't running ({e}); start `phoneuse up`.")
+    return "keep awake " + ("on" if on else "off")
+
+
 def open_app(h, name):
     step(h, "key h gui", change=0.3)  # often already home (no change); also wakes a locked phone
     refuse_if_locked()
@@ -846,6 +866,8 @@ def main():
         return unlock_cmd()
     if cmd == "done":
         return agent_done()
+    if cmd == "awake":  # awake [on|off]: keep the screen awake (the page server nudges the pointer)
+        return print(awake_cmd(args[0] if args else None))
     if cmd == "view":
         return view("--print" in args)
     if cmd == "text":

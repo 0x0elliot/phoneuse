@@ -30,7 +30,7 @@ from gi.repository import Gst  # noqa: E402
 from aiohttp import web  # noqa: E402
 
 from . import screen, unlock  # noqa: E402
-from .config import CFG, NAME, SCREEN_PT  # noqa: E402
+from .config import CFG, NAME, SCREEN_PT, config_path  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
 
@@ -92,6 +92,11 @@ class Mirror:
         self.taken_over = False
         self.agent_until = 0.0
         self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
+        self.last_frame_at = 0.0  # when the phone's picture last changed
+        self.last_input_at = 0.0  # when the page or an agent last sent input
+        self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
+        self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
+        self.hover_at = (0.5, 0.5)  # where the page's pointer last was (screen fractions)
 
     def get_hid(self):
         if self.hid is None:
@@ -100,6 +105,50 @@ class Mirror:
 
     def live(self):
         return self.mirroring and self.hub_live
+
+    # ---- keep awake: stop Auto-Lock while nobody uses the phone ----
+    AWAKE_EVERY = 1.0  # seconds between nudges
+    AWAKE_QUIET = 2.0  # skip nudges this long after real input
+
+    def set_awake(self, on):
+        self.awake = on
+        if on:
+            os.makedirs(os.path.dirname(AWAKE_FILE), exist_ok=True)
+            open(AWAKE_FILE, "w").close()
+        elif os.path.exists(AWAKE_FILE):
+            os.remove(AWAKE_FILE)
+        self.screen_dark = False
+        log("keep awake", "on" if on else "off")
+        self.broadcast_state()
+
+    async def keep_awake(self):
+        """While on, move the pointer a few pixels and back about once a second so
+        Auto-Lock never fires. Real input (the page, an agent) takes over; a nudge
+        that draws no new frame means the screen is off (the pointer always shows
+        when it moves), so nudging pauses until the picture changes again rather
+        than waking a phone that was just locked."""
+        # Absolute moves: they land exactly on every phone, while a small relative
+        # move can shift the pointer less than a pixel at a slow tracking speed.
+        sign = 1
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(self.AWAKE_EVERY)
+            if (not self.awake or self.screen_dark or not self.live() or self.agent() != "idle"
+                    or time.time() - self.last_input_at < self.AWAKE_QUIET):
+                continue
+            before = self.last_frame_at
+            try:
+                x, y = self.hover_at
+                x = min(max(x, 0.02), 0.98) + 0.01 * sign
+                await loop.run_in_executor(None, self.get_hid().cmd, f"a {x:.4f} {min(max(y, 0.0), 1.0):.4f} 0")
+            except Exception:
+                self.hid = None
+                continue
+            sign = -sign
+            await asyncio.sleep(0.6)
+            if self.last_frame_at == before and time.time() - self.last_input_at >= self.AWAKE_QUIET:
+                self.screen_dark = True
+                log("keep awake: no picture after a nudge; the screen is off, pausing")
 
     # Releasing the link while idle (so iOS shows its own keyboard) is off: after
     # phoneuse drops the link, iOS refuses phoneuse's reconnects ("Connection
@@ -134,6 +183,7 @@ class Mirror:
             return False
         was = self.agent()
         self.agent_until = time.time() + self.AGENT_IDLE
+        self.last_input_at = time.time()
         if was != "driving":
             self.broadcast_state()
         # Tell the pages when the session runs out, so none keeps showing (and
@@ -156,6 +206,9 @@ class Mirror:
             tab.state()
 
     def _frame(self, data, key):
+        self.last_frame_at = time.time()
+        if self.screen_dark:
+            self.screen_dark = False
         self.loop.call_soon_threadsafe(self._send_frame, data, key)
 
     def _send_frame(self, data, key):
@@ -218,6 +271,7 @@ class Tab:
         self.told_agent = self.mirror.agent()
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
+                          "awake": self.mirror.awake,
                           "name": NAME, "screen": SCREEN_PT,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
@@ -228,6 +282,14 @@ class Tab:
 
     def handle(self, msg):
         t = msg.get("t")
+        if t in ("move", "down", "up", "scroll", "mod", "key", "consumer"):
+            self.mirror.last_input_at = time.time()
+            if "x" in msg:
+                self.mirror.hover_at = (float(msg["x"]), float(msg["y"]))
+        if t in ("move", "down", "up", "scroll", "mod", "key", "consumer", "blur") and os.path.exists(INPUT_TRACE + ".on"):
+            # Debugging: `touch $XDG_RUNTIME_DIR/phoneuse-input.jsonl.on` logs the page's input.
+            with open(INPUT_TRACE, "a") as f:
+                f.write(json.dumps({"at": time.time(), **msg}) + "\n")
         if t == "playing":
             self.playing = True
             return
@@ -263,6 +325,10 @@ class Tab:
             self.keys.release_all()
         except Exception as e:
             log("closing tab:", e)
+
+
+AWAKE_FILE = os.path.join(os.path.dirname(config_path()), "keep-awake")  # exists while "keep the screen awake" is on
+INPUT_TRACE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-input.jsonl")
 
 
 def same_origin(req):
@@ -368,6 +434,15 @@ def app(mirror):
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response({"saved": await loop.run_in_executor(None, unlock.saved)})
 
+    async def awake(req):
+        # Keep the screen awake: the page's setting and `phoneuse awake on|off`.
+        # Other websites can't switch it (a browser always sends their Origin).
+        if req.headers.get("Origin") and not same_origin(req):
+            return web.Response(status=403)
+        if req.method == "POST":
+            mirror.set_awake(bool((await req.json()).get("on")))
+        return web.json_response({"on": mirror.awake})
+
     async def ws(req):
         sock = web.WebSocketResponse(max_msg_size=1 << 16, heartbeat=20)
         await sock.prepare(req)
@@ -441,6 +516,7 @@ def app(mirror):
     a.router.add_post("/api/agent/cursor", agent_cursor)
     a.router.add_post("/api/agent/done", agent_done)
     a.router.add_post("/api/keyboard", keyboard)
+    a.router.add_route("*", "/api/awake", awake)
     a.router.add_post("/api/unlock/answer", unlocks.answer)
     return a
 
@@ -458,6 +534,7 @@ def main():
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", PORT).start()
         log(f"browser mirror on http://localhost:{PORT}")
+        asyncio.ensure_future(mirror.keep_awake())
         await mirror.watch()
 
     try:

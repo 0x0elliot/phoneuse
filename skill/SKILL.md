@@ -104,6 +104,7 @@ try is enough.
 | Close those overlays | `phoneuse dismiss` (Cmd+H does not close them) |
 | Type text / keys | `phoneuse type "hello\n"` · `phoneuse key cmd+space` |
 | Show / hide the iPhone keyboard | `phoneuse keyboard` (Eject; it hides while phoneuse's keyboard is connected) |
+| Keep the screen from locking | `phoneuse awake on` / `off` (a few-pixel pointer nudge each second while nobody uses the phone; also the page's settings) |
 | Does the pointer work? | `phoneuse cursor` (on / off / unknown). Taps and drags need AssistiveTouch on |
 | Turn the pointer on | `phoneuse cursor on`: holds the Siri key and asks out loud on this PC's speakers; the phone must be unlocked and in earshot |
 | Where is the pointer | `phoneuse where` |

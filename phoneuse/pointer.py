@@ -65,19 +65,19 @@ class Pointer:
         threading.Thread(target=self._tick, daemon=True).start()
 
     def hover(self, fx, fy):
+        # Only note the newest position: the tick sends it within 8 ms. Sending here
+        # would hold up the caller (the page server's event loop) on Bluetooth, and
+        # the moves behind it would queue up and trail the mouse.
         with self.lock:
             self.at = (fx, fy)
-            if self.pressed:
-                return
-            if time.time() - self.last_send >= MIN_GAP:
-                self._send_hover()
 
     def _send_hover(self):
         # (called with the lock held; also from _tick for a position that was rate-limited)
         pos = (round(clamp(self.at[0]), 4), round(clamp(self.at[1]), 4))
         if pos != self.sent:
-            self.hid().cmd(f"a {pos[0]:.5f} {pos[1]:.5f} 0")
-            self.sent = pos
+            r = self.hid().cmd(f"a {pos[0]:.5f} {pos[1]:.5f} 0")
+            if "dropped" not in r:  # skipped while the link was busy: the next tick sends it again
+                self.sent = pos
             self.last_send = time.time()
 
     def scroll(self, dx_pt, dy_pt):
