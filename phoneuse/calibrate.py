@@ -84,13 +84,15 @@ def _ref(units):
     return touch.REF_PTS[-1][1] * units / us[-1]
 
 
-def run(h, sizes=SIZES, log=print):
+def run(h, sizes=SIZES, log=print, alive=None):
     """Measure points per report for each size; returns [(units, points)] sorted by
     size, or None if the measurement didn't hold together. Phones differ a lot (an
     iPhone 15 Pro moved 2-22% as far as the 17 Pro table, least for small reports),
     so each size's report count comes from the size measured before it."""
     table, last = [], None
     for u in sizes:
+        if alive:
+            alive()
         guess = last[1] * u / last[0] if last else _ref(u)
         reports = min(MAX_REPORTS, max(2, round(TRAVEL * SCREEN_PT[1] / guess)))
         moved = measure(h, u, reports)
@@ -108,12 +110,17 @@ def run(h, sizes=SIZES, log=print):
     return table
 
 
-def calibrate(h, name=None, log=print):
-    """Measure the mirroring phone and save its table. Returns a one-line result."""
+def calibrate(h, name=None, log=print, alive=None):
+    """Measure the mirroring phone and save its table. Returns a one-line result.
+    alive() runs before each size: it keeps the agent session open, so the browser
+    mirror's keep-awake nudges stay off while the measurement runs."""
     name = name or phones.current()
     if not name:
         return "calibrate: no phone is mirroring"
-    table = run(h, log=log)
+    if alive:
+        alive()
+        time.sleep(1.0)  # a keep-awake nudge sent just before the session began lands first
+    table = run(h, log=log, alive=alive)
     _to_start(h)
     if not table:
         return "calibrate: failed (the screen kept changing, or the pointer is off); kept the old table"

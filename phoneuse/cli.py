@@ -106,7 +106,7 @@ def follow_sender(stream):
                 print(time.strftime("%H:%M:%S"), Hid().cmd("mirror " + m[1]), flush=True)
             except Exception as e:
                 print(time.strftime("%H:%M:%S"), f"could not tell the HID daemon: {e}", flush=True)
-            if not phones.entry(m[1]).get("drag_pts"):
+            if phones.needs_calibration(m[1]):
                 threading.Thread(target=calibrate_when_ready, args=(m[1],), daemon=True).start()
 
 
@@ -117,7 +117,7 @@ def calibrate_when_ready(name, wait=180):
     until = time.time() + wait
     while time.time() < until:
         time.sleep(5)
-        if phones.current() != name or phones.entry(name).get("drag_pts"):
+        if phones.current() != name or not phones.needs_calibration(name):
             return
         try:
             st = Hid().cmd("status")
@@ -129,7 +129,7 @@ def calibrate_when_ready(name, wait=180):
             if state == "unknown":
                 continue
             if state == "on":
-                print(time.strftime("%H:%M:%S"), calibrate.calibrate(h, name, log=lambda *_: None), flush=True)
+                print(time.strftime("%H:%M:%S"), calibrate.calibrate(h, name, log=lambda *_: None, alive=agent_turn), flush=True)
             agent_done()
             return
         except Exception as e:
@@ -520,8 +520,8 @@ def cursor_set(h, on):
             time.sleep(1.0)
             state = cursor_state(h)
             if state == want:
-                if on and not phones.entry().get("drag_pts"):  # first time on: measure it
-                    return f"cursor {state}; " + calibrate.calibrate(h)
+                if on and phones.needs_calibration():  # first time on: measure it
+                    return f"cursor {state}; " + calibrate.calibrate(h, alive=agent_turn)
                 return f"cursor {state}"
     if not heard:
         return (f"cursor {state} (wanted {want}): Siri didn't open when the Siri key was held. "
@@ -1063,7 +1063,7 @@ def main():
         else:
             die("usage: phoneuse cursor [on|off]")
     elif cmd == "calibrate":  # measure the mirroring phone's pointer (drags use it)
-        print(calibrate.calibrate(h))
+        print(calibrate.calibrate(h, alive=agent_turn))
     elif cmd == "tap-on":
         print(tap_on(h, " ".join(args)))
     elif cmd == "where":

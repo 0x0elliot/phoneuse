@@ -25,6 +25,7 @@ RAMP = 1.0  # no start-of-motion correction: touchlab shows requested distances 
 # this one while that phone mirrors (phones.json).
 REF_PTS = [(1, 3.6), (2, 6.9), (3, 12.1), (4, 17.6), (5, 25.6), (6, 33.3), (8, 46.6),
            (10, 62.1), (12, 76.3), (16, 104.1), (20, 141.8), (28, 199.7)]
+REF_MODEL = "iPhone18,1"  # the iPhone 17 Pro that REF_PTS was measured on: it needs no calibration
 DRAG_PTS = REF_PTS
 _PTS = [p for _, p in DRAG_PTS]
 _stamp = None

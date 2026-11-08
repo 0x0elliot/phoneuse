@@ -62,6 +62,14 @@ def entry(name=None):
     return load().get(name, {}) if name else {}
 
 
+def needs_calibration(name=None):
+    """Whether this phone should be measured on connect: it has no table of its own
+    and isn't the model that touch.REF_PTS was measured on."""
+    from .touch import REF_MODEL
+    e = entry(name)
+    return not e.get("drag_pts") and e.get("model") != REF_MODEL
+
+
 def save_calibration(name, table):
     phones = load()
     e = phones.setdefault(name, {"first_seen": time.strftime("%Y-%m-%d %H:%M")})
