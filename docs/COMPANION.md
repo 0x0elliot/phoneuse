@@ -130,7 +130,7 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
 
 `content-state` is `{"state": "idle | asking | driving | paused", "phase": "idle | asking | acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>, "updatedAt": <unix seconds, float>}`.
 
-While an agent drives, the PC refreshes the activity every second (priority 5), with `frame` counting up by one
+While an agent drives, the PC refreshes the activity every second (priority 10: iOS held back priority-5 frames), with `frame` counting up by one
 each time; the app draws one animation frame per value (a rotation or a different icon), so the icon keeps moving
 for as long as the agent drives. `updatedAt` makes each refresh new content.
 
