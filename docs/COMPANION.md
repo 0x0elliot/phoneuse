@@ -87,6 +87,15 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 
 `session.pending`, `unlock.pending` and `bridge` are `null` when there is no pending request or no bridge.
 
+`bridge.signal` has two levels, each `"good"`, `"fair"`, `"weak"` or `null` (unknown): `wifi`, the bridge's Wi-Fi
+(good from −65 dBm, fair from −76 dBm), and `phone`, the Bluetooth link between the bridge and the iPhone (the
+bridge measures it every 2 s; firmware 0.2.1 and later). `bridge.warning` is `null` or `{"title", "detail"}`:
+"Bridge is offline" (check power and Wi-Fi), "Bridge can't reach your iPhone" (move it closer, or check
+Bluetooth), "Bridge is too far from your iPhone" (move it closer), or "Bridge's Wi-Fi is weak" (move it closer to
+your router). While the owner is in control and a warning holds for two checks (5 s apart), the Live Activity
+shows it: state `idle`, phase `warning`, `action` the title and `detail` the second line, with an alert the first
+time.
+
 ## Agent control
 
 One setting decides what happens when an agent's first action arrives (`session.mode`):

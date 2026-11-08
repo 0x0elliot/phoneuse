@@ -113,6 +113,39 @@ def signature(key, method, path, t, nonce, body):
 
 # ---------- the server ----------
 
+def signal_level(kind, value):
+    """good / fair / weak for a signal: kind "wifi" (dBm) or "phone" (Bluetooth, dB below
+    the bridge's strong range; 0 is strong). None when unknown."""
+    if value is None:
+        return None
+    if kind == "wifi":
+        return "good" if value >= -65 else "fair" if value >= -76 else "weak"
+    return "good" if value >= -8 else "fair" if value >= -24 else "weak"
+
+
+def bridge_health(s, use):
+    """What the owner should know about the bridge, from its status (`s`, {} when it
+    doesn't answer): {"online", "phone_connected", "wifi", "phone", "warning"}. warning is
+    None or {"title", "detail"}."""
+    if not use:
+        return {"online": None, "phone_connected": None, "wifi": None, "phone": None, "warning": None}
+    online = bool(s)
+    wifi = signal_level("wifi", s.get("rssi") or None) if online else None
+    fresh = online and 0 <= s.get("bt_rssi_age_ms", -1) < 10000
+    phone = signal_level("phone", s.get("bt_rssi_delta")) if fresh and s.get("connected") else None
+    warning = None
+    if not online:
+        warning = {"title": "Bridge is offline", "detail": "Check that it has power and is on Wi-Fi."}
+    elif not s.get("connected"):
+        warning = {"title": "Bridge can't reach your iPhone", "detail": "Move it closer, or check Bluetooth."}
+    elif phone == "weak":
+        warning = {"title": "Bridge is too far from your iPhone", "detail": "Move it closer."}
+    elif wifi == "weak":
+        warning = {"title": "Bridge's Wi-Fi is weak", "detail": "Move it closer to your router."}
+    return {"online": online, "phone_connected": bool(s.get("connected")) if online else None,
+            "wifi": wifi, "phone": phone, "warning": warning}
+
+
 class Companion:
     def __init__(self, mirror, unlocks):
         self.mirror, self.unlocks = mirror, unlocks
@@ -123,6 +156,7 @@ class Companion:
         self.activity_started = 0.0
         self.last_ts = 0  # the last Live Activity timestamp sent
         self.frame = 0
+        self.health = None  # bridge_health() from watch_bridge
         self._phase_seen = self._phase_shown = None
         self._phase_since = 0.0
         self.start_tried = {}  # device id -> when we last pushed a Live Activity start to it
@@ -188,9 +222,12 @@ class Companion:
                 except Exception:
                     return {}
             s = await self.run(ask)
+            h = bridge_health(s, b.get("use", True))
             bridge_state = {"saved": True, "id": b.get("id"), "ip": b.get("ip"), "ssid": s.get("ssid") or b.get("ssid"),
                             "use": b.get("use", True), "online": bool(s.get("online", bool(s))),
-                            "rtt_ms": s.get("rtt_ms")}
+                            "rtt_ms": s.get("rtt_ms"),
+                            # signal levels: good / fair / weak, or null when unknown
+                            "signal": {"wifi": h["wifi"], "phone": h["phone"]}, "warning": h["warning"]}
         p = self.unlocks.pending
         d = load()
         return web.json_response({
@@ -463,7 +500,39 @@ class Companion:
             return ("driving", self._steady_phase(m.current_phase()), m.agent_action or "Working", m.agent_steps, "")
         if a == "paused":
             return ("paused", "paused", m.agent_action, m.agent_steps, "")
+        w = (self.health or {}).get("warning")
+        if w:  # the owner should fix the bridge before an agent can use the phone
+            return ("idle", "warning", w["title"], 0, "", None, w["detail"])
         return ("idle", "idle", "", 0, "")
+
+    async def watch_bridge(self):
+        """Check the bridge every 5 s for the Live Activity's warning. A warning shows only
+        after it has held for two checks in a row, and clears at once."""
+        pending = None
+        while True:
+            await asyncio.sleep(5)
+            b = bridge.saved()
+            if not b:
+                self.health = None
+                continue
+
+            def ask():
+                try:
+                    c = bridge.resolve(b)
+                    return bridge.Link(c).status() if c else {}
+                except Exception:
+                    return {}
+            h = bridge_health(await self.run(ask), b.get("use", True))
+            w = h["warning"]
+            if w and w != (self.health or {}).get("warning"):
+                if pending != w:  # first sighting: wait for the next check
+                    pending = w
+                    continue
+                log("bridge warning:", w["title"])
+            elif not w and (self.health or {}).get("warning"):
+                log("bridge warning cleared")
+            pending = None
+            self.health = h
 
     def _steady_phase(self, phase):
         """The phase the Live Activity shows: a quick acting/reading flicker would swap its
@@ -497,6 +566,8 @@ class Companion:
             return {"state": st[0], "phase": st[1], "action": st[2], "steps": st[3], "requestId": st[4],
                     # asking with a countdown: when the agent starts unless the owner stops it
                     "deadline": round(st[5]) if len(st) > 5 and st[5] else None,
+                    # idle with phase "warning": action is the title, detail the second line
+                    "detail": st[6] if len(st) > 6 else None,
                     "updatedAt": round(time.time(), 2),  # every refresh differs, and restarts the ring
                     "frame": self.frame,  # counts up with each refresh: the app draws one animation frame per value
                     "startedAt": int(m.agent_started if st[0] in ("driving", "paused") else self.mirror_since())}
@@ -506,6 +577,8 @@ class Companion:
             dl = want[5] if len(want) > 5 else None
             alert = {"title": f"Agent taking control in {round(dl - time.time())} s" if dl else "Agent requests control",
                      "body": want[2], "sound": "default"}
+        elif want and want[1] == "warning" and (not before or before[1] != "warning"):
+            alert = {"title": want[2], "body": want[6], "sound": "default"}  # the bridge needs the owner
         for i, dev in self._devices_by_id().items():
             topic = dev["bundle_id"] + ".push-type.liveactivity"
             # iOS ignores an update whose timestamp isn't newer than the last one it applied
@@ -597,6 +670,7 @@ class Companion:
         log(f"companion API on port {PORT}")
         asyncio.ensure_future(self.advertise())
         asyncio.ensure_future(self.activities())
+        asyncio.ensure_future(self.watch_bridge())
 
 
 def _root():

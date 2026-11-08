@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define BRIDGE_FW "0.2.0"  // 0.2: TAP (0x0C)
+#define BRIDGE_FW "0.2.1"  // 0.2: TAP (0x0C); 0.2.1: the phone's Bluetooth signal in status
 #define BRIDGE_NAME "PhoneUse Bridge"  // the name the iPhone sees in Bluetooth settings
 
 typedef enum {
@@ -28,6 +28,8 @@ typedef struct {
     volatile uint32_t last_cmd_ms;       // when the PC last sent a valid packet
     volatile int battery_mv;
     char id[13];                         // hex MAC, the bridge's identity
+    volatile int bt_rssi_delta;          // the phone's Bluetooth signal vs the golden range (0 = good, negative = weaker)
+    volatile uint32_t bt_rssi_at_ms;     // when it was last measured (0: never)
 } bridge_t;
 
 extern bridge_t bridge;
@@ -59,6 +61,7 @@ void hid_connect_last(void);
 int hid_keys(const uint8_t *pairs, int n);
 int hid_keys_left(void);
 void hid_discoverable(int seconds);
+void hid_read_signal(void);  // measure the phone's Bluetooth signal (bridge.bt_rssi_delta)
 // A tap at the absolute position (x, y: 0..32767): press, hold hold_ms, release, all on
 // the bridge. 0 queued, -1 not.
 int hid_tap(uint16_t x, uint16_t y, uint16_t hold_ms);

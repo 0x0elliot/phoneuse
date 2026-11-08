@@ -58,6 +58,7 @@ static void housekeeping(void *arg) {
         // Keep the phone connected: page it every 5 s while it's away (locked,
         // out of range, Bluetooth toggled). iOS accepts a bonded keyboard's page.
         if (!bridge.phone_connected && tick % 50 == 0) hid_connect_last();
+        if (bridge.phone_connected && tick % 20 == 0) hid_read_signal();  // every 2 s
         wifi_ap_record_t ap;
         bridge.wifi_rssi = esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
         int raw, mv;

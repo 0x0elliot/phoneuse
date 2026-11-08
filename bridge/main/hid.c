@@ -10,6 +10,7 @@
 #include "esp_gap_bt_api.h"
 #include "esp_hidd_api.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -120,6 +121,12 @@ static void gap_cb(esp_bt_gap_cb_event_t ev, esp_bt_gap_cb_param_t *p) {
     case ESP_BT_GAP_AUTH_CMPL_EVT:
         ESP_LOGI(TAG, "paired with %s: %d", p->auth_cmpl.device_name, p->auth_cmpl.stat);
         break;
+    case ESP_BT_GAP_READ_RSSI_DELTA_EVT:  // the phone's signal: 0 inside the controller's golden range, below it negative
+        if (p->read_rssi_delta.stat == ESP_BT_STATUS_SUCCESS) {
+            bridge.bt_rssi_delta = p->read_rssi_delta.rssi_delta;
+            bridge.bt_rssi_at_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        }
+        break;
     case ESP_BT_GAP_READ_REMOTE_NAME_EVT:
         if (p->read_rmt_name.stat == ESP_BT_STATUS_SUCCESS) {
             snprintf(bridge.phone, sizeof bridge.phone, "%s", (char *)p->read_rmt_name.rmt_name);
@@ -221,6 +228,11 @@ void hid_connect_last(void) {
     if (n > 4) n = 4;
     esp_bt_gap_get_bond_device_list(&n, list);
     esp_bt_hid_device_connect(list[n - 1]);
+}
+
+// Ask the controller for the phone's signal; the answer arrives as ESP_BT_GAP_READ_RSSI_DELTA_EVT.
+void hid_read_signal(void) {
+    if (bridge.phone_connected) esp_bt_gap_read_rssi_delta(peer);
 }
 
 void hid_discoverable(int seconds) {

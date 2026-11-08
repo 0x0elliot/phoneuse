@@ -93,11 +93,12 @@ static int status_json(char *j, int cap) {
     return snprintf(j, cap,
                     "{\"id\":\"%s\",\"fw\":\"%s\",\"phone\":\"%s\",\"connected\":%s,\"rssi\":%d,\"reports\":%lu,"
                     "\"skipped\":%lu,\"waiting\":%d,\"battery_mv\":%d,\"uptime\":%llu,\"ssid\":\"%s\","
-                    "\"online\":%s,\"err\":\"%s\"}",
+                    "\"online\":%s,\"err\":\"%s\",\"bt_rssi_delta\":%d,\"bt_rssi_age_ms\":%ld}",
                     bridge.id, BRIDGE_FW, bridge.phone, bridge.phone_connected ? "true" : "false", bridge.wifi_rssi,
                     (unsigned long)bridge.reports, (unsigned long)bridge.skipped, bridge.pending, bridge.battery_mv,
                     (unsigned long long)(esp_timer_get_time() / 1000000), settings.ssid,
-                    bridge.state == ST_ONLINE ? "true" : "false", bridge.err);
+                    bridge.state == ST_ONLINE ? "true" : "false", bridge.err, bridge.bt_rssi_delta,
+                    bridge.bt_rssi_at_ms ? (long)((uint32_t)(esp_timer_get_time() / 1000) - bridge.bt_rssi_at_ms) : -1L);
 }
 
 static void link_task(void *arg) {
