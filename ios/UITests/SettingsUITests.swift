@@ -109,20 +109,6 @@ final class SettingsUITests: XCTestCase {
         app.alerts["Mirror again"].buttons["OK"].tap()
         screenshot("settings")
 
-        // A local Live Activity with the doc's content state.
-        app.swipeUp()
-        app.buttons["testActivity"].tap()
-        sleep(2)
-        XCUIDevice.shared.press(.home)
-        sleep(2)
-        screenshot("dynamic-island")
-        let lock = NSSelectorFromString("pressLockButton")
-        if XCUIDevice.shared.responds(to: lock) {
-            XCUIDevice.shared.perform(lock)
-            sleep(2)
-            screenshot("lock-screen")
-        }
-        app.activate()
-        XCTAssertTrue(app.buttons["endActivity"].waitForExistence(timeout: 5))
+        // The Live Activity runs while the PC mirrors; the PC drives it with pushes.
     }
 }

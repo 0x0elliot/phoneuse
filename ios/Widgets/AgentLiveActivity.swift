@@ -95,17 +95,17 @@ enum Look {
         }
     }
 
+    /// Custom symbols from Shared/Symbols.xcassets (ios/scripts/make_symbols.py).
     func symbol(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
-        case .idle: return "iphone"
-        case .asking: return "hand.raised.fill"
-        case .paused: return "pause.fill"
+        case .idle: return "pu.idle"
+        case .asking: return "pu.asking"
+        case .paused: return "pu.paused"
         case .driving:
             switch s.phase {
-            case "acting": return "hand.tap.fill"
-            case "reading": return "eye.fill"
-            case "thinking": return "brain"
-            default: return "cursorarrow.rays"
+            case "acting": return "pu.tapping"
+            case "reading": return "pu.reading"
+            default: return "pu.thinking"
             }
         }
     }
@@ -135,9 +135,11 @@ enum Look {
 }
 
 /// The state's icon. While driving, a ring runs around it: a Live Activity can't loop an animation, but a
-/// timer-driven ProgressView keeps drawing on its own, and it restarts with each update (the PC sends one whenever
-/// the phase changes). The icon swaps with a symbol transition.
+/// timer-driven ProgressView keeps drawing on its own. One pass takes 2.8 s, the PC's refresh interval while driving,
+/// and each update restarts it (the view is keyed on the update's time), so the ring keeps going while the agent
+/// works. The icon swaps with a symbol transition.
 struct StateIcon: View {
+    static let pass: TimeInterval = 2.8
     var state: AgentActivityAttributes.ContentState
     var size: CGFloat
 
@@ -145,13 +147,14 @@ struct StateIcon: View {
         let look = Look(state)
         ZStack {
             if look == .driving {
-                let now = Date()
-                ProgressView(timerInterval: now...now.addingTimeInterval(3), countsDown: false,
+                let start = ringStart
+                ProgressView(timerInterval: start...start.addingTimeInterval(Self.pass), countsDown: false,
                              label: { EmptyView() }, currentValueLabel: { EmptyView() })
                     .progressViewStyle(.circular)
                     .tint(look.color(state))
+                    .id(start)
             }
-            symbol
+            Image(look.symbol(state))
                 .font(.system(size: size * (look == .driving ? 0.45 : 0.7), weight: .semibold))
                 .foregroundStyle(look.color(state))
                 .contentTransition(.symbolEffect(.replace))
@@ -159,14 +162,10 @@ struct StateIcon: View {
         .frame(width: size, height: size)
     }
 
-    @ViewBuilder private var symbol: some View {
-        let image = Image(systemName: Look(state).symbol(state))
-        if #available(iOS 18.0, *), Look(state) == .driving {
-            // Animates only if the system allows repeating effects in a Live Activity; otherwise it's static.
-            image.symbolEffect(.pulse, options: .repeat(.continuous))
-        } else {
-            image
-        }
+    /// The update's time if the PC sent it and it's recent; otherwise the time this view was drawn.
+    private var ringStart: Date {
+        if let t = state.updatedAt, abs(Date().timeIntervalSince1970 - t) < 10 { return Date(timeIntervalSince1970: t) }
+        return Date()
     }
 }
 
@@ -175,7 +174,7 @@ struct IdleView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "iphone").font(.title3).foregroundStyle(.gray)
+            Image("pu.idle").font(.title3).foregroundStyle(.gray)
             Text("You're in control").font(.subheadline)
             Spacer()
             Text(pcName).font(.caption).foregroundStyle(.secondary).lineLimit(1)

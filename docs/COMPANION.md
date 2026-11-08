@@ -135,7 +135,12 @@ The PC sends APNs pushes with a token-based key (`~/.config/phoneuse/apns.json`:
   The app removes the delivered notifications for that request and refreshes the state. Whenever the app refreshes
   the state, it also removes any delivered request notification whose id isn't pending any more.
 
-`content-state` is `{"state": "driving | paused", "phase": "acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "startedAt": <unix seconds>}`.
+`content-state` is `{"state": "idle | asking | driving | paused", "phase": "acting | reading | thinking | paused", "action": "Opening Gmail", "steps": 12, "requestId": "…", "startedAt": <unix seconds>, "updatedAt": <unix seconds>}`.
+
+`updatedAt` is optional: the time of this update. While driving, the app's ring around the icon runs for 2.8 s from
+`updatedAt` and restarts with each update, so the PC's refresh every 2.8 s keeps it turning. The app shows one look
+per `state` and uses `phase` only while driving. It fills in any missing field, so a payload with one left out still
+updates the activity.
 
 `phase` says what the agent is doing at the moment: `acting` while phoneuse sends a tap, a swipe or keys to the
 phone, `reading` while the agent looks at the screen, and `thinking` between actions, while the agent's model

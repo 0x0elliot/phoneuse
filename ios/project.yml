@@ -60,7 +60,7 @@ targets:
   PhoneUseWidgets:
     type: app-extension
     platform: iOS
-    sources: [Widgets, Shared/AgentActivity.swift, Shared/CompanionClient.swift, Shared/CompanionCrypto.swift, Shared/Pairing.swift]
+    sources: [Widgets, Shared/Symbols.xcassets, Shared/AgentActivity.swift, Shared/CompanionClient.swift, Shared/CompanionCrypto.swift, Shared/Pairing.swift]
     entitlements:
       path: Widgets/PhoneUseWidgets.entitlements
       properties: {}

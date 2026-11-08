@@ -16,10 +16,14 @@ struct AgentActivityAttributes: ActivityAttributes {
         var steps: Int
         /// Unix seconds. A number rather than a Date, because ActivityKit decodes a Date as seconds since 2001.
         var startedAt: Double
+        /// Unix seconds of this update. The PC refreshes the activity every 2.8 s while driving; the ring restarts on
+        /// each one. Older PCs don't send it.
+        var updatedAt: Double?
 
-        init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double) {
-            (self.state, self.phase, self.requestId, self.action, self.steps, self.startedAt) =
-                (state, phase, requestId, action, steps, startedAt)
+        init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double,
+             updatedAt: Double? = nil) {
+            (self.state, self.phase, self.requestId, self.action, self.steps, self.startedAt, self.updatedAt) =
+                (state, phase, requestId, action, steps, startedAt, updatedAt)
         }
 
         /// Missing or null fields get defaults, so a push that leaves one out still updates the activity instead of
@@ -33,6 +37,7 @@ struct AgentActivityAttributes: ActivityAttributes {
             action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? ""
             steps = (try? c.decodeIfPresent(Int.self, forKey: .steps)) ?? 0
             startedAt = (try? c.decodeIfPresent(Double.self, forKey: .startedAt)) ?? Date().timeIntervalSince1970
+            updatedAt = try? c.decodeIfPresent(Double.self, forKey: .updatedAt)
         }
 
         var paused: Bool { state == "paused" }

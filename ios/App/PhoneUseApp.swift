@@ -18,6 +18,7 @@ struct PhoneUseApp: App {
                         Task {
                             await PushRegistrar.shared.resendAll()
                             await model.syncActivity()
+                            await model.checkNotifications()
                         }
                     } else {
                         model.stopPolling()

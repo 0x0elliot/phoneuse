@@ -1,6 +1,8 @@
 import ActivityKit
 import Foundation
 import OSLog
+import UIKit
+import UserNotifications
 import SwiftUI
 
 @MainActor
@@ -13,6 +15,8 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var busy: Set<String> = []
     @Published var askRemirror = false
+    /// Notifications are off (not yet allowed, or denied) for PhoneUse.
+    @Published var notificationsOff = false
     /// The last pointer setting the app sent; the state doesn't report it.
     @Published var pointerOn: Bool? = PairingStore.defaults.object(forKey: "pointer.on") as? Bool
 
@@ -157,25 +161,56 @@ final class AppModel: ObservableObject {
 
     // MARK: Live Activity preview
 
-    /// Ids of activities started with "Test Live Activity", which the PC knows nothing about.
-    private var testActivities: Set<String> = []
+    private static func live() -> [Activity<AgentActivityAttributes>] {
+        Activity<AgentActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }
+    }
+
+    /// Only one activity may exist: the PC updates one token, and a second would hide it. Ends every other.
+    func keepOnly(_ id: String) async {
+        for a in Self.live() where a.id != id {
+            AppLog.write("ending extra activity \(a.id), keeping \(id)")
+            await a.end(nil, dismissalPolicy: .immediate)
+        }
+    }
 
     /// The activity stays up while the phone mirrors to the PC, showing idle, asking, driving or paused. When the
-    /// app becomes active and the PC mirrors but no activity is up (the app was ended, or iOS removed it), the app
-    /// starts one in the PC's current state; when the PC doesn't mirror, it ends any left over.
+    /// app becomes active: with no mirroring, it ends any activity; with mirroring, it keeps exactly one, the one whose
+    /// token the PC has if there are several, and starts one in the PC's current state if there is none (the app was
+    /// ended, or iOS removed it).
+    func checkNotifications() async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        notificationsOff = !(status == .authorized || status == .provisional || status == .ephemeral)
+    }
+
+    /// Asks for notifications, or opens PhoneUse's notification settings if the owner already said no.
+    func turnOnNotifications() async {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        if status == .notDetermined {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            UIApplication.shared.registerForRemoteNotifications()
+        } else if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+            await UIApplication.shared.open(url)
+        }
+        await checkNotifications()
+    }
+
     func syncActivity() async {
         await refresh()
         guard reachable, let s = state else { return }
-        let ours = Activity<AgentActivityAttributes>.activities
-            .filter { !testActivities.contains($0.id) && $0.activityState == .active }
+        let live = Self.live()
+        for a in live { AppLog.write("activity \(a.id) \(a.activityState) shows \(a.content.state.state)/\(a.content.state.phase ?? "-")") }
         guard s.mirroring else {
-            for a in ours {
+            for a in live {
                 AppLog.write("not mirroring; ending activity \(a.id)")
                 await a.end(nil, dismissalPolicy: .immediate)
             }
             return
         }
-        guard ours.isEmpty else { return }
+        if live.count > 1 {
+            let known = await PushRegistrar.shared.lastActivityId
+            await keepOnly((live.first { $0.id == known } ?? live.last!).id)
+        }
+        guard live.isEmpty else { return }
         do {
             let a = try Activity.request(attributes: AgentActivityAttributes(pcName: s.pc.name),
                                          content: ActivityContent(state: Self.contentState(s), staleDate: nil),
@@ -189,8 +224,7 @@ final class AppModel: ObservableObject {
     /// While the app is open, corrects an activity whose state differs from the PC's, in case iOS dropped a push.
     private func reconcileActivities(_ s: PCState) async {
         let want = Self.contentState(s)
-        for a in Activity<AgentActivityAttributes>.activities
-        where !testActivities.contains(a.id) && a.activityState == .active {
+        for a in Self.live() {
             let have = a.content.state
             guard have.state != want.state || (want.asking && have.requestId != want.requestId) else { continue }
             var next = want
@@ -204,49 +238,16 @@ final class AppModel: ObservableObject {
         let now = Date().timeIntervalSince1970
         if let p = s.session?.pending {
             return .init(state: "asking", phase: "asking", requestId: p.id, action: p.action ?? "", steps: 0,
-                         startedAt: p.since ?? now)
+                         startedAt: p.since ?? now, updatedAt: now)
         }
         switch s.agent.state {
         case "driving", "paused":
             return .init(state: s.agent.state, phase: s.agent.state == "paused" ? "paused" : "thinking", requestId: nil,
-                         action: s.agent.action ?? "", steps: s.agent.steps ?? 0, startedAt: s.agent.since ?? now)
+                         action: s.agent.action ?? "", steps: s.agent.steps ?? 0, startedAt: s.agent.since ?? now,
+                         updatedAt: now)
         default:
-            return .init(state: "idle", phase: nil, requestId: nil, action: "", steps: 0, startedAt: now)
+            return .init(state: "idle", phase: nil, requestId: nil, action: "", steps: 0, startedAt: now, updatedAt: now)
         }
     }
 
-    /// Walks the test activity through the phases, one every 3 seconds, the way a PC's pushes would.
-    private func cyclePhases(_ activity: Activity<AgentActivityAttributes>) {
-        Task {
-            let phases = ["reading", "thinking", "acting"]
-            for n in 0..<12 {
-                try? await Task.sleep(for: .seconds(3))
-                guard activity.activityState == .active else { return }
-                var c = activity.content.state
-                guard !c.paused else { continue }
-                c.phase = phases[n % 3]
-                if c.phase == "acting" { c.steps += 1 }
-                c.action = ["Reading the inbox", "Choosing a message", "Opening Gmail"][n % 3]
-                await activity.update(ActivityContent(state: c, staleDate: nil))
-            }
-        }
-    }
-
-    func startTestActivity() {
-        let state = AgentActivityAttributes.ContentState(
-            state: "driving", phase: "thinking", requestId: nil, action: "Opening Gmail", steps: 12,
-            startedAt: Date().timeIntervalSince1970 - 95)
-        do {
-            let a = try Activity.request(attributes: AgentActivityAttributes(pcName: pairing?.name ?? "PC"),
-                                     content: ActivityContent(state: state, staleDate: nil), pushType: .token)
-            testActivities.insert(a.id)
-            cyclePhases(a)
-        } catch {
-            self.error = "The Live Activity didn't start: \(error.localizedDescription)"
-        }
-    }
-
-    func endActivities() async {
-        for a in Activity<AgentActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
-    }
 }

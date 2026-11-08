@@ -23,6 +23,8 @@ actor PushRegistrar {
     private var pushToStart: String?
     private var watched: Set<String> = []
     private var started = false
+    /// The activity whose token the PC has.
+    private(set) var lastActivityId: String?
 
     private var base: [String: Any] {
         ["bundle_id": Bundle.main.bundleIdentifier ?? "co.lxe.phoneuse", "env": Self.env]
@@ -49,7 +51,7 @@ actor PushRegistrar {
         if let device { body["device"] = device }
         if let pushToStart { body["push_to_start"] = pushToStart }
         if !body.isEmpty { await send(body, what: "device and push-to-start tokens") }
-        for activity in Activity<AgentActivityAttributes>.activities {
+        for activity in Activity<AgentActivityAttributes>.activities where activity.activityState == .active {
             watch(activity)
             if let token = activity.pushToken { await sendActivity(activity.id, token) }
         }
@@ -68,7 +70,11 @@ actor PushRegistrar {
         }
         for activity in Activity<AgentActivityAttributes>.activities { watch(activity) }
         Task {
-            for await activity in Activity<AgentActivityAttributes>.activityUpdates { watch(activity) }
+            for await activity in Activity<AgentActivityAttributes>.activityUpdates {
+                watch(activity)
+                // A new activity (the PC's push-to-start, or the app's own) replaces any other.
+                await AppModel.shared.keepOnly(activity.id)
+            }
         }
     }
 
@@ -93,6 +99,7 @@ actor PushRegistrar {
     }
 
     private func sendActivity(_ id: String, _ token: Data) async {
+        lastActivityId = id
         await send(["activity": ["id": id, "token": CompanionCrypto.hex(token)]], what: "activity \(id) token")
     }
 

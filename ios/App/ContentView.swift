@@ -54,6 +54,16 @@ struct SettingsView: View {
     var body: some View {
         Form {
             statusSection
+            if model.notificationsOff {
+                Section {
+                    Button { Task { await model.turnOnNotifications() } } label: {
+                        Label("Turn On Notifications", systemImage: "bell.badge")
+                    }
+                    .accessibilityIdentifier("turnOnNotifications")
+                } footer: {
+                    Text("So you can approve agents and unlocks while the phone mirrors.")
+                }
+            }
             if let s {
                 Group {
                 agentSection(s)
@@ -126,9 +136,12 @@ struct SettingsView: View {
                 if let steps = s.agent.steps, s.agent.state != "idle" { Text("\(steps) steps").monospacedDigit() }
             } label: {
                 if s.agent.state == "driving" {
-                    Label { Text(agentText(s.agent)) } icon: { ProgressView().tint(.blue) }
+                    Label { Text(agentText(s.agent)) } icon: { SpinningRing(color: .blue) }
                 } else {
-                    Label(agentText(s.agent), systemImage: s.agent.state == "paused" ? "pause.circle" : "iphone")
+                    Label { Text(agentText(s.agent)) } icon: {
+                        Image(s.agent.state == "paused" ? "pu.paused" : "pu.idle")
+                            .foregroundStyle(s.agent.state == "paused" ? .orange : .secondary)
+                    }
                 }
             }
             .accessibilityIdentifier("agentState")
@@ -265,10 +278,6 @@ struct SettingsView: View {
                 LabeledContent("Paired with", value: p.name)
                 LabeledContent("Address", value: "\(p.host):\(p.port)")
             }
-            Button { model.startTestActivity() } label: { Label("Test Live Activity", systemImage: "platter.filled.top.iphone") }
-                .accessibilityIdentifier("testActivity")
-            Button { Task { await model.endActivities() } } label: { Label("End Live Activities", systemImage: "xmark.circle") }
-                .accessibilityIdentifier("endActivity")
             Button("Unpair", role: .destructive) { confirmUnpair = true }
                 .confirmationDialog("Unpair from this PC?", isPresented: $confirmUnpair, titleVisibility: .visible) {
                     Button("Unpair", role: .destructive) { model.unpair() }
@@ -404,5 +413,21 @@ struct GlowBackground: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(gradient, lineWidth: 2))
                 .shadow(color: .purple.opacity(0.5), radius: 8)
         }
+    }
+}
+
+/// A ring that turns for as long as it's on screen, for the Agent row while an agent drives.
+struct SpinningRing: View {
+    var color: Color
+    @State private var turning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0.1, to: 0.8)
+            .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            .frame(width: 18, height: 18)
+            .rotationEffect(.degrees(turning ? 360 : 0))
+            .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
+            .onAppear { turning = true }
     }
 }
