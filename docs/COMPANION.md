@@ -50,7 +50,7 @@ Every response is JSON. Errors are `{"error": "<short sentence for the owner>"}`
 | `POST /v1/agent/takeover` | `{}` | Stops the agent: its next action fails with "the user took over" |
 | `POST /v1/agent/resume` | `{}` | Lets the agent continue |
 | `POST /v1/unlock/answer` | `{"id", "approve": bool}` | Answers a pending unlock request |
-| `POST /v1/session/ask` | `{"mode": "auto" \| "countdown" \| "ask", "seconds": 5-30}` | When an agent starts (either field alone; the older `{"on": bool}` means ask / auto) |
+| `POST /v1/session/ask` | `{"mode": "auto" \| "countdown" \| "ask", "seconds": 5-30}` | Agent control (either field alone) |
 | `POST /v1/session/answer` | `{"id", "approve": bool}` | Answers a pending session request |
 | `POST /v1/passcode` | `{"sealed"}` (field `passcode`) | Saves the passcode that unlocks use |
 | `DELETE /v1/passcode` | | Forgets the passcode |
@@ -181,10 +181,10 @@ with a **Take over** button (a `LiveActivityIntent` that calls `POST /v1/agent/t
 
 The app's own screen shows the PC's state and has these settings, each changing the PC at once:
 
-- the agent session: take over or resume, and whether to ask before an agent starts;
+- the agent session: take over or resume, and Agent control (Always, After a delay, Ask every time);
 - unlocking: whether a passcode is saved, save or replace it, forget it, and a pending request to approve or deny;
 - keep the screen awake;
 - the on-screen keyboard: show or hide;
-- the pointer: on or off;
+- the pointer: its state, and turning it on or off (an action that asks Siri, after a confirmation);
 - the bridge: its status, sending input through it or not, and moving it to another Wi-Fi network;
 - the mirror's audio: on or off.

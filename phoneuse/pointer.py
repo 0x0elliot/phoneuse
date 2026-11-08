@@ -30,7 +30,6 @@ import time
 
 from . import touch
 
-MIN_GAP = 1 / 250  # at most this many hover reports per second
 SCROLL_STILL = touch.SCROLL_HOLD  # lift once the wheel scroll is done and the wheel idle this long (s)
 SCROLL_MARGIN = 0.06  # regrip before the touch comes this close to an edge (screen fraction)
 GRIP_DELAY = 0.024  # between the hover to the grip point and the press (s)

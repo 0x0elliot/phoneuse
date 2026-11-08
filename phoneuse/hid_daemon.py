@@ -906,8 +906,8 @@ def run_command(line):
 
 
 # ---- the agent gate ----
-# With "ask before agent starts" on, an agent may send input only while the owner has
-# allowed its session. The gate is kept here, in the root daemon every tap and key
+# When Agent control waits for the owner (a delay or an Allow), an agent may send input
+# only while its session is allowed. The gate is kept here, in the root daemon every tap and key
 # passes through, so no agent code (however old or buggy) can go around it. The
 # owner's own processes (the browser mirror and the mirror window, started by
 # `phoneuse up`) always pass, and only they may move the gate: the browser mirror

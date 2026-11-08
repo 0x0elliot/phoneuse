@@ -212,11 +212,6 @@ class Companion:
             "bridge": bridge_state,
         })
 
-    @staticmethod
-    def _ask_file():
-        from .web import ASK_FILE
-        return ASK_FILE
-
     def needs_remirror(self):
         return bool(self.audio_restarted) and not self.mirror.live()
 
@@ -246,18 +241,15 @@ class Companion:
     @staticmethod
     def _start():
         """When an agent starts: {"ask": bool (older apps), "mode", "seconds"}."""
-        from .web import start_setting
+        from .agent_session import start_setting
         st = start_setting()
         return {"ask": st["mode"] != "auto", **st}
 
     async def ask_setting(self, req):
-        # {"mode": auto | countdown | ask, "seconds": 5..30}, or the older {"on": bool}
-        from .web import set_ask_before_session, set_start_setting
+        # Agent control: {"mode": auto | countdown | ask, "seconds": 5..30}
+        from .agent_session import set_start_setting
         b = req["json"]
-        if "mode" in b or "seconds" in b:
-            set_start_setting(b.get("mode"), b.get("seconds"))
-        else:
-            set_ask_before_session(bool(b.get("on")))
+        set_start_setting(b.get("mode"), b.get("seconds"))
         await self.run(self.mirror.sessions.sync_gate)
         return web.json_response(self._start())
 

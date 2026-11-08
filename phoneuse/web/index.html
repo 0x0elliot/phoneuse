@@ -601,7 +601,7 @@ function bridgePassword(n, error) {
   };
 }
 
-// ---- requests from agents (an unlock, or a session when "ask before an agent starts"
+// ---- requests from agents (an unlock, or a session when Agent control waits for the owner
 // is on): the owner answers here ----
 const ask = document.getElementById("ask");
 let askId = null, askKind = "unlock";

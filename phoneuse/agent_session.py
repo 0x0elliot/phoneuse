@@ -23,12 +23,56 @@ change (with a reason), and nothing else keeps its own copy of the session. Time
 changes (the session running out, a countdown ending, a request going unanswered) happen
 in tick(), which the server calls twice a second and every read calls too.
 """
+import json
+import os
 import secrets
 import time
+
+from .config import config_path
 
 AGENT_IDLE = 60.0  # s an agent session lasts after its last action (and an approval with it)
 THINK_AFTER = 3.0  # s an agent quiet after acting or reading counts as thinking
 ASK_WAIT = 120.0  # s a request in "ask" access waits for an answer
+
+
+# "Agent control": what an agent's first action waits for.
+#   auto       Always: the agent takes control at once
+#   countdown  After a delay: the agent takes control when `seconds` run out, unless the owner cancels
+#   ask        Ask every time: the agent waits for the owner's Allow (up to ASK_WAIT)
+START_FILE = os.path.join(os.path.dirname(config_path()), "agent-start.json")
+START_MODES = ("auto", "countdown", "ask")
+_OLD_FLAG = os.path.join(os.path.dirname(config_path()), "ask-before-session")  # before agent-start.json
+
+
+def start_setting():
+    """Agent control: {"mode": auto | countdown | ask, "seconds": 5..30}."""
+    try:
+        with open(START_FILE) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        d = {"mode": "ask"} if os.path.exists(_OLD_FLAG) else {}
+        if d:
+            set_start_setting("ask")  # moved into agent-start.json, once
+    mode = d.get("mode") if d.get("mode") in START_MODES else "auto"
+    return {"mode": mode, "seconds": int(min(30, max(5, d.get("seconds", 10))))}
+
+
+def set_start_setting(mode=None, seconds=None):
+    cur = {"mode": "auto", "seconds": 10}
+    try:
+        with open(START_FILE) as f:
+            cur.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    if mode in START_MODES:
+        cur["mode"] = mode
+    if seconds is not None:
+        cur["seconds"] = int(min(30, max(5, float(seconds))))
+    with open(START_FILE, "w") as f:
+        json.dump(cur, f)
+    if os.path.exists(_OLD_FLAG):
+        os.remove(_OLD_FLAG)
+    return start_setting()
 
 
 class AgentSession:

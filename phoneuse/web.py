@@ -30,7 +30,7 @@ from gi.repository import Gst  # noqa: E402
 from aiohttp import web  # noqa: E402
 
 from . import screen, unlock  # noqa: E402
-from .agent_session import AGENT_IDLE, AgentSession  # noqa: E402
+from .agent_session import AgentSession, set_start_setting, start_setting  # noqa: E402
 from .config import CFG, NAME, SCREEN_PT, config_path  # noqa: E402
 from .hidclient import Hid  # noqa: E402
 from .pointer import Keys, Pointer  # noqa: E402
@@ -185,8 +185,6 @@ class Mirror:
             return False
 
     # ---- agent sessions: who is driving the phone (agent_session.py holds the state) ----
-    AGENT_IDLE = AGENT_IDLE
-
     @property
     def taken_over(self):
         return self.session.current() == "paused"
@@ -498,45 +496,6 @@ class UnlockRequests:
         return web.json_response({"ok": True})
 
 
-ASK_FILE = os.path.join(os.path.dirname(config_path()), "ask-before-session")  # older setting: "ask"
-START_FILE = os.path.join(os.path.dirname(config_path()), "agent-start.json")
-START_MODES = ("auto", "countdown", "ask")  # go ahead / wait N s (then start) / ask me (wait for Allow)
-
-
-def start_setting():
-    """When an agent starts: {"mode": auto | countdown | ask, "seconds": 5..30}."""
-    try:
-        with open(START_FILE) as f:
-            d = json.load(f)
-    except (OSError, ValueError):
-        d = {"mode": "ask" if os.path.exists(ASK_FILE) else "auto"}
-    mode = d.get("mode") if d.get("mode") in START_MODES else "auto"
-    seconds = int(min(30, max(5, d.get("seconds", 10))))
-    return {"mode": mode, "seconds": seconds}
-
-
-def set_start_setting(mode=None, seconds=None):
-    cur = start_setting()
-    if mode in START_MODES:
-        cur["mode"] = mode
-    if seconds is not None:
-        cur["seconds"] = int(min(30, max(5, float(seconds))))
-    with open(START_FILE, "w") as f:
-        json.dump(cur, f)
-    if os.path.exists(ASK_FILE):
-        os.remove(ASK_FILE)  # moved into agent-start.json
-    return cur
-
-
-def ask_before_session():
-    """Whether an agent's first action waits for the owner (a countdown or an Allow)."""
-    return start_setting()["mode"] != "auto"
-
-
-def set_ask_before_session(on):
-    set_start_setting("ask" if on else "auto")
-
-
 class SessionRequests:
     """The owner's side of agent access ("Agent access": Always / After a notice / Ask
     every time). The state lives in the agent session (agent_session.py); this turns its
@@ -544,14 +503,12 @@ class SessionRequests:
     desktop notification, the companion app's notification, the HID daemon's gate,
     and the agent's answer."""
 
-    ASK_GAP = AGENT_IDLE  # the approval ends when the visible session does
-    WAIT = 120.0
-
     def __init__(self, mirror):
         self.mirror = mirror
         self.session = mirror.session
         self.companion = None
         self.notices = {}  # request id -> its desktop notification process
+        self._waiters = {}  # request id -> agents waiting on it
         self.session.listeners.append(self._on_change)
 
     @property
@@ -633,7 +590,6 @@ class SessionRequests:
         st = start_setting()
         r = self.session.ask(action, st["mode"], st["seconds"])
         rid = r["id"]
-        self._waiters = getattr(self, "_waiters", {})
         self._waiters[rid] = self._waiters.get(rid, 0) + 1
         try:
             while rid not in self.session.outcome:
@@ -658,9 +614,6 @@ class SessionRequests:
     def answer_id(self, rid, approve):
         return self.session.answer(rid, bool(approve))
 
-    def end(self):
-        """The agent handed the phone back (or the owner took over)."""
-        self.session.done()
 
     async def answer(self, req):
         if not same_origin(req):
@@ -669,16 +622,12 @@ class SessionRequests:
         return web.json_response({"ok": self.answer_id(body.get("id"), body.get("approve"))})
 
     async def setting(self, req):
-        # The browser mirror's settings: when an agent starts ({"mode", "seconds"}; the
-        # older {"on": bool} means ask / go ahead).
+        # The browser mirror's settings: Agent control ({"mode", "seconds"}).
         if req.method == "POST":
             if not same_origin(req):
                 return web.Response(status=403)
             b = await req.json()
-            if "mode" in b or "seconds" in b:
-                set_start_setting(b.get("mode"), b.get("seconds"))
-            else:
-                set_ask_before_session(bool(b.get("on")))
+            set_start_setting(b.get("mode"), b.get("seconds"))
             await asyncio.get_running_loop().run_in_executor(None, self.sync_gate)
         st = start_setting()
         return web.json_response({"on": st["mode"] != "auto", **st})

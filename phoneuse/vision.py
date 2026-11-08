@@ -1,6 +1,6 @@
 """Vision service for phoneuse: keeps OCR loaded.
 
-Runs in .venv-vision (its own deps; `python -m phoneuse.vision`). Listens on $XDG_RUNTIME_DIR/iphone-vision.sock;
+Runs in .venv-vision (its own deps; `python -m phoneuse.vision`). Listens on $XDG_RUNTIME_DIR/phoneuse-vision.sock;
 one JSON request per connection, one JSON reply:
   {"op": "text", "image": PATH}            -> {"lines": [{"text", "x", "y", "w", "h", "conf"}]}
 
@@ -13,7 +13,6 @@ Models (chosen 2026-11-06 on real iPhone screenshots):
 """
 import json
 import os
-import re
 import socket
 import sys
 import threading

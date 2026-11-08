@@ -3,7 +3,7 @@
 
 Setup and running:
   phoneuse install              one-time: Bluetooth HID service (sudo), bluetoothd
-                               config, and the local vision models
+                               config, and the local OCR model
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse status               Bluetooth link and mirror window
   phoneuse done                 end the agent session: control goes back to the user
@@ -43,7 +43,7 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
 Any action command can end with --text to print the screen as text afterwards
 (as `phoneuse text`), e.g. `phoneuse tap 0.3 0.5 --text`.
 
-Reading the screen without images (local models; a few hundred tokens instead
+Reading the screen without images (local OCR; a few hundred tokens instead
 of ~1,300 for a screenshot):
   phoneuse text [--json] [--all] every line of text on screen with its centre (x, y), and
                                on/off switches as [switch on] / [switch off]; --all keeps
@@ -67,7 +67,7 @@ import urllib.error
 import urllib.request
 
 from . import calibrate, phones, screen, touch
-from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET, config_path
+from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
@@ -161,7 +161,6 @@ def need_mirror():
             f"to {NAME} on the iPhone (Control Center > Screen Mirroring), then check `phoneuse status`.")
 
 
-LAST_SEEN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-seen")
 NOTES = []  # remarks for the agent, printed (CLI) or returned (MCP) with the action
 
 
@@ -213,14 +212,10 @@ def agent_turn():
     req = urllib.request.Request(f"http://127.0.0.1:{CFG['web_port']}/api/agent/act",
                                  data=json.dumps({"action": ACTION}).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
-    # With "ask before agent starts" on, the action may only go ahead after the server
-    # says yes: every failure to get that answer stops the agent (fail closed).
-    cfg_dir = os.path.dirname(config_path())
-    try:
-        with open(os.path.join(cfg_dir, "agent-start.json")) as f:
-            asks = json.load(f).get("mode", "auto") != "auto"
-    except (OSError, ValueError):
-        asks = os.path.exists(os.path.join(cfg_dir, "ask-before-session"))
+    # When Agent control waits for the owner (a delay or an Allow), the action may only go
+    # ahead after the server says yes: every failure to get that answer stops it (fail closed).
+    from .agent_session import start_setting
+    asks = start_setting()["mode"] != "auto"
     try:
         # up to 2 minutes when the owner asked to approve each agent session (SessionRequests in web.py)
         urllib.request.urlopen(req, timeout=130).close()
@@ -403,8 +398,6 @@ def settle():
     try:
         req = f"settle {since} 0.1 {REACT_WAIT}" if since is not None else "settle"
         line, _ = screen.frames_request(req, timeout=REACT_WAIT + 4)
-        with open(LAST_SEEN, "w") as f:  # what the agent has now seen
-            f.write(line.split("seq=")[1].split()[0])
         if since is not None and "reacted=" in line:
             reaction_note(line.split("reacted=")[1].split()[0])
         note = None
@@ -963,7 +956,7 @@ def up():
 
     def start_vision():
         # The screen-reading model (OCR) loads as soon as phoneuse
-        # starts, not on an agent's first look. Skipped if they aren't installed.
+        # starts, not on an agent's first look. Skipped if it isn't installed.
         if os.path.exists(os.path.join(ROOT, ".venv-vision", "bin", "python")):
             try:
                 import contextlib, io
@@ -1180,7 +1173,7 @@ def main():
             if shutil.which("uv"):
                 subprocess.run([os.path.join(ROOT, "scripts", "setup-vision.sh")], check=True)
             else:
-                print("skipping the screen-reading models (phoneuse text/find): install uv, then run scripts/setup-vision.sh")
+                print("skipping the screen-reading model (phoneuse text, tap-on): install uv, then run scripts/setup-vision.sh")
         return
     if cmd == "up":
         return up()
@@ -1251,7 +1244,7 @@ def main():
     elif cmd == "calibrate":  # measure the mirroring phone's pointer (drags use it)
         print(calibrate.calibrate(h, alive=agent_turn))
     elif cmd == "tap-on":
-        print(tap_on(h, " ".join(a for a in args if a != "--force"), force="--force" in args))
+        print(tap_on(h, " ".join(args), force=force))
     elif cmd == "notifications-read":
         print(read_notifications(h))
     elif cmd == "where":
