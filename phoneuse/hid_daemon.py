@@ -316,25 +316,71 @@ def accept_loop():
 
 connect_lock = threading.Lock()
 reconnect_now = threading.Event()
+class InFlight:
+    """Reports handed to the Bluetooth controller that it hasn't sent yet. The
+    controller buffers a few ACL packets beyond the kernel's socket queue (which
+    backlog() sees); on a slow link (35 reports/s at times, when the phone's
+    radio is busy with the AirPlay video) four of them are ~0.15 s of delay.
+    Counted from the kernel's HCI monitor channel: ACL packets sent minus the
+    controller's Number of Completed Packets events."""
+    AF_BLUETOOTH, BTPROTO_HCI, HCI_CHANNEL_MONITOR = 31, 1, 2
+
+    def __init__(self):
+        self.n = 0
+        self.lock = threading.Lock()
+        try:
+            import ctypes
+            self.sock = socket.socket(self.AF_BLUETOOTH, socket.SOCK_RAW, self.BTPROTO_HCI)
+            addr = struct.pack("<HHH", self.AF_BLUETOOTH, 0xFFFF, self.HCI_CHANNEL_MONITOR)
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.bind(self.sock.fileno(), addr, len(addr)) != 0:
+                raise OSError(ctypes.get_errno(), "bind HCI monitor")
+            threading.Thread(target=self._read, daemon=True).start()
+        except OSError as e:
+            log("in-flight count off:", e)
+
+    def _read(self):
+        while True:
+            try:
+                b = self.sock.recv(4096)
+            except OSError:
+                return
+            if len(b) < 7:
+                continue
+            op = struct.unpack_from("<H", b)[0]
+            if op == 4:  # ACL data sent to the controller
+                with self.lock:
+                    self.n += 1
+            elif op == 3 and b[6] == 0x13 and len(b) >= 9:  # Number of Completed Packets
+                done = sum(struct.unpack_from("<H", b, 9 + 4 * i + 2)[0] for i in range(b[8])
+                           if 9 + 4 * i + 4 <= len(b))
+                with self.lock:
+                    self.n = max(0, self.n - done)
+
+
+inflight = InFlight()
+
+
 class Busy:
     """Counts reports skipped because the link was backed up, and logs once a
     second while it happens (how often the radio falls behind, and how far)."""
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.skips, self.worst, self.since = 0, 0, 0.0
+        self.skips, self.worst, self.since, self.most = 0, 0, 0.0, 0
 
-    def note(self, queued):
+    def note(self, queued, waiting=0):
         with self.lock:
             now = time.time()
             if not self.skips:
                 self.since = now
             self.skips += 1
             self.worst = max(self.worst, queued)
+            self.most = max(self.most, waiting)
             if now - self.since >= 1.0:
                 log(f"link busy: skipped {self.skips} reports in {now - self.since:.1f} s, "
-                    f"up to {self.worst} bytes queued")
-                self.skips, self.worst = 0, 0
+                    f"up to {self.worst} bytes queued, {self.most} in the controller")
+                self.skips, self.worst, self.most = 0, 0, 0
 
 
 busy = Busy()
@@ -638,11 +684,12 @@ def run_command(line):
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
     if cmd == "a":  # absolute pointer: a FX FY [BUTTONS], FX/FY are 0..1 screen fractions
         buttons = int(args[2]) if len(args) > 2 else 0
-        if not buttons and not hid.buttons and hid.backlog():
-            # A hover while earlier reports still wait to go out: skip it, so the
+        if not buttons and not hid.buttons and (hid.backlog() or inflight.n >= 2):
+            # A hover while earlier reports still wait to go out (in the socket or
+            # the controller): skip it, so the
             # pointer jumps to the newest position instead of trailing a queue.
             # The sender sends its newest position again on its next tick.
-            busy.note(hid.backlog())
+            busy.note(hid.backlog(), inflight.n)
             return "ok dropped"
         hid.send(3, absolute(args[0], args[1], buttons))
         return "ok"
@@ -650,8 +697,8 @@ def run_command(line):
         # md: the same, but skipped while earlier reports still wait to go out
         # (a slow radio); the sender keeps the motion and sends it in its next
         # report, so the touch jumps to the newest position instead of trailing.
-        if cmd == "md" and hid.backlog():
-            busy.note(hid.backlog())
+        if cmd == "md" and (hid.backlog() or inflight.n >= 2):
+            busy.note(hid.backlog(), inflight.n)
             return "ok dropped"
         dx, dy = (max(-127, min(127, int(v))) for v in args[:2])
         wheel = max(-127, min(127, int(args[2]))) if len(args) > 2 else 0
