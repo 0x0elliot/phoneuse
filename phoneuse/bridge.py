@@ -65,11 +65,16 @@ def resolve(cfg=None):
     if not cfg:
         return None
     if cfg.get("ip"):
+        link = None
         try:
-            Link(cfg).hello()
+            link = Link(cfg)
+            link.hello()
             return cfg
         except Exception:
             pass
+        finally:
+            if link:
+                link.close()
     hits = [b for b in find_lan() if b["id"] == cfg["id"]]
     if hits:
         cfg["ip"] = hits[0]["ip"]
@@ -280,11 +285,21 @@ def find_lan(timeout=1.0):
 # ---------- 3. the control link ----------
 
 class Link:
-    """Signed UDP session with a set-up bridge. send() answers like the daemon's
-    report path: "sent", "skipped" (the bridge's Bluetooth queue is busy),
-    "no phone", or raises on no answer."""
+    """Signed UDP session with a set-up bridge.
 
-    TIMEOUT = 0.05  # per try; a LAN round trip is a few ms
+    Two ways to send a report:
+      report(): waits for the bridge's answer and resends if it got lost; for
+          keys, presses and releases, which must arrive exactly once.
+      send_async(): sends without waiting, at most CREDIT unanswered at a time;
+          for hovers and motion. False means "not now" (the sender keeps the
+          motion for its next report), so a slow Wi-Fi moment costs one report
+          instead of stalling everything behind it.
+    One thread reads every answer; callers never read the socket themselves.
+    """
+
+    TIMEOUT = 0.06   # first wait for an answer; doubles on each retry
+    CREDIT = 3       # unanswered async reports allowed at once
+    EXPIRE = 0.25    # an async report unanswered this long counts as lost
 
     def __init__(self, cfg=None):
         self.cfg = cfg or saved()
@@ -295,92 +310,142 @@ class Link:
         self.key = bytes.fromhex(self.cfg["key"])
         self.addr = (self.cfg["ip"], PORT)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.lock = threading.Lock()
+        self.sock.settimeout(0.5)
+        self.lock = threading.Lock()   # seq, session and sends stay in order
         self.session = 0
         self.seq = 0
-        self.waiting = 0
+        self.waiting = 0               # reports the bridge still has for Bluetooth
+        self.phone = True              # the last answer said a phone is connected
         self.rtt = []
+        self.waiters = {}              # seq or ("hello", nonce) -> [event, answer body]
+        self.inflight = {}             # async seq -> send time
+        self.closed = False
+        threading.Thread(target=self._rx, daemon=True).start()
 
-    def _pack(self, type_, body):
-        head = b"PU\x01" + bytes([type_]) + struct.pack("<II", self.session, self.seq)
+    def close(self):
+        self.closed = True
+        self.sock.close()
+
+    def _pack(self, type_, seq, body):
+        head = b"PU\x01" + bytes([type_]) + struct.pack("<II", self.session, seq)
         return head + body + hmac.new(self.key, head + body, hashlib.sha256).digest()[:8]
 
     def _ok(self, b):
         return len(b) >= 20 and hmac.compare_digest(
             b[-8:], hmac.new(self.key, b[:-8], hashlib.sha256).digest()[:8])
 
-    def _call(self, type_, body=b"", tries=4, wait=None):
-        pkt = self._pack(type_, body)
-        for i in range(tries):
-            t0 = time.time()
-            self.sock.sendto(pkt, self.addr)
-            self.sock.settimeout(wait or self.TIMEOUT * (i + 1))
-            while True:
-                try:
-                    b = self.sock.recv(512)
-                except socket.timeout:
-                    break
-                if self._ok(b) and b[3] == (type_ | 0x80) and struct.unpack_from("<I", b, 8)[0] == self.seq:
-                    self.rtt = (self.rtt + [time.time() - t0])[-200:]
-                    return b[12:-8]
-        raise RuntimeError("the bridge didn't answer")
+    def _rx(self):
+        while not self.closed:
+            try:
+                b = self.sock.recv(1024)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if not self._ok(b):
+                continue
+            type_, seq, body = b[3], struct.unpack_from("<I", b, 8)[0], b[12:-8]
+            if type_ == 0x81:
+                w = self.waiters.get(("hello", body[:8]))
+                if w:
+                    w[1] = struct.unpack_from("<I", b, 4)[0]
+                    w[0].set()
+                continue
+            if type_ == 0x82 and len(body) >= 2:
+                self.waiting, self.phone = body[1], body[0] != 2
+            sent = self.inflight.pop(seq, None)
+            if sent:
+                self.rtt = (self.rtt + [time.time() - sent])[-200:]
+            w = self.waiters.get(seq)
+            if w and not w[0].is_set():
+                w[1] = body
+                w[0].set()
 
     def hello(self):
-        with self.lock:
-            nonce = os.urandom(8)
-            self.session, self.seq = 0, 0
-            pkt = self._pack(0x01, nonce)
+        nonce = os.urandom(8)
+        w = self.waiters[("hello", nonce)] = [threading.Event(), None]
+        try:
             for _ in range(5):
-                self.sock.sendto(pkt, self.addr)
-                self.sock.settimeout(0.3)
-                try:
-                    b = self.sock.recv(512)
-                except socket.timeout:
-                    continue
-                if self._ok(b) and b[3] == 0x81 and b[12:20] == nonce:
-                    self.session = struct.unpack_from("<I", b, 4)[0]
+                with self.lock:
+                    self.session, self.seq = 0, 0
+                    self.sock.sendto(self._pack(0x01, 0, nonce), self.addr)
+                if w[0].wait(0.3):
+                    with self.lock:
+                        self.session = w[1]
+                        self.inflight.clear()
                     return True
             raise RuntimeError(f"the bridge at {self.addr[0]} didn't answer")
+        finally:
+            self.waiters.pop(("hello", nonce), None)
 
-    def _next(self, type_, body=b"", **kw):
-        with self.lock:
-            if not self.session:
-                self.lock.release()
-                try:
-                    self.hello()
-                finally:
-                    self.lock.acquire()
-            self.seq += 1
-            try:
-                return self._call(type_, body, **kw)
-            except RuntimeError:
-                # The bridge restarted (its session is gone) or a burst got lost:
-                # start a new session and try once more.
-                self.lock.release()
-                try:
-                    self.hello()
-                finally:
-                    self.lock.acquire()
+    def _call(self, type_, body=b"", tries=4, wait=None):
+        if not self.session:
+            self.hello()
+        for attempt in range(2):
+            with self.lock:
                 self.seq += 1
-                return self._call(type_, body, **kw)
+                seq = self.seq
+                pkt = self._pack(type_, seq, body)
+            w = self.waiters[seq] = [threading.Event(), None]
+            try:
+                t0 = time.time()
+                for i in range(tries):
+                    self.sock.sendto(pkt, self.addr)  # the same seq: the bridge answers again, does nothing twice
+                    if w[0].wait(wait or self.TIMEOUT * (2 ** i)):
+                        self.rtt = (self.rtt + [time.time() - t0])[-200:]
+                        return w[1]
+            finally:
+                self.waiters.pop(seq, None)
+            if attempt == 0:
+                self.hello()  # the bridge restarted (its session is gone): once more
+        raise RuntimeError("the bridge didn't answer")
+
+    def send_async(self, report_id, payload):
+        """Send a hover or motion report without waiting. False: not now."""
+        if not self.session:
+            self.hello()
+        now = time.time()
+        with self.lock:
+            for seq, t in list(self.inflight.items()):
+                if now - t > self.EXPIRE:
+                    del self.inflight[seq]
+                    self.lost = getattr(self, "lost", 0) + 1
+            if len(self.inflight) >= self.CREDIT or self.waiting >= self.CREDIT:
+                return False
+            self.seq += 1
+            self.inflight[self.seq] = now
+            self.sock.sendto(self._pack(0x02, self.seq, bytes([0, report_id]) + bytes(payload)), self.addr)
+        if getattr(self, "lost", 0) >= 8:  # many lost in a row: maybe a new session is needed
+            self.lost = 0
+            threading.Thread(target=self.hello, daemon=True).start()
+        return True
+
+    def send_latest(self, report_id, payload):
+        """A hover: sent without waiting and without an answer. The bridge keeps
+        only the newest and sends it once Bluetooth is free."""
+        if not self.session:
+            self.hello()
+        with self.lock:
+            self.seq += 1
+            self.sock.sendto(self._pack(0x02, self.seq, bytes([3, report_id]) + bytes(payload)), self.addr)
 
     def report(self, report_id, payload, skippable=False):
-        r = self._next(0x02, bytes([1 if skippable else 0, report_id]) + bytes(payload))
-        self.waiting = r[1]
+        r = self._call(0x02, bytes([1 if skippable else 0, report_id]) + bytes(payload))
+        self.waiting, self.phone = r[1], r[0] != 2
         return ("sent", "skipped", "no phone")[min(r[0], 2)]
 
     def status(self):
-        return json.loads(self._next(0x03).decode())
+        return json.loads(self._call(0x03).decode())
 
     def connect_phone(self):
-        self._next(0x04)
+        self._call(0x04)
 
     def open_setup(self):
-        self._next(0x05)
+        self._call(0x05)
 
     def networks(self):
         """Wi-Fi networks the bridge sees (it scans while staying online, ~2 s)."""
-        return json.loads(self._next(0x06, tries=2, wait=6).decode() or "[]")
+        return json.loads(self._call(0x06, tries=2, wait=6).decode() or "[]")
 
     def change_network(self, ssid, password):
         """Move the bridge to another network. It answers first, then switches, and
@@ -389,7 +454,7 @@ class Link:
         k = hmac.new(self.key, b"phoneuse wifi change", hashlib.sha256).digest()
         nonce = os.urandom(12)
         sealed = nonce + AESGCM(k).encrypt(nonce, ssid.encode() + b"\0" + password.encode(), None)
-        if self._next(0x07, sealed)[:1] != b"\x01":
+        if self._call(0x07, sealed)[:1] != b"\x01":
             raise RuntimeError("the bridge couldn't read the network details")
 
 

@@ -9,6 +9,8 @@
 //   0x01 HELLO  nonce(8)      -> 0x81 nonce(8), session = a new random id
 //   0x02 REPORT flags id data -> 0x82 result(0 sent, 1 skipped, 2 no phone) waiting
 //        flags bit 0: skippable (motion and hovers; never keys or buttons)
+//        flags bit 1: newest wins, no answer (hovers): only the newest one goes
+//        to the phone, once Bluetooth has sent the previous report
 //   0x03 STATUS               -> 0x83 JSON
 //   0x04 CONNECT              -> 0x84 (page the last iPhone)
 //   0x05 SETUP                -> 0x85 (open BLE setup again)
@@ -39,10 +41,22 @@ static const char *TAG = "link";
 // the CLI): each HELLO gets its own session; the least recently used one goes.
 #define SESSIONS 4
 typedef struct {
-    uint32_t sid, last_seq, used_ms;
+    uint32_t sid, last_seq, last_hover, used_ms;
     uint8_t reply[600];
     int reply_len;
+    struct { uint32_t seq; uint8_t len, buf[40]; } recent[6];  // short answers, for resends out of order
+    uint8_t next_recent;
 } session_t;
+
+static void remember(session_t *ss, uint32_t seq, const uint8_t *b, int n) {
+    memcpy(ss->reply, b, n);
+    ss->reply_len = n;
+    if (n <= 40) {
+        int i = ss->next_recent++ % 6;
+        ss->recent[i].seq = seq, ss->recent[i].len = n;
+        memcpy(ss->recent[i].buf, b, n);
+    }
+}
 static session_t sessions[SESSIONS];
 
 static bool mac_ok(const uint8_t *b, int n) {
@@ -112,8 +126,9 @@ static void link_task(void *arg) {
             for (int i = 1; i < SESSIONS; i++)
                 if (sessions[i].used_ms < v->used_ms) v = &sessions[i];
             crypto_random(&v->sid, 4);
-            v->last_seq = 0;
+            v->last_seq = v->last_hover = 0;
             v->reply_len = 0;
+            memset(v->recent, 0, sizeof v->recent);
             v->used_ms = now_ms;
             m = reply(out, 0x81, v->sid, 0, body, 8, true);
             sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
@@ -124,11 +139,26 @@ static void link_task(void *arg) {
             if (sessions[i].sid == sid) ss = &sessions[i];
         if (!ss) continue;
         ss->used_ms = now_ms;
+        if (type == 0x02 && bn >= 2 && (body[0] & 2)) {  // a hover: newest wins, no answer
+            // Hovers keep their own order (an older one arriving late is dropped)
+            // and don't move last_seq, so a resent key report still gets its answer.
+            if (seq > ss->last_hover) {
+                ss->last_hover = seq;
+                bridge.last_cmd_ms = now_ms;
+                hid_latest(body[1], body + 2, bn - 2);
+            }
+            continue;
+        }
         if (seq == ss->last_seq && ss->reply_len) {  // the reply got lost: same answer, no redo
             sendto(s, ss->reply, ss->reply_len, 0, (struct sockaddr *)&from, fl);
             continue;
         }
-        if (seq < ss->last_seq) continue;
+        if (seq < ss->last_seq) {  // older: answer again if it was answered, never redo it
+            for (int i = 0; i < 6; i++)
+                if (ss->recent[i].seq == seq && ss->recent[i].len)
+                    sendto(s, ss->recent[i].buf, ss->recent[i].len, 0, (struct sockaddr *)&from, fl);
+            continue;
+        }
         ss->last_seq = seq;
         bridge.last_cmd_ms = now_ms;
         if (type == 0x02 && bn >= 2) {  // REPORT
@@ -152,8 +182,7 @@ static void link_task(void *arg) {
             int pn = crypto_open(k, body, bn, plain, sizeof plain - 1);
             uint8_t ok = pn > 0;
             m = reply(out, 0x87, sid, seq, &ok, 1, true);
-            memcpy(ss->reply, out, m);
-            ss->reply_len = m;
+            remember(ss, seq, out, m);
             sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
             if (ok) {
                 plain[pn] = 0;
@@ -169,8 +198,7 @@ static void link_task(void *arg) {
         } else {
             continue;
         }
-        memcpy(ss->reply, out, m);
-        ss->reply_len = m;
+        remember(ss, seq, out, m);
         sendto(s, out, m, 0, (struct sockaddr *)&from, fl);
     }
 }

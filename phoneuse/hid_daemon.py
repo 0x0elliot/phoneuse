@@ -110,7 +110,7 @@ class HID:
     @property
     def connected(self):
         if bridge_link[0]:
-            return bridge_phone[0]
+            return bridge_link[0].phone
         return self.intr is not None
 
     def _bridge(self, report_id, payload, skippable=False):
@@ -124,9 +124,15 @@ class HID:
         """Send a hover or motion report unless earlier ones still wait to go out
         (then the sender keeps the motion for its next report). True if sent."""
         if bridge_link[0]:
-            if self._bridge(report_id, payload, True):
+            link = bridge_link[0]
+            if not link.phone:
+                raise RuntimeError("no iPhone connected to the bridge (pair it with PhoneUse Bridge)")
+            if report_id == 3:  # a hover: newest wins on the bridge, no answer
+                link.send_latest(report_id, payload)
                 return True
-            busy.note(0, bridge_link[0].waiting)
+            if link.send_async(report_id, payload):  # motion: pipelined, counted
+                return True
+            busy.note(0, link.waiting)
             return False
         if self.backlog() or inflight.n >= 2:
             busy.note(self.backlog(), inflight.n)
@@ -684,6 +690,8 @@ def release(idle):
 def set_bridge(args):
     """Switch input to the bridge (its address and control key) or back to this PC."""
     if args[:1] == ["off"] or not args:
+        if bridge_link[0]:
+            bridge_link[0].close()
         bridge_link[0] = None
         released.clear()
         reconnect_now.set()
@@ -693,8 +701,10 @@ def set_bridge(args):
     link = Link({"ip": args[0], "key": args[1]})
     link.hello()  # raises if it doesn't answer or the key is wrong
     st = link.status()
+    if bridge_link[0]:
+        bridge_link[0].close()
     bridge_link[0] = link
-    bridge_phone[0] = bool(st.get("connected"))
+    bridge_phone[0] = link.phone = bool(st.get("connected"))
     released.set()  # this PC's own link to the phone would be a second keyboard: drop it
     if hid.intr:
         hid.drop("input goes through the bridge now")
@@ -705,11 +715,14 @@ def set_bridge(args):
 
 
 def watch_bridge(link):
-    """Keep the bridge's phone state current (it pairs and reconnects on its own)."""
+    """Keep the bridge's phone state current, and while a phone is screen
+    mirroring but not connected to the bridge, ask the bridge to page it."""
     while bridge_link[0] is link:
         time.sleep(2)
         try:
-            bridge_phone[0] = bool(link.status().get("connected"))
+            bridge_phone[0] = link.phone = bool(link.status().get("connected"))
+            if not link.phone and mirror_name[0]:
+                link.connect_phone()
         except Exception as e:
             bridge_phone[0] = False
             log("bridge: no answer:", e)

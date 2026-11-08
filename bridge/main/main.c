@@ -55,6 +55,9 @@ static void housekeeping(void *arg) {
         held = gpio_get_level(BUTTON_SETUP) == 0 ? held + 1 : 0;
         if (held == 30) setup_ble_open(true);
         if (++tick % 10) continue;
+        // Keep the phone connected: page it every 5 s while it's away (locked,
+        // out of range, Bluetooth toggled). iOS accepts a bonded keyboard's page.
+        if (!bridge.phone_connected && tick % 50 == 0) hid_connect_last();
         wifi_ap_record_t ap;
         bridge.wifi_rssi = esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
         int raw, mv;

@@ -51,6 +51,8 @@ void hid_init(void);
 // Send report `id` (1 keyboard, 2 mouse, 3 absolute, 4 consumer). skippable:
 // refuse while earlier reports still wait. Returns 0 sent, 1 skipped, 2 no phone.
 int hid_send(uint8_t id, const uint8_t *data, int len, bool skippable);
+// Hover: keep only the newest; it goes out once Bluetooth is free. No answer.
+void hid_latest(uint8_t id, const uint8_t *data, int len);
 void hid_connect_last(void);
 void hid_discoverable(int seconds);
 

@@ -11,6 +11,7 @@
 #include "esp_hidd_api.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "hid";
 
@@ -40,6 +41,14 @@ static esp_hidd_app_param_t app = {
 static esp_hidd_qos_param_t qos;
 static esp_bd_addr_t peer;
 static volatile int in_lower;  // reports handed to Bluedroid that it hasn't sent on yet
+
+// Newest-wins slot for hovers: the PC sends every hover without waiting; only the
+// newest one goes to the phone, as soon as Bluetooth has sent the previous report.
+static uint8_t latest_id, latest[8], latest_len;
+static volatile bool latest_set;
+static portMUX_TYPE latest_mux = portMUX_INITIALIZER_UNLOCKED;
+static TaskHandle_t out_task;
+static void out_loop(void *arg);
 
 static void name_from(const uint8_t *addr) { esp_bt_gap_read_remote_name((uint8_t *)addr); }
 
@@ -75,6 +84,7 @@ static void hidd_cb(esp_hidd_cb_event_t ev, esp_hidd_cb_param_t *p) {
         break;
     case ESP_HIDD_SEND_REPORT_EVT:
         if (in_lower > 0) in_lower--;
+        if (latest_set && out_task) xTaskNotifyGive(out_task);
         break;
     default:
         break;
@@ -109,6 +119,35 @@ void hid_init(void) {
     esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &io, sizeof io);
     esp_bt_hid_device_register_callback(hidd_cb);
     esp_bt_hid_device_init();
+    xTaskCreatePinnedToCore(out_loop, "hidout", 3072, NULL, 19, &out_task, 0);
+}
+
+static void out_loop(void *arg) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
+        if (!latest_set || !bridge.phone_connected || in_lower > 0) continue;
+        uint8_t id, buf[8], n;
+        portENTER_CRITICAL(&latest_mux);
+        id = latest_id, n = latest_len;
+        memcpy(buf, latest, n);
+        latest_set = false;
+        portEXIT_CRITICAL(&latest_mux);
+        in_lower++;
+        if (esp_bt_hid_device_send_report(ESP_HIDD_REPORT_TYPE_INTRDATA, id, n, buf) == ESP_OK) bridge.reports++;
+        else in_lower--;
+        bridge.pending = in_lower;
+    }
+}
+
+void hid_latest(uint8_t id, const uint8_t *data, int len) {
+    if (len > 8) return;
+    portENTER_CRITICAL(&latest_mux);
+    if (latest_set) bridge.skipped++;  // replaced before it went out
+    latest_id = id, latest_len = len;
+    memcpy(latest, data, len);
+    latest_set = true;
+    portEXIT_CRITICAL(&latest_mux);
+    xTaskNotifyGive(out_task);
 }
 
 void hid_connect_last(void) {
