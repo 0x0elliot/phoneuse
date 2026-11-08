@@ -155,13 +155,28 @@ static void start_adv(void) {
 }
 
 // ---- reports ----
+// Reports handed to Bluedroid that it hasn't sent yet (ESP_GATTS_CONF_EVT counts them
+// down): hovers wait for zero, so the pointer never lags behind a queue.
+static volatile int in_lower;
+static volatile uint32_t in_lower_since;
+
 static int send_report(uint8_t id, const uint8_t *data, int len) {
     if (id < 1 || id > 4 || phone_conn == 0xFFFF || gif == ESP_GATT_IF_NONE) return 2;
     if (id == 1 && !keyboard_on) return 2;
-    if (esp_ble_gatts_send_indicate(gif, phone_conn, h[report_handle_index[id]], len, (uint8_t *)data, false) != ESP_OK)
+    in_lower++;
+    in_lower_since = xTaskGetTickCount();
+    if (esp_ble_gatts_send_indicate(gif, phone_conn, h[report_handle_index[id]], len, (uint8_t *)data, false) != ESP_OK) {
+        in_lower--;
         return 2;
+    }
     bridge.reports++;
+    bridge.pending = in_lower;
     return 0;
+}
+
+static bool busy(void) {
+    if (in_lower > 0 && xTaskGetTickCount() - in_lower_since > pdMS_TO_TICKS(100)) in_lower = 0;  // a lost count
+    return congested || in_lower > 0;
 }
 
 // Typing: the PC sends a whole string's keys in one packet; this task presses and
@@ -175,7 +190,7 @@ static TaskHandle_t out_task;
 static void out_loop(void *arg) {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
-        if (!latest_set || phone_conn == 0xFFFF || congested) continue;
+        if (!latest_set || phone_conn == 0xFFFF || busy()) continue;
         uint8_t id, buf[8], n;
         portENTER_CRITICAL(&latest_mux);
         id = latest_id, n = latest_len;
@@ -191,8 +206,8 @@ static void key_loop(void *arg) {
     for (;;) {
         xQueueReceive(keyq, k, portMAX_DELAY);
         uint8_t down[8] = {k[0], 0, k[1], 0, 0, 0, 0, 0}, up[8] = {0};
-        for (int i = 0; i < 50 && (congested || send_report(1, down, 8) != 0) && phone_conn != 0xFFFF; i++)
-            vTaskDelay(2);
+        for (int i = 0; i < 100 && phone_conn != 0xFFFF && (busy() || send_report(1, down, 8) != 0); i++)
+            vTaskDelay(1);
         vTaskDelay(pdMS_TO_TICKS(12));
         send_report(1, up, 8);
         vTaskDelay(pdMS_TO_TICKS(12));
@@ -201,7 +216,7 @@ static void key_loop(void *arg) {
 
 int hid_send(uint8_t id, const uint8_t *data, int len, bool skippable) {
     if (phone_conn == 0xFFFF) return 2;
-    if (skippable && congested) {
+    if (skippable && busy()) {
         bridge.skipped++;
         return 1;
     }
@@ -297,6 +312,11 @@ bool hid_le_gatts_event(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_
             if (conns[i].used && conns[i].id == p->disconnect.conn_id) conns[i].used = false;
         if (p->disconnect.conn_id == phone_conn) goto lost;
         break;
+    case ESP_GATTS_CONF_EVT:  // a notification went out
+        if (in_lower > 0) in_lower--;
+        bridge.pending = in_lower;
+        if (latest_set && out_task) xTaskNotifyGive(out_task);
+        break;
     case ESP_GATTS_CONGEST_EVT:
         congested = p->congest.congested;
         if (!congested && latest_set && out_task) xTaskNotifyGive(out_task);
@@ -307,6 +327,7 @@ bool hid_le_gatts_event(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_
     return false;  // connection events also matter to setup_ble.c
 lost:
     phone_conn = 0xFFFF;
+    in_lower = 0;
     bridge.phone_connected = false;
     congested = false;
     ble_adv_refresh();
@@ -319,6 +340,12 @@ void hid_le_gap_event(esp_gap_ble_cb_event_t ev, esp_ble_gap_cb_param_t *p) {
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
     case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
         if (adv_pending > 0 && --adv_pending == 0) start_adv();
+        break;
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
+        ESP_LOGI(TAG, "connection: interval %.2f ms, latency %d, timeout %d ms (status %d)",
+                 p->update_conn_params.conn_int * 1.25, p->update_conn_params.latency,
+                 p->update_conn_params.timeout * 10, p->update_conn_params.status);
+        bridge.conn_interval_x100 = p->update_conn_params.conn_int * 125;
         break;
     case ESP_GAP_BLE_SEC_REQ_EVT:
         esp_ble_gap_security_rsp(p->ble_security.ble_req.bd_addr, true);
@@ -339,7 +366,8 @@ void hid_le_gap_event(esp_gap_ble_cb_event_t ev, esp_ble_gap_cb_param_t *p) {
         phone_conn = conns[k].id;
         bridge.phone_connected = true;
         snprintf(bridge.phone, sizeof bridge.phone, "iPhone %02x:%02x", a->bd_addr[4], a->bd_addr[5]);
-        esp_ble_conn_update_params_t cp = {.min_int = 9, .max_int = 12, .latency = 0, .timeout = 400};
+        // 11.25 ms: the shortest interval iOS grants an HID accessory
+        esp_ble_conn_update_params_t cp = {.min_int = 9, .max_int = 9, .latency = 0, .timeout = 400};
         memcpy(cp.bda, phone_bda, sizeof cp.bda);
         esp_ble_gap_update_conn_params(&cp);
         ble_adv_refresh();

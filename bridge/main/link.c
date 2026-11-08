@@ -93,15 +93,15 @@ static int status_json(char *j, int cap) {
     return snprintf(j, cap,
                     "{\"id\":\"%s\",\"fw\":\"%s\",\"phone\":\"%s\",\"connected\":%s,\"rssi\":%d,\"reports\":%lu,"
                     "\"skipped\":%lu,\"waiting\":%d,\"battery_mv\":%d,\"uptime\":%llu,\"ssid\":\"%s\","
-                    "\"online\":%s,\"err\":\"%s\",\"le\":%s,\"kbd\":%s}",
+                    "\"online\":%s,\"err\":\"%s\",\"le\":%s,\"kbd\":%s,\"interval_ms\":%.2f}",
                     bridge.id, BRIDGE_FW, bridge.phone, bridge.phone_connected ? "true" : "false", bridge.wifi_rssi,
                     (unsigned long)bridge.reports, (unsigned long)bridge.skipped, bridge.pending, bridge.battery_mv,
                     (unsigned long long)(esp_timer_get_time() / 1000000), settings.ssid,
                     bridge.state == ST_ONLINE ? "true" : "false", bridge.err,
 #ifdef BRIDGE_HID_LE
-                    "true", hid_keyboard_on() ? "true" : "false");
+                    "true", hid_keyboard_on() ? "true" : "false", bridge.conn_interval_x100 / 100.0);
 #else
-                    "false", "true");
+                    "false", "true", 0.0);
 #endif
 }
 

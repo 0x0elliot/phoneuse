@@ -28,6 +28,7 @@ typedef struct {
     volatile uint32_t last_cmd_ms;       // when the PC last sent a valid packet
     volatile int battery_mv;
     char id[13];                         // hex MAC, the bridge's identity
+    volatile int conn_interval_x100;     // LE: the phone's connection interval, in 1/100 ms
 } bridge_t;
 
 extern bridge_t bridge;
