@@ -98,6 +98,7 @@ class Mirror:
         self.agent_until = 0.0
         self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
         self.last_frame_at = 0.0  # when the phone's picture last changed
+        self.stale = False  # the picture stopped following the phone (see check_stale)
         self.last_input_at = 0.0  # when the page or an agent last sent input
         self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
@@ -255,12 +256,36 @@ class Mirror:
             threading.Thread(target=self.sessions.sync_gate, daemon=True).start()
         self.broadcast_state()
 
+    STALE_INPUT = 1.5  # s: input that should change the picture, with no new frame since
+    STALE_CLOCK = 4.0  # s past a minute boundary (the status-bar clock changes) with no new frame
+
+    def check_stale(self):
+        """Whether the mirror shows an old picture: input went to the phone and no frame
+        followed, or a minute rolled over (the phone's clock changed) and no frame
+        arrived. Either means the phone's screen is off, or mirroring stalled or lags.
+        Agents get a warning with every screen read; the pages show it."""
+        now = time.time()
+        if not self.live() or not self.last_frame_at:
+            stale = False
+        else:
+            unanswered = self.last_input_at > self.last_frame_at and now - self.last_input_at > self.STALE_INPUT
+            clock = now > (self.last_frame_at // 60 + 1) * 60 + self.STALE_CLOCK
+            stale = unanswered or clock
+        if stale != self.stale:
+            self.stale = stale
+            log("the picture " + ("stopped updating: the phone's screen is off, or mirroring stalled"
+                                  if stale else "is updating again"))
+            self.broadcast_state()
+        return stale
+
     def broadcast_state(self):
         for tab in list(self.tabs):
             tab.state()
 
     def _frame(self, data, key):
         self.last_frame_at = time.time()
+        if self.stale:
+            self.loop.call_soon_threadsafe(self.check_stale)
         if self.screen_dark:
             self.screen_dark = False
         self.loop.call_soon_threadsafe(self._send_frame, data, key)
@@ -333,7 +358,7 @@ class Tab:
         self.told_agent = self.mirror.agent()
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
-                          "awake": self.mirror.awake,
+                          "awake": self.mirror.awake, "stale": self.mirror.stale,
                           "name": NAME, "screen": SCREEN_PT,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
@@ -774,6 +799,9 @@ def app(mirror):
     a.router.add_post("/api/unlock", unlocks.ask)
     a.router.add_post("/api/agent/act", agent_act)
     a.router.add_post("/api/agent/phase", agent_phase)
+    a.router.add_get("/api/picture", lambda _r: web.json_response(
+        {"live": mirror.live(), "stale": mirror.stale, "frame_age": round(time.time() - mirror.last_frame_at, 1)
+         if mirror.last_frame_at else None}))
     a.router.add_post("/api/agent/takeover", agent_takeover)
     a.router.add_post("/api/agent/cursor", agent_cursor)
     a.router.add_post("/api/agent/done", agent_done)
@@ -810,6 +838,12 @@ def main():
         log(f"browser mirror on http://localhost:{PORT}")
         asyncio.ensure_future(mirror.keep_awake())
         asyncio.ensure_future(mirror.sessions.keep_gate())
+
+        async def stale_loop():
+            while True:
+                await asyncio.sleep(0.5)
+                mirror.check_stale()
+        asyncio.ensure_future(stale_loop())
         try:  # the companion app's API on the local network (companion.py)
             from .companion import Companion
             c = mirror.unlocks.companion = mirror.sessions.companion = Companion(mirror, mirror.unlocks)

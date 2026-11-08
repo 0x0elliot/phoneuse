@@ -771,7 +771,24 @@ STATUS_BAR = 0.055  # lines above this (time, signal, battery) are left out of `
 BACK_GLYPHS = {"く", "<", "‹", "〈", "〈"}  # how OCR reads the back chevron at the top left
 
 
+def picture_note():
+    """A warning when the mirror shows an old picture (web.py check_stale)."""
+    import json
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{CFG['web_port']}/api/picture", timeout=1) as r:
+            p = json.load(r)
+    except (OSError, ValueError):
+        return
+    if p.get("stale"):
+        note = ("note: the mirror's picture isn't updating (last frame "
+                f"{p.get('frame_age')} s ago): the phone's screen is off or mirroring stalled; "
+                "what you see may be old. Ask the user to wake the phone or reconnect Screen Mirroring")
+        if note not in NOTES:
+            NOTES.append(note)
+
+
 def screen_text(show_all=False, shot=None):
+    picture_note()
     """The screen as text lines [(x, y, text)]: OCR plus the state of on/off
     switches, which OCR can't read. Drops the status bar and icon glyphs OCR
     mistakes for text (lines without a letter or digit) unless show_all. Takes a
