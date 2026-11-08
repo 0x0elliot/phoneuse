@@ -53,6 +53,7 @@ static void housekeeping(void *arg) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(100));
         held = gpio_get_level(BUTTON_SETUP) == 0 ? held + 1 : 0;
+        if (held == 1) screen_wake();
         if (held == 30) setup_ble_open(true);
         if (++tick % 10) continue;
         // Keep the phone connected: page it every 5 s while it's away (locked,

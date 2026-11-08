@@ -51,6 +51,14 @@ The bridge presents the same HID descriptor as the PC daemon (`hid_daemon.py`
 REPORT_MAP), byte for byte: keyboard, mouse, absolute pointer, and the consumer
 keys (Eject, Siri, Home, Search).
 
+The bridge's screen shows its network, the connected phone, the report rate and
+the Wi-Fi signal and power. An icon at the right of the phone's name shows what
+the PC is sending, for 0.6 s after it arrives: a cursor for pointer moves, a
+finger for taps and presses, a keyboard for keys. The screen sends a row to the
+panel only when its text changes, and on battery the backlight dims to 15% after
+two minutes without input (the button, input or a new state brings it back).
+`tools/mkicons.py` renders the icons from Symbols Nerd Font into `main/icons.h`.
+
 ## Measured (2026-11-07)
 
 | | PC Bluetooth | Bridge |

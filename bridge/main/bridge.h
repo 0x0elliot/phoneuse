@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define BRIDGE_FW "0.2.1"  // 0.2: TAP (0x0C); 0.2.1: the phone's Bluetooth signal in status
+#define BRIDGE_FW "0.2.2"  // 0.2: TAP (0x0C); 0.2.1: the phone's Bluetooth signal in status; 0.2.2: activity icon
 #define BRIDGE_NAME "PhoneUse Bridge"  // the name the iPhone sees in Bluetooth settings
 
 typedef enum {
@@ -30,10 +30,18 @@ typedef struct {
     char id[13];                         // hex MAC, the bridge's identity
     volatile int bt_rssi_delta;          // the phone's Bluetooth signal vs the golden range (0 = good, negative = weaker)
     volatile uint32_t bt_rssi_at_ms;     // when it was last measured (0: never)
+    volatile uint8_t activity;           // the last input the PC sent: ACT_*
+    volatile uint32_t activity_ms;       // when it came
 } bridge_t;
+
+// What the screen's activity icon shows, for ACT_SHOW_MS after the input.
+enum { ACT_NONE, ACT_POINTER, ACT_TAP, ACT_KEYS };
+#define ACT_SHOW_MS 600
+void bridge_activity(int kind);  // screen.c: note input; wakes the screen only when the icon changes
 
 extern bridge_t bridge;
 void screen_update(void);  // redraw what changed (cheap to call often)
+void screen_wake(void);    // full backlight again (it dims on battery when nothing happens)
 
 // wifi.c
 void wifi_init(void);

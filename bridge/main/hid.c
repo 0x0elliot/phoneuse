@@ -2,6 +2,7 @@
 // keyboard, mouse, absolute pointer and consumer keys as phoneuse's PC daemon
 // (hid_daemon.py REPORT_MAP, kept byte-identical).
 #include <stdio.h>
+#include <stdatomic.h>
 #include <string.h>
 
 #include "bridge.h"
@@ -56,7 +57,37 @@ extern int BTM_SetQoS(uint8_t *bd, flow_spec_t *flow, void *cb);
 // and releases each at Bluetooth pace, with no Wi-Fi round trip per key.
 static QueueHandle_t keyq;
 static esp_bd_addr_t peer;
-static volatile int in_lower;  // reports handed to Bluedroid that it hasn't sent on yet
+// Reports handed to Bluedroid that it hasn't sent on yet. Four tasks on both cores and
+// Bluedroid's callback change it, so every change is atomic: one lost decrement would
+// otherwise hold it above zero and stop every hover for good.
+static _Atomic int in_lower;
+static volatile uint32_t lower_since_ms;  // when in_lower left 0, or Bluedroid last confirmed a send
+#define LOWER_STUCK_MS 1000  // no send confirmation at all this long: assume one got lost
+
+static uint32_t ms(void) { return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS); }
+
+static void lower_add(void) {
+    if (atomic_fetch_add(&in_lower, 1) == 0) lower_since_ms = ms();
+    bridge.pending = in_lower;
+}
+
+static void lower_done(void) {
+    int n = atomic_load(&in_lower);
+    while (n > 0 && !atomic_compare_exchange_weak(&in_lower, &n, n - 1)) {
+    }
+    lower_since_ms = ms();  // progress: the rest gets a fresh LOWER_STUCK_MS
+    bridge.pending = atomic_load(&in_lower);
+}
+
+// Busy only while a report is really in flight: when Bluedroid confirms nothing for
+// LOWER_STUCK_MS, a confirmation got lost, and the queue is free again.
+static bool lower_busy(void) {
+    if (atomic_load(&in_lower) <= 0) return false;
+    if (ms() - lower_since_ms < LOWER_STUCK_MS) return true;
+    atomic_store(&in_lower, 0);
+    bridge.pending = 0;
+    return false;
+}
 
 // Newest-wins slot for hovers: the PC sends every hover without waiting; only the
 // newest one goes to the phone, as soon as Bluetooth has sent the previous report.
@@ -85,7 +116,8 @@ static void hidd_cb(esp_hidd_cb_event_t ev, esp_hidd_cb_param_t *p) {
         if (p->open.conn_status == ESP_HIDD_CONN_STATE_CONNECTED) {
             memcpy(peer, p->open.bd_addr, sizeof peer);
             bridge.phone_connected = true;
-            in_lower = 0;
+            atomic_store(&in_lower, 0);
+            bridge.pending = 0;
             snprintf(bridge.phone, sizeof bridge.phone, "%02x:%02x:%02x:%02x:%02x:%02x", peer[0], peer[1], peer[2],
                      peer[3], peer[4], peer[5]);
             name_from(peer);
@@ -99,13 +131,14 @@ static void hidd_cb(esp_hidd_cb_event_t ev, esp_hidd_cb_param_t *p) {
     case ESP_HIDD_CLOSE_EVT:
         if (p->close.conn_status == ESP_HIDD_CONN_STATE_DISCONNECTED) {
             bridge.phone_connected = false;
-            in_lower = 0;
+            atomic_store(&in_lower, 0);
+            bridge.pending = 0;
             esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
             screen_update();
         }
         break;
     case ESP_HIDD_SEND_REPORT_EVT:
-        if (in_lower > 0) in_lower--;
+        lower_done();
         if (latest_set && out_task) xTaskNotifyGive(out_task);
         break;
     default:
@@ -157,17 +190,16 @@ void hid_init(void) {
 static void out_loop(void *arg) {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
-        if (!latest_set || !bridge.phone_connected || in_lower > 0) continue;
+        if (!latest_set || !bridge.phone_connected || lower_busy()) continue;
         uint8_t id, buf[8], n;
         portENTER_CRITICAL(&latest_mux);
         id = latest_id, n = latest_len;
         memcpy(buf, latest, n);
         latest_set = false;
         portEXIT_CRITICAL(&latest_mux);
-        in_lower++;
+        lower_add();
         if (esp_bt_hid_device_send_report(ESP_HIDD_REPORT_TYPE_INTRDATA, id, n, buf) == ESP_OK) bridge.reports++;
-        else in_lower--;
-        bridge.pending = in_lower;
+        else lower_done();
     }
 }
 
@@ -241,16 +273,15 @@ void hid_discoverable(int seconds) {
 
 int hid_send(uint8_t id, const uint8_t *data, int len, bool skippable) {
     if (!bridge.phone_connected) return 2;
-    if (skippable && in_lower > 0) {
+    if (skippable && lower_busy()) {
         bridge.skipped++;
         return 1;
     }
-    in_lower++;
+    lower_add();
     if (esp_bt_hid_device_send_report(ESP_HIDD_REPORT_TYPE_INTRDATA, id, len, (uint8_t *)data) != ESP_OK) {
-        in_lower--;
+        lower_done();
         return 2;
     }
     bridge.reports++;
-    bridge.pending = in_lower;
     return 0;
 }

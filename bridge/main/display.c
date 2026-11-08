@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
@@ -36,11 +37,19 @@ static void push(int y, int h) {
     xSemaphoreTake(sent, portMAX_DELAY);
 }
 
-void display_backlight(int on) { gpio_set_level(PIN_BL, on); }
+// PWM on the backlight pin, so the screen can dim while nothing happens on battery.
+void display_backlight(int percent) {
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, percent >= 100 ? 255 : percent * 255 / 100);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
 
 void display_init(void) {
-    gpio_config_t bl = {.pin_bit_mask = 1ULL << PIN_BL, .mode = GPIO_MODE_OUTPUT};
-    gpio_config(&bl);
+    ledc_timer_config_t lt = {.speed_mode = LEDC_LOW_SPEED_MODE, .duty_resolution = LEDC_TIMER_8_BIT,
+                              .timer_num = LEDC_TIMER_0, .freq_hz = 5000, .clk_cfg = LEDC_AUTO_CLK};
+    ledc_timer_config(&lt);
+    ledc_channel_config_t lc = {.gpio_num = PIN_BL, .speed_mode = LEDC_LOW_SPEED_MODE, .channel = LEDC_CHANNEL_0,
+                                .timer_sel = LEDC_TIMER_0, .duty = 0};
+    ledc_channel_config(&lc);
     spi_bus_config_t bus = {.mosi_io_num = PIN_MOSI, .sclk_io_num = PIN_SCLK, .miso_io_num = -1,
                             .quadwp_io_num = -1, .quadhd_io_num = -1,
                             .max_transfer_sz = DISPLAY_W * 48 * 2};
@@ -64,7 +73,7 @@ void display_init(void) {
     esp_lcd_panel_disp_on_off(panel, true);
     line = heap_caps_malloc(DISPLAY_W * 48 * 2, MALLOC_CAP_DMA);
     display_clear(0);
-    display_backlight(1);
+    display_backlight(100);
 }
 
 static void band(int y, int h, uint16_t bg) {
@@ -109,4 +118,16 @@ int display_text(int x, int y, const font_t *f, const char *s, uint16_t fg, uint
     if (y + h > DISPLAY_H) h = DISPLAY_H - y;
     if (h > 0) push(y, h);
     return f->h;
+}
+
+void display_glyph(int x, int y, const font_t *f, int index, uint16_t fg, uint16_t bg) {
+    int w = f->w, h = f->h;
+    uint16_t b = (bg >> 8) | (bg << 8);
+    const uint8_t *g = f->bits + index * f->per;
+    for (int k = 0; k < w * h; k++) {
+        int a = (g[k >> 1] >> ((k & 1) ? 0 : 4)) & 15;
+        line[k] = a ? mix(fg, bg, a) : b;
+    }
+    esp_lcd_panel_draw_bitmap(panel, x, y, x + w, y + h, line);
+    xSemaphoreTake(sent, portMAX_DELAY);
 }

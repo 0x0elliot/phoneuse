@@ -154,6 +154,7 @@ static void link_task(void *arg) {
                 ss->last_hover = seq;
                 bridge.last_cmd_ms = now_ms;
                 hid_latest(body[1], body + 2, bn - 2);
+                bridge_activity(ACT_POINTER);
             }
             continue;
         }
@@ -172,6 +173,8 @@ static void link_task(void *arg) {
         if (type == 0x02 && bn >= 2) {  // REPORT
             uint8_t r[2];
             r[0] = hid_send(body[1], body + 2, bn - 2, body[0] & 1);
+            // keyboard and media keys, or the mouse: a pressed button (data[0]) is a tap
+            bridge_activity(body[1] == 1 || body[1] == 4 ? ACT_KEYS : bn > 2 && body[2] ? ACT_TAP : ACT_POINTER);
             r[1] = bridge.pending;
             m = reply(out, 0x82, sid, seq, r, 2, true);
         } else if (type == 0x03) {
@@ -203,6 +206,7 @@ static void link_task(void *arg) {
         } else if (type == 0x09) {
             uint16_t r[2];
             r[0] = hid_keys(body, bn / 2);
+            bridge_activity(ACT_KEYS);
             r[1] = hid_keys_left();
             m = reply(out, 0x89, sid, seq, r, 4, true);
         } else if (type == 0x0A) {
@@ -218,6 +222,7 @@ static void link_task(void *arg) {
             m = reply(out, 0x88, sid, seq, &e, 4, true);
         } else if (type == 0x0C && bn >= 6) {  // TAP x(u16) y(u16) hold_ms(u16), little-endian
             int8_t e = (int8_t)hid_tap(body[0] | body[1] << 8, body[2] | body[3] << 8, body[4] | body[5] << 8);
+            bridge_activity(ACT_TAP);
             m = reply(out, 0x8C, sid, seq, &e, 1, true);
         } else if (type == 0x05) {
             setup_ble_open(true);

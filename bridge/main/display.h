@@ -18,4 +18,6 @@ void display_clear(uint16_t color);
 // One line of text in a band [y, y + font height), left-aligned at x (or centred
 // when x < 0), the rest of the band filled with bg. Returns the band's height.
 int display_text(int x, int y, const font_t *f, const char *s, uint16_t fg, uint16_t bg);
-void display_backlight(int on);
+// A single glyph (an icon) drawn into just its own w x h rectangle at (x, y).
+void display_glyph(int x, int y, const font_t *f, int index, uint16_t fg, uint16_t bg);
+void display_backlight(int percent);  // 0..100
