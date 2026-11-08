@@ -77,8 +77,13 @@ void app_main(void) {
     bridge.state = ST_SETUP;
     screen_start();
     bt_start();
+#ifdef BRIDGE_HID_LE
+    setup_ble_init();  // registers the shared GATT/GAP callbacks first
+    hid_init();
+#else
     hid_init();
     setup_ble_init();
+#endif
     wifi_init();
     link_start();
     if (!settings.configured) setup_ble_open(true);

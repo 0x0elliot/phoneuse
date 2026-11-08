@@ -440,6 +440,13 @@ class Link:
     def connect_phone(self):
         self._call(0x04)
 
+    def keyboard(self, on):
+        """LE bridges: put the keyboard in or out of the HID report map. The bridge tells
+        the phone its services changed; without a keyboard, iOS keeps its own on-screen
+        keyboard up. Returns 0 when the bridge sent the change."""
+        r = self._call(0x0B, bytes([1 if on else 0]))
+        return int.from_bytes(r[:1], "little", signed=True) if r else -1
+
     def open_setup(self):
         self._call(0x05)
 

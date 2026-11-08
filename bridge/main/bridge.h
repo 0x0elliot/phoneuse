@@ -59,6 +59,19 @@ void hid_connect_last(void);
 int hid_keys(const uint8_t *pairs, int n);
 int hid_keys_left(void);
 void hid_discoverable(int seconds);
+#ifdef BRIDGE_HID_LE
+// hid_le.c: the keyboard in or out of the HID report map (Service Changed tells the
+// phone); advertising for HID and setup; the GATT and GAP events setup_ble.c forwards.
+#include "esp_gap_ble_api.h"
+#include "esp_gatts_api.h"
+int hid_set_keyboard(bool on);
+bool hid_keyboard_on(void);
+void ble_adv_refresh(void);
+bool hid_le_gatts_event(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_cb_param_t *p);
+void hid_le_gap_event(esp_gap_ble_cb_event_t ev, esp_ble_gap_cb_param_t *p);
+void setup_ble_config_adv(void);
+void setup_ble_start_adv(void);
+#endif
 
 // link.c
 void link_start(void);

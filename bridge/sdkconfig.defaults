@@ -39,3 +39,6 @@ CONFIG_BT_SDP_PAD_LEN=1024
 # Wi-Fi and Bluetooth on different cores (ESP-IDF's coexistence advice).
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
 CONFIG_WIFI_RMT_TASK_PINNED_TO_CORE_1=y
+# LE keyboard and mouse: the bridge sends Service Changed itself when the report map changes.
+CONFIG_BT_GATTS_SEND_SERVICE_CHANGE_MANUAL=y
+CONFIG_BT_GATTS_SEND_SERVICE_CHANGE_AUTO=n

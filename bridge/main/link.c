@@ -18,6 +18,7 @@
 //   0x07 JOIN nonce(12) sealed -> 0x87, then it changes network; sealed =
 //        AES-GCM(HMAC(control key, "phoneuse wifi change"), "ssid\0password").
 //        Back on the old network if the new one fails (STATUS "err" says why).
+//   0x0B KEYBOARD on        -> 0x8B err: LE only, the keyboard in or out of the HID report map
 //   0x09 KEYS (mods, usage)*  -> 0x89 queued(u16) left(u16): typed on the bridge, in order
 //   0x0A KEYSLEFT             -> 0x8A left(u16): keys not typed yet
 //   0x08 TUNE what value     -> 0x88 esp_err (experiments): what 1 = coexistence
@@ -92,11 +93,16 @@ static int status_json(char *j, int cap) {
     return snprintf(j, cap,
                     "{\"id\":\"%s\",\"fw\":\"%s\",\"phone\":\"%s\",\"connected\":%s,\"rssi\":%d,\"reports\":%lu,"
                     "\"skipped\":%lu,\"waiting\":%d,\"battery_mv\":%d,\"uptime\":%llu,\"ssid\":\"%s\","
-                    "\"online\":%s,\"err\":\"%s\"}",
+                    "\"online\":%s,\"err\":\"%s\",\"le\":%s,\"kbd\":%s}",
                     bridge.id, BRIDGE_FW, bridge.phone, bridge.phone_connected ? "true" : "false", bridge.wifi_rssi,
                     (unsigned long)bridge.reports, (unsigned long)bridge.skipped, bridge.pending, bridge.battery_mv,
                     (unsigned long long)(esp_timer_get_time() / 1000000), settings.ssid,
-                    bridge.state == ST_ONLINE ? "true" : "false", bridge.err);
+                    bridge.state == ST_ONLINE ? "true" : "false", bridge.err,
+#ifdef BRIDGE_HID_LE
+                    "true", hid_keyboard_on() ? "true" : "false");
+#else
+                    "false", "true");
+#endif
 }
 
 static void link_task(void *arg) {
@@ -214,6 +220,11 @@ static void link_task(void *arg) {
 #pragma GCC diagnostic pop
             if (body[0] == 2) e = esp_wifi_set_max_tx_power((int8_t)body[1]);
             m = reply(out, 0x88, sid, seq, &e, 4, true);
+#ifdef BRIDGE_HID_LE
+        } else if (type == 0x0B && bn >= 1) {  // KEYBOARD on(1)/off(0): in or out of the report map
+            int8_t e = (int8_t)hid_set_keyboard(body[0] != 0);
+            m = reply(out, 0x8B, sid, seq, &e, 1, true);
+#endif
         } else if (type == 0x05) {
             setup_ble_open(true);
             m = reply(out, 0x85, sid, seq, "", 0, true);

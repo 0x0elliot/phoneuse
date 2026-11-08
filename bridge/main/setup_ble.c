@@ -87,16 +87,37 @@ static void new_keys(void) {
     if (handle[A_KEX_V]) esp_ble_gatts_set_attr_value(handle[A_KEX_V], 32, our_pub);
 }
 
+// Advertising is shared with the LE keyboard and mouse (hid_le.c), which decides what
+// to advertise; these set up and start the setup service's advertising.
+void setup_ble_config_adv(void) {
+    char name[24];
+    snprintf(name, sizeof name, "PhoneUse Bridge %.4s", bridge.id + 8);
+    esp_ble_adv_data_t ad = {.set_scan_rsp = false, .include_name = true, .flag = ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT};
+    esp_ble_gap_set_device_name(name);
+    esp_ble_gap_config_adv_data(&ad);
+    esp_ble_adv_data_t rsp = {.set_scan_rsp = true, .service_uuid_len = 16, .p_service_uuid = (uint8_t *)U_SVC};
+    esp_ble_gap_config_adv_data(&rsp);
+}
+
+void setup_ble_start_adv(void) { esp_ble_gap_start_advertising(&adv); }
+
 void setup_ble_open(bool open) {
     bridge.setup_open = open;
     if (open) {
         new_keys();
         if (bridge.state != ST_JOINING && bridge.state != ST_ONLINE) bridge.state = ST_SETUP;
+#ifndef BRIDGE_HID_LE
         esp_ble_gap_start_advertising(&adv);
+#endif
     } else {
+#ifndef BRIDGE_HID_LE
         esp_ble_gap_stop_advertising();
+#endif
         if (conn != 0xFFFF) esp_ble_gatts_close(gif, conn);
     }
+#ifdef BRIDGE_HID_LE
+    ble_adv_refresh();
+#endif
     set_info();
     screen_update();
 }
@@ -144,8 +165,16 @@ static void on_write(esp_ble_gatts_cb_param_t *p) {
 }
 
 static void gatts_cb(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_cb_param_t *p) {
+#ifdef BRIDGE_HID_LE
+    if (hid_le_gatts_event(ev, g, p)) return;  // one callback serves both apps
+    if (ev != ESP_GATTS_REG_EVT && g != gif) return;
+    // The phone's connection also reaches this app: setup only follows the PC's, while setup is open.
+    if ((ev == ESP_GATTS_CONNECT_EVT || ev == ESP_GATTS_DISCONNECT_EVT) && !bridge.setup_open && conn == 0xFFFF)
+        return;
+#endif
     switch (ev) {
     case ESP_GATTS_REG_EVT:
+        if (p->reg.app_id != 0x42) break;
         gif = g;
         esp_ble_gatts_create_attr_tab(db, g, A_N, 0);
         break;
@@ -165,7 +194,11 @@ static void gatts_cb(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_cb_
         conn = 0xFFFF;
         if (bridge.state == ST_CODE) bridge.state = ST_SETUP;
         screen_update();
+#ifdef BRIDGE_HID_LE
+        ble_adv_refresh();
+#else
         if (bridge.setup_open) esp_ble_gap_start_advertising(&adv);
+#endif
         break;
     case ESP_GATTS_WRITE_EVT:
         if (!p->write.is_prep) on_write(p);
@@ -175,19 +208,19 @@ static void gatts_cb(esp_gatts_cb_event_t ev, esp_gatt_if_t g, esp_ble_gatts_cb_
     }
 }
 
-static void gap_cb(esp_gap_ble_cb_event_t ev, esp_ble_gap_cb_param_t *p) {}
+static void gap_cb(esp_gap_ble_cb_event_t ev, esp_ble_gap_cb_param_t *p) {
+#ifdef BRIDGE_HID_LE
+    hid_le_gap_event(ev, p);
+#endif
+}
 
 void setup_ble_init(void) {
     esp_ble_gap_register_callback(gap_cb);
     esp_ble_gatts_register_callback(gatts_cb);
     esp_ble_gatts_app_register(0x42);
     esp_ble_gatt_set_local_mtu(247);
-    char name[24];
-    snprintf(name, sizeof name, "PhoneUse Bridge %.4s", bridge.id + 8);
-    esp_ble_adv_data_t ad = {.set_scan_rsp = false, .include_name = true, .flag = ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT};
-    esp_ble_gap_set_device_name(name);
-    esp_ble_gap_config_adv_data(&ad);
-    esp_ble_adv_data_t rsp = {.set_scan_rsp = true, .service_uuid_len = 16, .p_service_uuid = (uint8_t *)U_SVC};
-    esp_ble_gap_config_adv_data(&rsp);
+#ifndef BRIDGE_HID_LE
+    setup_ble_config_adv();
+#endif
     new_keys();
 }
