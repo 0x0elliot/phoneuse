@@ -1,0 +1,90 @@
+# Phone Use as a Flatpak. Build from the repository root:
+#   flatpak-builder --user --install --force-clean build-dir packaging/flatpak/co.lxe.PhoneUse.yml
+# docs/PACKAGING.md explains what the sandbox holds and why each permission is here.
+app-id: co.lxe.PhoneUse
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: phoneuse
+finish-args:
+  - --share=network            # AirPlay from the iPhone, the bridge over Wi-Fi, the companion API
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio        # the phone's mirrored sound; the spoken Siri request for the pointer
+  - --device=dri
+  - --system-talk-name=org.freedesktop.Avahi        # advertise the AirPlay receiver and the companion API
+  - --system-talk-name=org.bluez                    # set up a bridge over BLE
+  - --system-talk-name=org.fedoraproject.FirewallD1 # "Allow on this network" (asks for the password)
+  - --talk-name=org.freedesktop.Flatpak             # the same for ufw (pkexec on the host)
+  - --filesystem=~/.claude:create                   # connect Claude Code: the skill and the MCP server
+  - --filesystem=~/.claude.json
+  - --filesystem=~/.local/bin:create                # the `phoneuse` command for agents
+  - --env=PYTHONPATH=/app/lib/phoneuse
+modules:
+  - name: libplist
+    buildsystem: autotools
+    config-opts: [--without-cython, --disable-static]
+    sources:
+      - type: git
+        url: https://github.com/libimobiledevice/libplist.git
+        tag: 2.7.0
+        commit: e1531342fe084781124d2243ccad8d8eca5c9db5
+    cleanup: [/bin, /include, /lib/pkgconfig, '*.la']
+
+  # Only Avahi's dns_sd compatibility library, which UxPlay uses to advertise itself;
+  # the runtime's libavahi-client talks to the host's avahi-daemon over the system bus.
+  - name: avahi-compat
+    buildsystem: autotools
+    config-opts:
+      - --with-distro=none
+      - --disable-static
+      - --disable-qt3
+      - --disable-qt4
+      - --disable-qt5
+      - --disable-gtk
+      - --disable-gtk3
+      - --disable-python
+      - --disable-pygobject
+      - --disable-mono
+      - --disable-monodoc
+      - --disable-manpages
+      - --disable-xmltoman
+      - --disable-gdbm
+      - --disable-libdaemon
+      - --disable-libevent
+      - --disable-core-docs
+      - --disable-doxygen-doc
+      - --disable-autoipd
+      - --disable-tests
+      - --enable-compat-libdns_sd
+    sources:
+      - type: git
+        url: https://github.com/avahi/avahi.git
+        tag: v0.8
+        commit: f060abee2807c943821d88839c013ce15db17b58
+    cleanup: [/bin, /sbin, /etc, /share, /include/avahi-*, /lib/pkgconfig/avahi-*, '*.la', /lib/avahi]
+
+  - name: uxplay
+    buildsystem: cmake-ninja
+    config-opts: [-DCMAKE_BUILD_TYPE=Release, -DNO_MARCH_NATIVE=ON]
+    sources:
+      - type: git
+        url: https://github.com/FDH2/UxPlay.git
+        tag: v1.73.7
+        commit: df67c212a433cf6dda3676dd40c097900d24e645
+
+  - python-deps.json
+
+  - name: phoneuse
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/phoneuse /app/bin
+      - cp -r phoneuse /app/lib/phoneuse/
+      - rm -rf /app/lib/phoneuse/phoneuse/__pycache__
+      - install -m755 packaging/flatpak/phoneuse.sh /app/bin/phoneuse
+      - install -m755 packaging/flatpak/phoneuse-mcp.sh /app/bin/phoneuse-mcp
+    sources:
+      - type: dir
+        path: ../..
+        skip: [build-dir, .flatpak-builder, .venv-vision, .venv-mcp, bridge/build, ios, touchlab]
