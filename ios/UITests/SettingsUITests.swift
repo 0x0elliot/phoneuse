@@ -39,19 +39,22 @@ final class SettingsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["mock-pc"].waitForExistence(timeout: 10))
         screenshot("paired")
 
+        // The mock starts with a session request, which the app shows as a sheet while it's open: allow it.
+        let allow = app.buttons["sheetAllow"]
+        XCTAssertTrue(allow.waitForExistence(timeout: 6))
+        allow.tap()
+        waitFor("exists == false", allow)
+
         // Agent: take over, then resume.
         app.buttons["takeover"].tap()
         XCTAssertTrue(app.buttons["resume"].waitForExistence(timeout: 6))
         app.buttons["resume"].tap()
         XCTAssertTrue(app.buttons["takeover"].waitForExistence(timeout: 6))
 
-        // Ask before an agent session, and allow the pending request.
+        // Agent control: ask every time.
         app.buttons["sessionMode"].tap()
         app.buttons["Ask every time"].tap()
-        XCTAssertTrue(app.staticTexts["sessionRequest"].exists || app.otherElements["sessionRequest"].exists
-                      || app.buttons["allowSession"].exists)
-        app.buttons["allowSession"].tap()
-        waitFor("exists == false", app.buttons["allowSession"])
+        sleep(2)
 
         // A pending unlock request: approve it.
         app.buttons["approveUnlock"].tap()
@@ -77,10 +80,18 @@ final class SettingsUITests: XCTestCase {
         // Keyboard and pointer.
         app.buttons["keyboard"].tap()
         app.swipeUp()
-        app.buttons["On"].tap()
-        sleep(2)
-        app.buttons["Off"].tap()
-        sleep(2)
+        let pointer = app.buttons["pointer"]
+        if pointer.label.contains("Check") {
+            pointer.tap()  // GET /v1/cursor
+            sleep(3)
+        }
+        screenshot("pointer-checked")
+        pointer.tap()
+        sleep(1)
+        screenshot("pointer-sheet")
+        app.buttons["pointerConfirm"].tap()  // POST /v1/cursor
+        XCTAssertTrue(app.buttons["pointerDone"].waitForExistence(timeout: 15))
+        app.buttons["pointerDone"].tap()
         XCTAssertFalse(app.staticTexts["error"].exists)
 
         // Bridge: input through it, then move it to another network.

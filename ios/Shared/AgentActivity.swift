@@ -24,6 +24,8 @@ struct AgentActivityAttributes: ActivityAttributes {
         /// While asking with a countdown: unix seconds when the PC starts the agent by itself. Nil means wait for
         /// an answer.
         var deadline: Double?
+        /// The second line of a warning (phase "warning" while idle); its first line is `action`.
+        var detail: String?
 
         init(state: String, phase: String?, requestId: String?, action: String, steps: Int, startedAt: Double,
              updatedAt: Double? = nil) {
@@ -45,6 +47,7 @@ struct AgentActivityAttributes: ActivityAttributes {
             updatedAt = try? c.decodeIfPresent(Double.self, forKey: .updatedAt)
             frame = try? c.decodeIfPresent(Int.self, forKey: .frame)
             deadline = try? c.decodeIfPresent(Double.self, forKey: .deadline)
+            detail = try? c.decodeIfPresent(String.self, forKey: .detail)
         }
 
         /// "1 step", "12 steps", or nil before the first step.

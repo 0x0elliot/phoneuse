@@ -21,8 +21,8 @@ final class AppModel: ObservableObject {
     @Published var foreground = false
     /// The session request to show as a sheet: pending, and the app in front.
     var foregroundRequest: PCState.Pending? { foreground ? state?.session?.pending : nil }
-    /// The last pointer setting the app sent; the state doesn't report it.
-    @Published var pointerOn: Bool? = PairingStore.defaults.object(forKey: "pointer.on") as? Bool
+    /// The pointer as last checked or set: "on", "off", or nil when unknown. The state doesn't report it.
+    @Published var pointer: String? = PairingStore.defaults.string(forKey: "pointer.state")
 
     private var polling: Task<Void, Never>?
 
@@ -71,10 +71,12 @@ final class AppModel: ObservableObject {
             let s = try await client.get("/v1/state", as: PCState.self)
             if s != state {
                 state = s
-                await reconcileActivities(s)
+                // In their own tasks: a slow ActivityKit or notification call must not hold up the action that
+                // asked for this refresh.
+                Task { await reconcileActivities(s) }
             }
             reachable = true
-            await RequestNotifications.prune(session: s.session?.pending?.id, unlock: s.unlock.pending?.id)
+            Task { await RequestNotifications.prune(session: s.session?.pending?.id, unlock: s.unlock.pending?.id) }
             if let p = PairingStore.load(), p != pairing { pairing = p }
         } catch CompanionError.server(let status, let message) where status == 401 {
             reachable = false
@@ -137,11 +139,26 @@ final class AppModel: ObservableObject {
 
     func toggleKeyboard() async { await run("keyboard", "POST", "/v1/keyboard", [:]) }
 
-    func setPointer(_ on: Bool) async {
-        if await run("pointer", "POST", "/v1/cursor", ["on": on], timeout: 25) != nil {
-            pointerOn = on
-            PairingStore.defaults.set(on, forKey: "pointer.on")
+    /// Asks the PC whether the pointer is on (it moves the pointer between two spots, about 3 s).
+    func checkPointer() async {
+        guard let data = await run("pointer", "GET", "/v1/cursor", nil, timeout: 15),
+              let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.write("pointer check failed: \(error ?? "no answer")")
+            return
         }
+        let value = answer["pointer"] as? String
+        pointer = value == "on" || value == "off" ? value : nil
+        PairingStore.defaults.set(pointer, forKey: "pointer.state")
+    }
+
+    /// Turns the pointer on or off: the PC asks Siri out loud, about 15 s. Returns an error to show, or nil.
+    func setPointer(_ on: Bool) async -> String? {
+        error = nil
+        let ok = await run("pointer", "POST", "/v1/cursor", ["on": on], timeout: 40) != nil
+        let failure = ok ? nil : (error ?? "Siri didn't answer.")
+        if !ok { error = nil }
+        await checkPointer()
+        return failure
     }
 
     func setBridge(_ on: Bool) async { await run("bridge", "POST", "/v1/bridge/use", ["on": on]) }
@@ -243,7 +260,7 @@ final class AppModel: ObservableObject {
     }
 
     #if DEBUG
-    /// Launched with -PUDemo <idle|asking|delay|driving|paused> (simulator checks): one activity in that state with
+    /// Launched with -PUDemo <idle|warning|asking|delay|driving|paused> (simulator checks): one activity in that state with
     /// no PC, replacing any other.
     func startDemoActivityIfAsked() {
         let args = ProcessInfo.processInfo.arguments
@@ -254,6 +271,9 @@ final class AppModel: ObservableObject {
                                                      updatedAt: now)
         switch args[i + 1] {
         case "idle": c.state = "idle"; c.phase = nil; c.action = ""; c.steps = 0
+        case "warning":
+            c.state = "idle"; c.phase = "warning"; c.action = "Bridge is too far from your iPhone"; c.steps = 0
+            c.detail = "Move it closer."
         case "asking": c.state = "asking"; c.phase = "asking"; c.requestId = "demo"; c.action = "Pressing escape"; c.steps = 0
         case "delay":
             c.state = "asking"; c.phase = "asking"; c.requestId = "demo"; c.action = "Pressing escape"; c.steps = 0

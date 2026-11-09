@@ -45,7 +45,7 @@ struct AgentLiveActivity: Widget {
                             .contentTransition(.identity)
                             .transaction { $0.animation = nil }
                     }
-                case .idle, .paused:
+                case .idle, .warning, .paused:
                     EmptyView()
                 }
             } minimal: {
@@ -56,35 +56,31 @@ struct AgentLiveActivity: Widget {
 }
 
 enum Look {
-    case idle, asking, driving, paused
+    case idle, warning, asking, driving, paused
 
     init(_ s: AgentActivityAttributes.ContentState) {
         switch s.state {
-        case "idle": self = .idle
+        case "idle": self = s.phase == "warning" ? .warning : .idle
         case "asking": self = .asking
         case "paused": self = .paused
         default: self = .driving
         }
     }
 
-    func symbol(_ s: AgentActivityAttributes.ContentState) -> String {
+    /// The SF Symbol for the states that use one; driving draws the robot instead (Shared/Robot.swift).
+    var symbol: String {
         switch self {
         case .idle: return "person.fill"
+        case .warning: return "person.crop.circle.badge.exclamationmark.fill"
         case .asking: return "hand.raised.fill"
-        case .paused: return "pause.circle.fill"
-        case .driving:
-            switch s.phase {
-            case "acting": return "hand.tap.fill"
-            case "reading": return "text.viewfinder"
-            default: return "sparkles"
-            }
+        case .paused, .driving: return "pause.circle.fill"
         }
     }
 
     func color(_ s: AgentActivityAttributes.ContentState) -> Color {
         switch self {
         case .idle: return .gray
-        case .asking, .paused: return .orange
+        case .warning, .asking, .paused: return .orange
         case .driving: return s.phase == "thinking" ? .purple : .blue
         }
     }
@@ -93,6 +89,7 @@ enum Look {
     func title(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
         case .idle: return "You're in control"
+        case .warning: return s.action
         case .asking: return "Agent requests control"
         case .paused: return "You took over"
         case .driving:
@@ -109,6 +106,7 @@ enum Look {
     func detail(_ s: AgentActivityAttributes.ContentState) -> String {
         switch self {
         case .idle: return "Phone Use is mirroring your screen"
+        case .warning: return s.detail ?? ""
         case .asking: return s.action
         case .paused: return "The agent is paused"
         case .driving: return [s.action, s.stepsText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
@@ -116,8 +114,9 @@ enum Look {
     }
 }
 
-/// The icon at text weight: SF Symbols, semibold, hierarchical, in the state's tint. While driving, a ring with a gap
-/// turns around it: a Live Activity can't loop an animation, and timer-driven views don't animate in the compact
+/// The state's icon: an SF Symbol at text weight (semibold, hierarchical, in the state's tint), about 17 pt in the
+/// compact island and 28 pt in the cards; or, while driving, the robot inside a ring with a gap that
+/// turns around it. A Live Activity can't loop an animation, and timer-driven views don't animate in the compact
 /// Dynamic Island, so the PC sends a refresh every second with `frame` counting up. Each frame turns the ring 45
 /// degrees, animated linearly over the second, so the turns join into steady motion. Nothing else animates on an
 /// update, so the icon and text stay still while the ring turns.
@@ -144,8 +143,8 @@ struct StateIcon: View {
                 RobotView(pose: .pose(phase: state.phase, frame: frame), size: size * 0.58, color: look.color(state))
                     .animation(RobotPose.animation, value: frame)
             } else {
-            Image(systemName: look.symbol(state))
-                .font(.system(size: pointSize(look), weight: .semibold))
+            Image(systemName: look.symbol)
+                .font(.system(size: size <= 24 ? 17 : 28, weight: .semibold))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(look.color(state))
                 // Still on every update: only the ring moves with the 1 s frames. A new phase swaps the icon at once.
@@ -157,11 +156,6 @@ struct StateIcon: View {
         .frame(width: size, height: size)
     }
 
-    /// About 17 pt in the compact island, 28 pt in the cards; inside the ring while driving.
-    private func pointSize(_ look: Look) -> CGFloat {
-        if look == .driving { return size * 0.45 }
-        return size <= 24 ? 17 : 28
-    }
 }
 
 /// Every state's expanded and lock-screen layout.
@@ -185,7 +179,7 @@ struct StateCard: View {
                 Spacer(minLength: 0)
             }
             switch look {
-            case .idle: EmptyView()
+            case .idle, .warning: EmptyView()
             case .asking: AnswerButtons(requestId: state.requestId ?? "", countdown: state.deadlineDate != nil)
             case .driving: CapsuleButton(title: "Take over", primary: true, intent: TakeOverIntent())
             case .paused: CapsuleButton(title: "Resume", primary: true, intent: ResumeIntent())
