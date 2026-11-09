@@ -21,7 +21,8 @@ DEFAULTS = {
     "decoder": "auto",
     "mirror_width": 498,
     "web_port": 8777,
-    "bluetooth": "pc",
+    # the app (a Flatpak) can only use the bridge; a checkout uses this PC's Bluetooth too
+    "bluetooth": "bridge" if os.path.exists("/.flatpak-info") else "pc",
 }
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")

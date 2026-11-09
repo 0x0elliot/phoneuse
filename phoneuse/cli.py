@@ -58,6 +58,7 @@ of ~1,300 for a screenshot):
 iPhone settings this relies on: AssistiveTouch on, Dwell Control off.
 """
 import json
+import math
 import os
 import re
 import shutil
@@ -502,12 +503,15 @@ def scroll_by(h, dy, x=0.5):
     several drags."""
     if abs(dy) > 1:
         dy /= SCREEN_PT[1]
-    left = abs(dy)
-    while left > 0.005:
-        d = min(left, 0.7)
+    # Equal drags of at most 0.7: splitting 0.72 into 0.7 + 0.02 left a 17 pt drag
+    # at the end, short enough for iOS to read as a tap on whatever was there.
+    n = max(1, math.ceil(abs(dy) / 0.7 - 1e-9))
+    d = abs(dy) / n
+    if d <= 0.005:
+        return
+    for _ in range(n):
         y0, y1 = (0.85, 0.85 - d) if dy > 0 else (0.15, 0.15 + d)
         touch.scroll_drag(h, x, y0, x, y1)
-        left -= d
 
 
 def steplog(*a):
@@ -801,6 +805,16 @@ def screenshot(path):
 VISION_SOCK = VISION_SOCKET
 
 
+def vision_python():
+    """The Python that runs the OCR service: the checkout's .venv-vision (scripts/setup-vision.sh),
+    or this one when RapidOCR is installed alongside phoneuse (the app). None: not installed."""
+    import importlib.util
+    py = os.path.join(ROOT, ".venv-vision", "bin", "python")
+    if os.path.exists(py):
+        return py
+    return sys.executable if importlib.util.find_spec("rapidocr") else None
+
+
 def vision(req, timeout=90):
     import json
     import socket
@@ -818,8 +832,8 @@ def vision(req, timeout=90):
         return ask()
     except (FileNotFoundError, ConnectionRefusedError):
         pass
-    py = os.path.join(ROOT, ".venv-vision", "bin", "python")
-    if not os.path.exists(py):
+    py = vision_python()
+    if not py:
         die(f"Vision models aren't installed. Run: {ROOT}/scripts/setup-vision.sh")
     logf = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-vision.log"), "a")
     subprocess.Popen([py, "-m", "phoneuse.vision"], cwd=ROOT, stdout=logf, stderr=logf, start_new_session=True)
@@ -1001,7 +1015,7 @@ def up(headless=False):
     def start_vision():
         # The screen-reading model (OCR) loads as soon as phoneuse
         # starts, not on an agent's first look. Skipped if it isn't installed.
-        if os.path.exists(os.path.join(ROOT, ".venv-vision", "bin", "python")):
+        if vision_python():
             try:
                 import contextlib, io
                 with contextlib.redirect_stderr(io.StringIO()):

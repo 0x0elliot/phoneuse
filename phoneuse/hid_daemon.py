@@ -30,10 +30,16 @@ import threading
 import time
 import unicodedata
 
-import dbus
-import dbus.mainloop.glib
-import dbus.service
 from gi.repository import GLib
+
+try:
+    import dbus
+    import dbus.mainloop.glib
+    import dbus.service
+except ImportError:  # the app (bridge-only) ships without dbus-python: BlueZ is never used there
+    import types
+    dbus = types.SimpleNamespace(service=types.SimpleNamespace(
+        Object=object, method=lambda *a, **k: (lambda f: f)), DBusException=Exception)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from .config import BRIDGE_ONLY, STATE_DIR
