@@ -545,7 +545,7 @@ class Companion:
                 continue
             key = (w or {}).get("title")
             seen, count = key, (count + 1 if seen == key else 1)
-            if count < WARN_HOLD:
+            if count < WARN_HOLD and self.health is not None:  # the first check shows at once
                 if self.health:  # keep the signal bars fresh; only the warning waits
                     self.health = dict(h, warning=shown)
                 continue
