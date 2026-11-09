@@ -148,6 +148,13 @@ web_port = 8777               # the browser mirror's port
 - [docs/RECIPES.md](docs/RECIPES.md) lists which gestures work on iOS, and why.
 - [docs/BRIDGE.md](docs/BRIDGE.md) covers the ESP32 bridge's setup and protocol.
 
+## macOS
+
+A macOS port lives in [`macos/`](macos/PORT.md). It ditches AirPlay and the
+Bluetooth HID daemon for the iPhone Mirroring window, so there is no root
+service, no bridge and no pairing: an agent reads the screen with Vision and
+clicks with `CGEvent`. Build it with `macos/install.sh`.
+
 ## License
 
 MIT

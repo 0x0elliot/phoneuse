@@ -5,6 +5,7 @@ __pycache__/
 allowed
 telemetry-sessions/
 .venv-mcp/
+macos/.build/
 bridge/build/
 bridge/sdkconfig
 bridge/sdkconfig.old
