@@ -152,10 +152,75 @@ web_port = 8777               # the browser mirror's port
 
 **macOS support added.** Duh. Boring. But we have this figured.
 
-A macOS build lives in [`macos/`](macos/PORT.md). It ditches AirPlay and the
-Bluetooth HID daemon for the iPhone Mirroring window, so there is no root
-service, no bridge and no pairing: an agent reads the screen with Vision and
-clicks with `CGEvent`. Build it with `macos/install.sh`.
+macOS already ships both channels that phoneuse builds by hand on Linux.
+**iPhone Mirroring** shows the iPhone in a window and forwards clicks and keys
+to it, so there is no AirPlay receiver, no Bluetooth HID daemon, no systemd
+service, no ESP32 bridge and no pairing. What [`macos/`](macos/PORT.md) adds is
+the part Apple does not ship: an agent interface. Vision turns the window into
+`x y  text`, words address the tap target, and synthetic clicks and keystrokes
+drive the phone.
+
+### What you need
+
+|  | Tested with |
+|---|---|
+| macOS | 26.3, Apple silicon (15+ and T2 Macs have iPhone Mirroring) |
+| iPhone | iPhone 17 Pro, iOS 26, paired to the same Apple ID |
+| Toolchain | Xcode or Command Line Tools (`swift build`) |
+| Permissions | Screen Recording and Accessibility for your terminal |
+
+### Setup
+
+```bash
+cd macos
+./install.sh        # builds release, links ~/.local/bin/phoneuse-mac
+```
+
+Then open **iPhone Mirroring**, pair the phone with the same Apple ID, and leave
+the iPhone locked and idle — mirroring connects to a locked phone, and the
+phone's own screen goes dark while it is connected. `phoneuse-mac status` should
+end with `ready: yes`.
+
+### Using it
+
+Same command surface and the same 0..1 coordinate convention as the Linux CLI.
+Any action can end with `--text` to read the screen afterwards.
+
+```bash
+phoneuse-mac status
+phoneuse-mac text                       # "x y  text" lines, OCR'd locally
+phoneuse-mac tap-on "Wi-Fi"             # tap the matching line
+phoneuse-mac tap 0.5 0.35 --text
+phoneuse-mac type "hello"               # replaces the field; --append keeps it
+phoneuse-mac key enter
+phoneuse-mac scroll down
+phoneuse-mac swipe 0.5 0.8 0.5 0.2
+phoneuse-mac home | switcher | spotlight
+phoneuse-mac open "Settings"
+phoneuse-mac screenshot shot.png
+phoneuse-mac done
+```
+
+### What it does not have yet
+
+- **No MCP server.** CLI only; the Linux repo's `look`/`tap`/`wait` tools have no
+  macOS equivalent yet. This is the next piece.
+- **No settle/frames logic.** `--text` sleeps 0.8 s and reads once, instead of
+  waiting for the screen to stop changing and returning three frames.
+- **No unlock.** Not needed: mirroring keeps the phone locked and hands you the
+  session anyway. Face ID prompts inside an app still land on the phone.
+- **No Control Center or notification gestures.** `back` is an edge swipe,
+  `home`/`switcher`/`spotlight` click the app's View menu.
+
+### Limits worth knowing
+
+- The phone's own screen is off while mirroring — good for privacy, bad for
+  filming: the only picture is the Mac window.
+- Secure surfaces (banking apps and anything that blocks capture) can go blank.
+- One Apple ID, one phone, one window.
+
+[`macos/PORT.md`](macos/PORT.md) has the full mapping, the three things that only
+a live test finds, and the reasoning behind the split.
 
 ## License
 
