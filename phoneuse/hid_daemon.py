@@ -36,6 +36,7 @@ import dbus.service
 from gi.repository import GLib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+from .config import BRIDGE_ONLY, STATE_DIR
 from .config import HID_SOCKET as SOCK_PATH
 DEVICE_NAME = os.environ.get("PHONEUSE_NAME", "PhoneUse")  # what the phone sees in Bluetooth settings
 PSM_CTRL, PSM_INTR = 0x11, 0x13
@@ -380,6 +381,8 @@ class InFlight:
     def __init__(self):
         self.n = 0
         self.lock = threading.Lock()
+        if BRIDGE_ONLY:  # nothing goes out on this PC's adapter
+            return
         try:
             import ctypes
             self.sock = socket.socket(self.AF_BLUETOOTH, socket.SOCK_RAW, self.BTPROTO_HCI)
@@ -443,7 +446,10 @@ last_use = [0.0]  # when a command last sent real input (not a hover)
 def connect_out():
     """Page each paired iPhone once and open the HID channels."""
     if bridge_link[0]:
-        return "input goes through the bridge"
+        bridge_link[0].connect_phone()  # the bridge pages the phone it is paired with
+        return "input goes through the bridge; asked it to page the phone"
+    if BRIDGE_ONLY:
+        raise RuntimeError("no bridge is set up: add one in Phone Use")
     with connect_lock:
         released.clear()
         if hid.connected:
@@ -555,6 +561,8 @@ def set_mirror(name):
 
 def disconnect_all():
     """Close this PC's Bluetooth connections to the paired phones (BlueZ Device1)."""
+    if BRIDGE_ONLY:
+        return
     om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
     for path, ifaces in om.GetManagedObjects().items():
         d = ifaces.get("org.bluez.Device1")
@@ -567,6 +575,8 @@ def disconnect_all():
 
 
 def paired_devices():
+    if BRIDGE_ONLY:
+        return []
     om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
     out = []
     for path, ifaces in om.GetManagedObjects().items():
@@ -702,7 +712,8 @@ def release(idle):
         return "released"
 
 
-STATE = "/var/lib/phoneuse/daemon.json"  # survives restarts: bridge and mirroring phone
+# survives restarts: bridge and mirroring phone
+STATE = os.path.join(STATE_DIR, "daemon.json") if BRIDGE_ONLY else "/var/lib/phoneuse/daemon.json"
 
 
 def save_state():
@@ -834,6 +845,8 @@ def run_command(line):
             hid.consumer(args[0], float(how))
         return "ok"
     if cmd == "pair":
+        if BRIDGE_ONLY:
+            return "ok the iPhone pairs with the bridge: Settings > Bluetooth > PhoneUse Bridge"
         secs = int(args[0]) if args else 120
         GLib.idle_add(open_pairing, secs)
         return f"ok discoverable for {secs}s as '{DEVICE_NAME}'"
@@ -972,9 +985,11 @@ def command_server():
         pass
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(SOCK_PATH)
-    os.chmod(SOCK_PATH, 0o660)
-    gid = int(os.environ.get("HID_GID", "0"))
-    os.chown(SOCK_PATH, 0, gid)
+    if BRIDGE_ONLY:  # the user's own daemon: only the user's processes may connect
+        os.chmod(SOCK_PATH, 0o600)
+    else:
+        os.chmod(SOCK_PATH, 0o660)
+        os.chown(SOCK_PATH, 0, int(os.environ.get("HID_GID", "0")))
     s.listen(4)
     log("commands on", SOCK_PATH)
     while True:
@@ -983,6 +998,14 @@ def command_server():
 
 
 def main():
+    if BRIDGE_ONLY:
+        # Input goes through the bridge alone: no BlueZ, no HID sockets on this PC's
+        # adapter, no root. Commands, the gate and the bridge link work as usual.
+        log("bridge-only mode: this PC's Bluetooth stays untouched")
+        threading.Thread(target=command_server, daemon=True).start()
+        threading.Thread(target=restore_state, daemon=True).start()
+        GLib.MainLoop().run()
+        return
     setup_dbus()
     threading.Thread(target=accept_loop, daemon=True).start()
     threading.Thread(target=command_server, daemon=True).start()

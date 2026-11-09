@@ -7,6 +7,8 @@ Example config.toml:
     decoder = "auto"                 # GStreamer H.264 decoder; auto picks NVDEC if present
     mirror_width = 498               # mirror window width in logical pixels
     web_port = 8777                  # browser mirror: http://localhost:8777
+    bluetooth = "pc"                 # "pc": this PC's Bluetooth and the bridge (root daemon, phoneuse install);
+                                     # "bridge": the bridge only, everything runs as the user (the app)
 """
 import os
 import shutil
@@ -19,10 +21,9 @@ DEFAULTS = {
     "decoder": "auto",
     "mirror_width": 498,
     "web_port": 8777,
+    "bluetooth": "pc",
 }
 
-# Runtime paths shared by the daemon (root) and the user-side tools.
-HID_SOCKET = "/run/phoneuse-hid.sock"
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 VISION_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-vision.sock")
 HUB_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-hub.sock")
@@ -45,6 +46,11 @@ def load():
 
 
 CFG = load()
+# Bridge only: the HID daemon runs as the user and never touches this PC's Bluetooth.
+BRIDGE_ONLY = CFG["bluetooth"] == "bridge"
+# The HID daemon's command socket: the root service's, or the user's own in bridge-only mode.
+HID_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-hid.sock") if BRIDGE_ONLY else "/run/phoneuse-hid.sock"
+STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state")), "phoneuse")
 NAME = CFG["name"]
 SCREEN_PT = tuple(CFG["screen_points"])
 PHONE_ASPECT = SCREEN_PT[0] / SCREEN_PT[1]
