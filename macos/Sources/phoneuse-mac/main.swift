@@ -20,6 +20,8 @@ USAGE
   phoneuse-mac swipe <x0> <y0> <x1> <y1> [seconds] [--text]
   phoneuse-mac scroll up|down [screens] [--text]
   phoneuse-mac home [--text]
+  phoneuse-mac switcher [--text]
+  phoneuse-mac spotlight [--text]
   phoneuse-mac back [--text]
   phoneuse-mac open "<App Name>" [--text]
   phoneuse-mac done
@@ -181,7 +183,7 @@ func runType(_ text: String, append: Bool, wantsText: Bool) throws {
     WindowFinder.activate()
     Thread.sleep(forTimeInterval: 0.25)
     if !append {
-        try Input.key("cmd+a")
+        Input.selectAll()
         Thread.sleep(forTimeInterval: 0.05)
     }
     Input.type(text)
@@ -220,12 +222,51 @@ func runScroll(_ direction: String, _ screens: Double, wantsText: Bool) throws {
     afterAction(wantsText)
 }
 
+/// Click an iPhone Mirroring View-menu item. The app's menu is the only
+/// deterministic way to trigger Home Screen / App Switcher / Spotlight, because
+/// the phone swallows Cmd+1..3 once it has focus.
+@discardableResult
+func menuCommand(_ name: String) -> Bool {
+    let script = """
+    tell application "System Events" to tell process "iPhone Mirroring" to click menu item "\(name)" of menu 1 of menu bar item "View" of menu bar 1
+    """
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    p.arguments = ["-e", script]
+    p.standardOutput = Pipe()
+    p.standardError = Pipe()
+    do { try p.run() } catch { return false }
+    p.waitUntilExit()
+    return p.terminationStatus == 0
+}
+
 func runHome(wantsText: Bool) throws {
     try Permissions.requireAccessibility()
     WindowFinder.activate()
     Thread.sleep(forTimeInterval: 0.2)
-    let combo = ProcessInfo.processInfo.environment["PHONEUSE_MAC_HOME_COMBO"] ?? "cmd+shift+h"
-    try Input.key(combo)
+    if !menuCommand("Home Screen") {
+        try Input.key("cmd+1")
+    }
+    afterAction(wantsText)
+}
+
+func runSwitcher(wantsText: Bool) throws {
+    try Permissions.requireAccessibility()
+    WindowFinder.activate()
+    Thread.sleep(forTimeInterval: 0.2)
+    if !menuCommand("App Switcher") {
+        try Input.key("cmd+2")
+    }
+    afterAction(wantsText)
+}
+
+func runSpotlight(wantsText: Bool) throws {
+    try Permissions.requireAccessibility()
+    WindowFinder.activate()
+    Thread.sleep(forTimeInterval: 0.2)
+    if !menuCommand("Spotlight") {
+        try Input.key("cmd+3")
+    }
     afterAction(wantsText)
 }
 
@@ -320,6 +361,12 @@ do {
 
     case "home":
         try runHome(wantsText: wantsText)
+
+    case "switcher":
+        try runSwitcher(wantsText: wantsText)
+
+    case "spotlight":
+        try runSpotlight(wantsText: wantsText)
 
     case "back":
         try runBack(wantsText: wantsText)

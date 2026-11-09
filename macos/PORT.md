@@ -59,13 +59,28 @@ phoneuse-mac key enter
 phoneuse-mac scroll down
 phoneuse-mac swipe 0.5 0.8 0.5 0.2
 phoneuse-mac open "Settings"           # Home, then tap the icon's label
+phoneuse-mac switcher                  # App Switcher (View menu)
+phoneuse-mac spotlight                 # phone search (View menu)
 phoneuse-mac screenshot shot.png
 phoneuse-mac done                      # hands the window back to the user
 ```
 
-`PHONEUSE_MAC_HOME_COMBO` overrides the Home shortcut (default `cmd+shift+h`,
-matching the iPhone Mirroring menu). `PHONEUSE_MAC_CROP_TOP` overrides the
-title-bar crop in points if the automatic detection gets it wrong.
+`PHONEUSE_MAC_CROP_TOP` overrides the title-bar crop in points if the automatic
+detection gets it wrong.
+
+### Two things that cost time
+
+- **Modifier flags are ignored.** A `CGEvent` with `.flags = .maskShift` arrives
+  at the phone as the bare keycode, so `Cmd+A` typed a literal `a` and `Shift+S`
+  came out as `s`. Modifiers have to be posted as real key-down/up events
+  (keycodes 55/56/58/59). `Input.postKey` does that.
+- **The phone swallows Cmd+1..3.** Those are iPhone Mirroring's own View-menu
+  shortcuts, but once the phone has focus the keystroke goes to iOS instead of
+  the menu. Home, App Switcher and Spotlight click the menu item through System
+  Events, with the shortcut only as a fallback.
+
+Also: OCR points at a widget's *label*, which sits outside its tap target. Tapping
+a word from a widget does nothing; tap the icon instead.
 
 ## What the port does not have yet
 
