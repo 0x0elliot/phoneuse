@@ -6,6 +6,7 @@ Setup and running:
                                config, and the local OCR model
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse serve                everything but the mirror window: use the phone in the browser
+  phoneuse network [--allow]    the ports the iPhone needs; --allow opens them in the firewall
   phoneuse status               Bluetooth link and mirror window
   phoneuse done                 end the agent session: control goes back to the user
   phoneuse unlock               on the lock screen: ask the owner to approve entering the
@@ -1251,6 +1252,10 @@ def main():
         return up()
     if cmd == "serve":
         return up(headless=True)
+    if cmd == "network":  # network [--allow]: which firewall runs; --allow opens the ports (asks for the password)
+        from . import netcheck
+        sys.argv = ["netcheck"] + args
+        return netcheck.main()
     if cmd == "app":  # app pair: pair the companion app (docs/COMPANION.md)
         return app_cmd(args)
     if cmd == "status":

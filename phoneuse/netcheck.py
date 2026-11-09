@@ -1,0 +1,148 @@
+"""Inbound ports Phone Use needs on the local network, and the one setup step that opens them.
+
+The iPhone connects to this PC twice: Screen Mirroring (AirPlay, served by UxPlay with fixed
+ports) and the companion app's API. Most desktops let both through as installed; a running
+firewalld or ufw blocks them.
+
+detect() never needs rights: it only learns which firewall runs. Reading a firewalld zone's
+ports needs administrator rights on most systems (polkit asks for a password), so nothing here
+reads the firewall until the user asks to open the ports: allow() asks once (polkit keeps the
+answer a few minutes), finds the zone of the interface the LAN route uses, and opens exactly
+these ports in it, now and permanently.
+"""
+import os
+import shutil
+import socket
+import subprocess
+
+from .companion import PORT as COMPANION_PORT
+
+# UxPlay's fixed ports (`uxplay -p`) and the companion API.
+PORTS = [(7000, "tcp"), (7001, "tcp"), (7100, "tcp"), (6000, "udp"), (6001, "udp"), (7011, "udp"),
+         (COMPANION_PORT, "tcp")]
+
+FIREWALLD = "org.fedoraproject.FirewallD1"
+
+
+def _system_bus():
+    from gi.repository import Gio
+    return Gio.bus_get_sync(Gio.BusType.SYSTEM)
+
+
+def _firewalld_running():
+    from gi.repository import GLib
+    try:
+        r = _system_bus().call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                    "NameHasOwner", GLib.Variant("(s)", (FIREWALLD,)), GLib.VariantType("(b)"),
+                                    0, 2000, None)
+        return r.unpack()[0]
+    except Exception:
+        return False
+
+
+def _ufw_enabled():
+    try:
+        with open("/etc/ufw/ufw.conf") as f:  # readable by everyone; `ufw status` needs root
+            return any(l.strip() == "ENABLED=yes" for l in f)
+    except OSError:
+        return False
+
+
+def detect():
+    """"firewalld", "ufw" or None: which firewall may block the iPhone. Needs no rights."""
+    if _firewalld_running():
+        return "firewalld"
+    if _ufw_enabled():
+        return "ufw"
+    return None
+
+
+def lan_interface():
+    """The interface this PC reaches the local network on (the default route's)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))  # no packet is sent; picks the outgoing interface
+        ip = s.getsockname()[0]
+    finally:
+        s.close()
+    for name in os.listdir("/sys/class/net"):
+        try:
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", name], capture_output=True,
+                                 text=True, timeout=2).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if f" {ip}/" in out:
+            return name
+    return None
+
+
+def _host(cmd):
+    """Run a command on the host: through flatpak-spawn inside the Flatpak, directly otherwise."""
+    if os.path.exists("/.flatpak-info"):
+        cmd = ["flatpak-spawn", "--host"] + cmd
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+
+def allow():
+    """Open PORTS in the active firewall, asking for the administrator password once.
+    Returns a sentence for the user. Raises RuntimeError when it couldn't."""
+    fw = detect()
+    if fw == "firewalld":
+        return _allow_firewalld()
+    if fw == "ufw":
+        r = None
+        for port, proto in PORTS:
+            r = _host(["pkexec", "ufw", "allow", f"{port}/{proto}", "comment", "Phone Use"])
+            if r.returncode == 126:
+                raise RuntimeError("cancelled")
+            if r.returncode:
+                raise RuntimeError(r.stderr.strip() or "ufw refused")
+        return "ufw now lets the iPhone reach Phone Use."
+    return "No firewall is running, so nothing needs opening."
+
+
+def _allow_firewalld():
+    from gi.repository import Gio, GLib
+    bus = _system_bus()
+    flags = Gio.DBusCallFlags.ALLOW_INTERACTIVE_AUTHORIZATION  # polkit asks for the password
+
+    def call(path, iface, method, args, rtype=None):
+        r = bus.call_sync(FIREWALLD, path, iface, method, args, GLib.VariantType(rtype) if rtype else None,
+                          flags, 120000, None)
+        return r.unpack() if rtype else None
+
+    root, zone_if = "/org/fedoraproject/FirewallD1", FIREWALLD + ".zone"
+    try:
+        iface = lan_interface()
+        zone = call(root, zone_if, "getZoneOfInterface", GLib.Variant("(s)", (iface or "",)), "(s)")[0]
+        if not zone:
+            zone = call(root, zone_if, "getDefaultZone", None, "(s)")[0]
+        cfg_path = call(root + "/config", FIREWALLD + ".config", "getZoneByName", GLib.Variant("(s)", (zone,)), "(o)")[0]
+        for port, proto in PORTS:
+            p = (str(port), proto)
+            if not call(root, zone_if, "queryPort", GLib.Variant("(sss)", (zone,) + p), "(b)")[0]:
+                call(root, zone_if, "addPort", GLib.Variant("(sssi)", (zone,) + p + (0,)), "(s)")
+            if not call(cfg_path, FIREWALLD + ".config.zone", "queryPort", GLib.Variant("(ss)", p), "(b)")[0]:
+                call(cfg_path, FIREWALLD + ".config.zone", "addPort", GLib.Variant("(ss)", p))
+    except GLib.Error as e:
+        if "NotAuthorized" in str(e) or "AccessDenied" in str(e) or "Timeout" in str(e):
+            raise RuntimeError("cancelled") from e
+        raise RuntimeError(e.message) from e
+    return f"The firewall now lets the iPhone reach Phone Use (zone {zone}, interface {iface})."
+
+
+def main():
+    import sys
+    if sys.argv[1:] == ["--allow"]:
+        try:
+            print(allow())
+        except RuntimeError as e:
+            sys.exit(f"couldn't open the ports: {e}")
+        return
+    fw = detect()
+    ports = ", ".join(f"{p}/{proto}" for p, proto in PORTS)
+    print(f"firewall: {fw or 'none'}; Phone Use needs {ports} open to the local network")
+
+
+if __name__ == "__main__":
+    main()
