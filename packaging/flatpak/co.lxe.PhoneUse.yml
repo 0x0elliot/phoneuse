@@ -89,6 +89,7 @@ modules:
       - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.desktop /app/share/applications/co.lxe.PhoneUse.desktop
       - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.metainfo.xml /app/share/metainfo/co.lxe.PhoneUse.metainfo.xml
       - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.svg /app/share/icons/hicolor/scalable/apps/co.lxe.PhoneUse.svg
+      - install -Dm644 packaging/icons/hicolor/symbolic/apps/co.lxe.PhoneUse-agent-symbolic.svg /app/share/icons/hicolor/symbolic/apps/co.lxe.PhoneUse-agent-symbolic.svg
     sources:
       - type: dir
         path: ../..

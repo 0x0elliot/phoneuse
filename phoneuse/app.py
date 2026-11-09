@@ -133,7 +133,7 @@ def confirm(parent, heading, body, action, on_yes):
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
-        w, h = (int(v) for v in os.environ.get("PHONEUSE_APP_SIZE", "460x780").split("x"))  # screenshots set it
+        w, h = (int(v) for v in os.environ.get("PHONEUSE_APP_SIZE", "620x720").split("x"))  # screenshots set it
         super().__init__(application=app, title="Phone Use", default_width=w, default_height=h)
         self.app = app
         self.busy = False
@@ -152,11 +152,29 @@ class Window(Adw.ApplicationWindow):
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True,
                                        tooltip_text="Main Menu"))
         view.add_top_bar(header)
-        self.page = Adw.PreferencesPage()
-        view.set_content(self.page)
+        # Three tabs: the phone (what to do next, or the iPhone), agents, and the bridge. The
+        # switcher sits in the header bar, or at the bottom when the window is narrow.
+        self.stack = Adw.ViewStack()
+        self.phone_page, self.agents_page, self.bridge_page = (Adw.PreferencesPage() for _ in range(3))
+        self.tabs = {}
+        for key, page, title, icon in (("phone", self.phone_page, "Phone", "phone-symbolic"),
+                                       ("agents", self.agents_page, "Agents", "co.lxe.PhoneUse-agent-symbolic"),
+                                       ("bridge", self.bridge_page, "Bridge", "bluetooth-symbolic")):
+            self.tabs[key] = self.stack.add_titled_with_icon(page, key, title, icon)
+        switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
+        header.set_title_widget(switcher)
+        bar = Adw.ViewSwitcherBar(stack=self.stack)
+        view.add_bottom_bar(bar)
+        view.set_content(self.stack)
+        narrow = Adw.Breakpoint.new(Adw.BreakpointCondition.parse("max-width: 500sp"))
+        narrow.add_setter(header, "title-widget", Adw.WindowTitle(title="Phone Use"))
+        narrow.add_setter(bar, "reveal", True)
+        self.add_breakpoint(narrow)
         self.toasts.set_child(view)
         self.set_content(self.toasts)
         self._build()
+        if os.environ.get("PHONEUSE_APP_TAB"):  # screenshots
+            self.stack.set_visible_child_name(os.environ["PHONEUSE_APP_TAB"])
 
     # ---- layout ----
     def _build(self):
@@ -173,10 +191,10 @@ class Window(Adw.ApplicationWindow):
         for w in (self.hero_icon, self.hero_title, self.hero_sub, self.hero_btn):
             box.append(w)
         hero.add(box)
-        self.page.add(hero)
+        self.phone_page.add(hero)
 
         # Agent
-        g = Adw.PreferencesGroup(title="Agent")
+        g = Adw.PreferencesGroup()  # the tab names it
         self.mode_row = Adw.ComboRow(title="Agent control", subtitle="What happens when an agent wants the phone",
                                      model=Gtk.StringList.new([m[1] for m in MODES]))
         self.mode_row.connect("notify::selected", self._mode_changed)
@@ -188,7 +206,7 @@ class Window(Adw.ApplicationWindow):
         self.claude_row.add_suffix(self.claude_btn)
         for r in (self.mode_row, self.delay_row, self.claude_row):
             g.add(r)
-        self.page.add(g)
+        self.agents_page.add(g)
 
         # Unlock
         g = Adw.PreferencesGroup(title="Unlock",
@@ -209,10 +227,10 @@ class Window(Adw.ApplicationWindow):
         for r in (self.pass_row, self.pass_entry):
             g.add(r)
         self.unlock_group = g
-        self.page.add(g)
+        self.agents_page.add(g)
 
-        # Phone
-        g = Adw.PreferencesGroup(title="Phone")
+        # Phone (the tab names it)
+        g = Adw.PreferencesGroup()
         self.awake_row = Adw.SwitchRow(title="Keep Awake", subtitle="The screen stays on while the iPhone mirrors")
         self.awake_row.connect("notify::active", self._awake_changed)
         self.login_row = Adw.SwitchRow(title="Start at Login", subtitle="Phone Use runs in the background, so "
@@ -221,12 +239,12 @@ class Window(Adw.ApplicationWindow):
         self.login_row.connect("notify::active", self._login_changed)
         g.add(self.awake_row)
         g.add(self.login_row)
-        self.page.add(g)
+        self.phone_page.add(g)
 
         # Bridge
-        self.bridge_group = Adw.PreferencesGroup(title="Bridge")
+        self.bridge_group = Adw.PreferencesGroup()  # the tab names it
         self.bridge_rows = []
-        self.page.add(self.bridge_group)
+        self.bridge_page.add(self.bridge_group)
 
         # iPhone App
         g = Adw.PreferencesGroup(title="iPhone App")
@@ -237,7 +255,7 @@ class Window(Adw.ApplicationWindow):
         self.pair_row = nav_row("Pair iPhone App", "Allow and stop agents from the iPhone, and see what they do",
                                 lambda: PairDialog(self).present(self))
         g.add(self.pair_row)
-        self.page.add(g)
+        self.phone_page.add(g)
 
         # Network: only until the ports are known to be open
         self.net_group = Adw.PreferencesGroup(title="Network", visible=False)
@@ -245,7 +263,7 @@ class Window(Adw.ApplicationWindow):
         self.fw_btn = button("Open Ports…", on=self._allow_network)
         self.fw_row.add_suffix(self.fw_btn)
         self.net_group.add(self.fw_row)
-        self.page.add(self.net_group)
+        self.bridge_page.add(self.net_group)
 
     # ---- refresh ----
     def refresh(self):
@@ -307,6 +325,9 @@ class Window(Adw.ApplicationWindow):
         self.pair_row.set_title("Pair Another iPhone" if s["paired"] else "Pair iPhone App")
 
         self._show_bridge(s.get("bridge"), running)
+        st = (s.get("bridge") or {}).get("status") or {}
+        self.tabs["bridge"].set_needs_attention(running and (not (s.get("bridge") or {}).get("saved")
+                                                             or bool(st.get("error")) or not st.get("connected")))
         fw = s.get("firewall")
         self.net_group.set_visible(bool(fw) and not s["confirmed"])
         self.fw_row.set_subtitle(f"If {CFG['name']} is missing from Screen Mirroring on the iPhone, {fw} is "
@@ -675,7 +696,10 @@ class BridgeSetup(Adw.Dialog):
 
 class App(Adw.Application):
     def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        flags = Gio.ApplicationFlags.HANDLES_COMMAND_LINE
+        if os.environ.get("PHONEUSE_APP_SIZE"):  # a screenshot run: never activate the real window instead
+            flags |= Gio.ApplicationFlags.NON_UNIQUE
+        super().__init__(application_id=APP_ID, flags=flags)
         self.proc = None  # the `phoneuse serve` this window started
         self.win = None
         for name, fn in (("open", lambda *_: self.open_phone()), ("about", lambda *_: self.about()),
@@ -699,6 +723,10 @@ class App(Adw.Application):
         return 0
 
     def do_activate(self):
+        if not os.environ.get("FLATPAK_ID"):  # a checkout: the app's own icons live in packaging/icons
+            from gi.repository import Gdk
+            Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(
+                os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "packaging", "icons"))
         if not self.win:
             self.win = Window(self)
             self.win.connect("close-request", self._on_close)
