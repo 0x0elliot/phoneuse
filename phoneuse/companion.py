@@ -404,6 +404,8 @@ class Companion:
                 dev[k] = b[k]
                 if k == "push_to_start":
                     self.start_tried.pop(req["device"], None)  # a new token may start an activity at once
+                if k == "activity":  # a new activity (the app may have started it itself): send it the
+                    self.sent = None  # current state now, not what the app guessed
                 dev.get("token_env", {}).pop(k, None)  # a new token: its environment is the app's
         save(d)
         return web.json_response({"ok": True})
@@ -633,7 +635,10 @@ class Companion:
                                 "dismissal-date": int(time.time())})
                 r = self._send(dev, "activity", act["token"], {"aps": aps}, topic, "liveactivity",
                                priority=10)  # every frame at high priority: iOS held back priority-5 frames
-                if r[0] == 410 or (r[0] == 400 and "BadDeviceToken" in r[1]):  # that activity is gone
+                # that activity is gone, or we just ended it: forget its token, so the next
+                # mirroring session starts a new one (APNs accepts updates to an ended
+                # activity without an error, and the phone would show nothing)
+                if not want or r[0] == 410 or (r[0] == 400 and "BadDeviceToken" in r[1]):
                     d = load()
                     for v in d["devices"].values():
                         if (v.get("activity") or {}).get("token") == act["token"]:
