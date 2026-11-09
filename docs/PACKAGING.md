@@ -1,0 +1,97 @@
+# Packaging Phone Use for Linux
+
+This is the plan for turning phoneuse into an app that someone installs, opens and uses without a terminal. It
+records what the audit of 2026-11-08 found, what the package holds, and the order of the work.
+
+## Format: a Flatpak
+
+Phone Use ships as a Flatpak, app ID `co.lxe.PhoneUse`, on the GNOME 50 runtime. The runtime already carries
+everything phoneuse is built on (GTK 4, libadwaita, GStreamer, PyGObject, PipeWire and PulseAudio access), and
+Flathub reaches every distribution. An AppImage would have to rely on whatever GStreamer plugins, Avahi library
+and GTK the host happens to have, which is the part most likely to break on someone else's machine. The first
+builds go out as a `.flatpak` bundle; Flathub comes once the app is stable.
+
+## What fits in the sandbox, and what doesn't
+
+The audit went through every part that touches the host.
+
+**Bridge mode fits completely.** The PC talks to the bridge over outgoing UDP, and the bridge's answers come back on
+the same flow, so no inbound port is needed. Finding a bridge already copes with firewalls: a broadcast first,
+then a direct question to every address on the /24. Setting up a bridge uses BLE through BlueZ over the system
+bus, which a Flatpak may talk to (`--system-talk-name=org.bluez`). Without the PC's own Bluetooth, the HID
+daemon needs no root, no raw HCI sockets and no change to bluetoothd.
+
+**The PC's own Bluetooth does not fit.** That mode runs a root daemon and turns off bluetoothd's input plugin,
+which also stops the user's own Bluetooth keyboards and mice from working with the PC. No consumer app should do
+that, and a Flatpak can't. The app is bridge-only; the PC-Bluetooth mode stays in the repository as the developer
+setup (`phoneuse install`).
+
+**The browser mirror fits, and replaces the mirror window.** The page receives the phone's H.264 untouched and
+decodes it with WebCodecs, so the PC decodes nothing for it. The mirror window depends on Hyprland's IPC and is
+the one Wayland-compositor-specific part of phoneuse; it stays out of the app. A browser tab also suits the main
+use better: an agent in Claude's browser pane watches the same page the owner does. Screenshots for agents come
+from the frames service, which decodes the stream itself (`openh264dec` or `avdec_h264` from the codecs
+extension), so `grim` and the window are never needed.
+
+**UxPlay is built into the package**, with its fixed ports (`-p`). It advertises AirPlay through the host's Avahi
+over the system bus (`--system-talk-name=org.freedesktop.Avahi`), as the companion API's Bonjour service already
+does. UxPlay is GPL-3.0 and ships as a separate program inside the bundle.
+
+**OCR fits on the CPU.** RapidOCR and onnxruntime install as Python modules in the build (about 1.2 s a screen
+on the CPU against 0.18 s on an NVIDIA GPU). GPU OCR stays a developer option.
+
+**The Siri request for the pointer fits**: it plays a WAV through PipeWire, which the sandbox reaches.
+
+## Inbound ports, and the setup step for them
+
+Two things on the LAN must reach the PC: the iPhone's AirPlay connection (TCP 7000, 7001, 7100 and UDP 6000,
+6001, 7011) and the companion app (TCP 8778). Fedora Workstation, Ubuntu and Arch let these through as installed.
+openSUSE, and any machine where someone turned on firewalld or ufw, block them; this PC is one, where the ports
+were opened by hand.
+
+The app checks this itself. When firewalld runs, it reads the active zone of the LAN interface over D-Bus, and
+if the ports are closed, the setup step shows one button, **Allow on this network**. The button asks firewalld,
+again over D-Bus, to open exactly these ports in that zone, now and permanently; polkit asks for the
+administrator password, and nothing else changes. For ufw, which has no D-Bus API, the same button runs
+`pkexec ufw allow` on the host. When the app can't tell (a hand-written nftables ruleset), it watches for the
+iPhone's AirPlay connection instead and, if none arrives, shows the ports to open.
+
+## The app
+
+The GTK window (libadwaita, Python) is the control panel; the phone itself opens in the browser.
+
+The first run walks through setup: the network check above, adding a bridge (the BLE code comparison and Wi-Fi
+choice that the browser mirror already does), starting Screen Mirroring on the iPhone, turning on the pointer,
+pairing the companion app, and connecting Claude Code. After that, the window opens on a status page: whether
+the iPhone mirrors, which bridge it uses and how good its signal is, and who controls the phone. Its main button
+opens the phone in the browser. Settings hold the receiver name, Agent control, keep-awake, sound, bridges, the
+paired iPhones and the Claude Code connection. Services start with the app and keep running in the background
+(the background portal), so agents can use the phone with the window closed.
+
+**Connecting Claude Code** installs the skill into `~/.claude/skills/phoneuse`, adds the MCP server to
+`~/.claude.json` as `flatpak run --command=phoneuse-mcp co.lxe.PhoneUse`, and puts a `phoneuse` command in
+`~/.local/bin` that runs the CLI inside the sandbox. The settings page shows whether each is in place and can
+remove them.
+
+## Open problems
+
+**Push notifications need a relay.** The PC sends Live Activity updates and notifications with an APNs key
+(`.p8`), which belongs to the developer account and can't ship inside an app. A small relay service on our side
+holds the key; each PC authenticates with its pairing to a phone and asks the relay to send. The companion app
+works without pushes (it reads the PC's state while open), so the relay can follow the first builds.
+
+**The agent gate trusts a process's command line.** The HID daemon treats any process started as
+`python -m phoneuse.web` as the owner. On a single-user desktop any program the user runs can claim that. The
+packaged daemon should accept owner commands only from processes the app itself started.
+
+**The companion app** has to reach the App Store before strangers can pair it.
+
+## Order of work
+
+1. A headless core: one supervisor (`phoneuse serve`) runs UxPlay, the hub, the frames service, the browser mirror
+   and companion, and the HID daemon as the user in bridge-only mode, with no mirror window. It also runs
+   from the repository, so the developer setup and the package share it.
+2. The network check and the **Allow on this network** button, tested on this PC's firewalld.
+3. The Flatpak manifest: UxPlay and its libraries, the Python modules, OCR, permissions. Builds and runs here.
+4. The GTK app: first-run setup, status, settings, Claude Code connection, with a design pass before it ships.
+5. The push relay, then Flathub.
