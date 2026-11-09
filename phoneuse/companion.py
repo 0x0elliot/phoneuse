@@ -524,6 +524,7 @@ class Companion:
         clears, only after it has held for WARN_HOLD checks in a row, so a signal hovering
         near a threshold doesn't flip the activity back and forth."""
         seen, count = None, 0
+        link = [None, None]  # one Link (one bridge session) for all checks, and the bridge it is for
         while True:
             await asyncio.sleep(5)
             b = bridge.saved()
@@ -532,10 +533,22 @@ class Companion:
                 continue
 
             def ask():
+                # a new Link per check cost the bridge a key exchange every 5 s, and a session
+                # slot (it keeps four); keep one until the bridge changes or stops answering
                 try:
-                    c = bridge.resolve(b)
-                    return bridge.Link(c).status() if c else {}
+                    if link[0] is None or link[1] != (b.get("id"), b.get("ip")):
+                        c = bridge.resolve(b)
+                        if not c:
+                            return {}
+                        link[:] = [bridge.Link(c), (b.get("id"), b.get("ip"))]
+                    return link[0].status()
                 except Exception:
+                    if link[0]:
+                        try:
+                            link[0].close()
+                        except Exception:
+                            pass
+                    link[:] = [None, None]
                     return {}
             h = bridge_health(await self.run(ask), b.get("use", True))
             w, shown = h["warning"], (self.health or {}).get("warning")
