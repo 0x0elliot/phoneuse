@@ -5,6 +5,7 @@ Setup and running:
   phoneuse install              one-time: Bluetooth HID service (sudo), bluetoothd
                                config, and the local OCR model
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
+  phoneuse serve                everything but the mirror window: use the phone in the browser
   phoneuse status               Bluetooth link and mirror window
   phoneuse done                 end the agent session: control goes back to the user
   phoneuse unlock               on the lock screen: ask the owner to approve entering the
@@ -67,7 +68,7 @@ import urllib.error
 import urllib.request
 
 from . import calibrate, phones, screen, touch
-from .config import CFG, NAME, SCREEN_PT, VISION_SOCKET
+from .config import CFG, HID_SOCKET, NAME, SCREEN_PT, VISION_SOCKET
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
@@ -953,9 +954,24 @@ def tap_on(h, what, force=False):
 
 # ---------- up / install / status ----------
 
-def up():
-    if subprocess.run(["systemctl", "is-active", "--quiet", "phoneuse-hid"]).returncode != 0:
+def up(headless=False):
+    """Run everything. headless (`phoneuse serve`): no mirror window, so no Hyprland;
+    the phone is watched and used in the browser mirror. In bridge-only mode the HID
+    daemon runs here as the user; otherwise it is the root service from `phoneuse install`."""
+    from .config import BRIDGE_ONLY
+    if not BRIDGE_ONLY and subprocess.run(["systemctl", "is-active", "--quiet", "phoneuse-hid"]).returncode != 0:
         die("Bluetooth HID service isn't running. Run: phoneuse install")
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:  # the hub's video port: taken means phoneuse already runs (its UDP ports must not be shared)
+        probe.bind(("127.0.0.1", screen.HUB_RTP_PORT))
+    except OSError:
+        die("phoneuse is already running (`phoneuse up`, `phoneuse serve` or the Phone Use app). Stop it first.")
+    finally:
+        probe.close()
+    if headless:
+        import signal
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     print(f"Starting the mirror (AirPlay receiver '{NAME}'). On the iPhone: Control Center > Screen Mirroring > {NAME}.")
     stop = threading.Event()
     procs = {}
@@ -993,6 +1009,17 @@ def up():
                 pass
     threading.Thread(target=start_vision, daemon=True).start()
 
+    if BRIDGE_ONLY:
+        def keep_hid():
+            # The HID daemon as the user (bridge-only mode): input reaches the phone only
+            # through the bridge. Restarts on code changes; clients reconnect by themselves.
+            supervise("hid_daemon", "input service", ["hid_daemon.py", "bridge.py", "config.py"])
+        threading.Thread(target=keep_hid, daemon=True).start()
+        for _ in range(50):  # until its socket answers
+            if os.path.exists(HID_SOCKET):
+                break
+            time.sleep(0.1)
+
     def keep_hub():
         # The video hub (hub.py): decodes the phone's stream and serves it to the
         # window and the browser mirror. Started first; rarely restarts.
@@ -1022,7 +1049,8 @@ def up():
                 break
             print(time.strftime("%H:%M:%S"), f"mirror window exited ({rc}); opening it again.", flush=True)
             time.sleep(1)
-    threading.Thread(target=keep_window, daemon=True).start()
+    if not headless:
+        threading.Thread(target=keep_window, daemon=True).start()
 
     def keep_web():
         # The browser mirror (web.py), on localhost only. Restarts when its code
@@ -1068,8 +1096,13 @@ def up():
             print("Bridge:", bridge_web.use_bridge(found).replace("ok ", "") if found
                   else "set up, but not answering on this network", flush=True)
         print("Bluetooth:", h.cmd("status").replace("ok ", ""))
-        print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
         print(f"Browser mirror: http://localhost:{CFG['web_port']}")
+        if headless:
+            print("Running without a mirror window. Ctrl+C stops everything.", flush=True)
+            while not stop.is_set():
+                time.sleep(1)
+            return
+        print("Mouse control on: hover, click and drag on the mirror window. Ctrl+C stops everything.")
         # The clicker runs as its own process and restarts by itself when its code
         # changes, so edits don't drop the AirPlay connection.
         watched = [os.path.join(PKG, f) for f in ("mirror_input.py", "pointer.py", "touch.py", "screen.py", "hidclient.py")]
@@ -1091,9 +1124,11 @@ def up():
         pass
     finally:
         stop.set()
+        if headless:
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a second SIGTERM mustn't cut the cleanup short
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        for name in ("mirror", "window", "web", "frames", "hub"):
+        for name in ("mirror", "window", "web", "frames", "hub", "hid_daemon"):
             p = procs.get(name)
             if p and p.poll() is None:
                 p.terminate()
@@ -1104,16 +1139,26 @@ def up():
 
 
 def status():
-    svc = subprocess.run(["systemctl", "is-active", "phoneuse-hid"], capture_output=True, text=True).stdout.strip()
+    from .config import BRIDGE_ONLY
+    if BRIDGE_ONLY:
+        svc = "active" if os.path.exists(HID_SOCKET) else "not running (start Phone Use, or `phoneuse serve`)"
+    else:
+        svc = subprocess.run(["systemctl", "is-active", "phoneuse-hid"], capture_output=True, text=True).stdout.strip()
     print("HID service:", svc)
     if svc == "active":
         print("Bluetooth:", Hid().cmd("status").replace("ok ", ""))
     try:
+        p = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CFG['web_port']}/api/picture", timeout=2))
+        print("Browser mirror:", f"http://localhost:{CFG['web_port']},",
+              "showing the phone" if p.get("live") else "not mirroring (input to the phone is off)")
+    except (OSError, ValueError):
+        print("Browser mirror: not running")
+    try:
         at, size = screen.mirror_window()
         live = "showing the phone" if screen.mirror_live() else "not mirroring (input to the phone is off)"
         print("Mirror window:", at, size, live)
-    except RuntimeError:
-        print(f"Mirror window: none (run `phoneuse up`, then Screen Mirroring > {NAME} on the iPhone)")
+    except (RuntimeError, OSError):  # no mirror window, or no Hyprland at all (the app, `phoneuse serve`)
+        print("Mirror window: none (the browser mirror shows the phone)")
 
 
 def view(print_only):
@@ -1204,6 +1249,8 @@ def main():
         return
     if cmd == "up":
         return up()
+    if cmd == "serve":
+        return up(headless=True)
     if cmd == "app":  # app pair: pair the companion app (docs/COMPANION.md)
         return app_cmd(args)
     if cmd == "status":
