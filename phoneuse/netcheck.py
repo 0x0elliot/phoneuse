@@ -16,12 +16,42 @@ import socket
 import subprocess
 
 from .companion import PORT as COMPANION_PORT
+from .config import config_path
 
 # UxPlay's fixed ports (`uxplay -p`) and the companion API.
 PORTS = [(7000, "tcp"), (7001, "tcp"), (7100, "tcp"), (6000, "udp"), (6001, "udp"), (7011, "udp"),
          (COMPANION_PORT, "tcp")]
 
 FIREWALLD = "org.fedoraproject.FirewallD1"
+# What this PC has shown about its firewall: the ports were opened here, or the iPhone's
+# mirroring reached this PC (proof that they are open). Either ends the setup step.
+STATE = os.path.join(os.path.dirname(config_path()), "network.json")
+
+
+def confirmed():
+    try:
+        import json
+        with open(STATE) as f:
+            d = json.load(f)
+        return bool(d.get("allowed") or d.get("mirrored"))
+    except (OSError, ValueError):
+        return False
+
+
+def remember(**kw):
+    import json
+    d = {}
+    try:
+        with open(STATE) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if all(d.get(k) == v for k, v in kw.items()):
+        return
+    d.update(kw)
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as f:
+        json.dump(d, f)
 
 
 def _system_bus():
@@ -97,6 +127,7 @@ def allow():
                 raise RuntimeError("cancelled")
             if r.returncode:
                 raise RuntimeError(r.stderr.strip() or "ufw refused")
+        remember(allowed=True)
         return "ufw now lets the iPhone reach Phone Use."
     return "No firewall is running, so nothing needs opening."
 
@@ -128,6 +159,7 @@ def _allow_firewalld():
         if "NotAuthorized" in str(e) or "AccessDenied" in str(e) or "Timeout" in str(e):
             raise RuntimeError("cancelled") from e
         raise RuntimeError(e.message) from e
+    remember(allowed=True)
     return f"The firewall now lets the iPhone reach Phone Use (zone {zone}, interface {iface})."
 
 
