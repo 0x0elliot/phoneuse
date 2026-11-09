@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Phone Use
+GenericName=iPhone Control
+Comment=See and use your iPhone from this PC, and let AI agents use it
+Exec=phoneuse-app
+Icon=co.lxe.PhoneUse
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=iPhone;AirPlay;mirror;agent;Claude;
+StartupNotify=true

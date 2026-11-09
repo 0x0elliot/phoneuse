@@ -5,7 +5,7 @@ app-id: co.lxe.PhoneUse
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
-command: phoneuse
+command: phoneuse-app
 finish-args:
   - --share=network            # AirPlay from the iPhone, the bridge over Wi-Fi, the companion API
   - --share=ipc
@@ -84,6 +84,11 @@ modules:
       - rm -rf /app/lib/phoneuse/phoneuse/__pycache__
       - install -m755 packaging/flatpak/phoneuse.sh /app/bin/phoneuse
       - install -m755 packaging/flatpak/phoneuse-mcp.sh /app/bin/phoneuse-mcp
+      - install -m755 packaging/flatpak/phoneuse-app.sh /app/bin/phoneuse-app
+      - mkdir -p /app/share/phoneuse && cp -r skill /app/share/phoneuse/skill
+      - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.desktop /app/share/applications/co.lxe.PhoneUse.desktop
+      - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.metainfo.xml /app/share/metainfo/co.lxe.PhoneUse.metainfo.xml
+      - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.svg /app/share/icons/hicolor/scalable/apps/co.lxe.PhoneUse.svg
     sources:
       - type: dir
         path: ../..
