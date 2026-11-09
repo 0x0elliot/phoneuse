@@ -1,9 +1,11 @@
 import XCTest
 
-/// Shows each demo Live Activity state on the lock screen and attaches a screenshot, to check the layouts.
-final class AskingLayoutUITests: XCTestCase {
+/// A design check, not a regression test: shows each Live Activity state (the app's DEBUG -PUDemo flag) on the
+/// simulator's lock screen and attaches a screenshot. The simulator draws the lock screen once and doesn't animate
+/// it, and it doesn't capture the Dynamic Island, so motion and the island need the phone.
+final class LiveActivityLayoutUITests: XCTestCase {
     func testStateLayouts() throws {
-        for state in ["idle", "delay", "asking", "driving", "paused"] {
+        for state in ["idle", "warning", "delay", "asking", "driving", "paused"] {
             let app = XCUIApplication()
             app.launchArguments = ["-PUDemo", state]
             app.launch()

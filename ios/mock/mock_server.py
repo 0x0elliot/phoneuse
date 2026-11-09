@@ -33,12 +33,15 @@ def initial_state():
         "mirroring": True,
         "phone": "LXEPhone17Pro",
         "bluetooth": {"connected": True, "via": "bridge"},
-        "agent": {"state": "driving", "action": "Opening Gmail", "since": now - 95, "steps": 12},
+        "agent": {"state": "driving", "action": "Opening Gmail", "since": now - 95, "steps": 12, "phase": "thinking"},
         "awake": False,
         "audio": {"on": True, "needs_remirror": False},
-        "session": {"ask": False, "pending": {"id": "s1", "since": now - 3, "action": "Opening Gmail"}},
+        "session": {"ask": False, "mode": "auto", "seconds": 10,
+                    "pending": {"id": "s1", "since": now - 3, "action": "Opening Gmail", "mode": "ask", "deadline": None}},
         "unlock": {"passcode_saved": False, "pending": {"id": "u1", "since": now - 5}},
         "bridge": {"saved": True, "id": "bridge-01", "ip": "192.168.0.51", "ssid": "Giraffe IoT", "use": True,
+                   "signal": {"wifi": "good", "phone": "fair"},
+                   "warning": {"title": "Bridge is too far from your iPhone", "detail": "Move it closer."},
                    "online": True, "rtt_ms": 15},
     }
 
@@ -135,16 +138,23 @@ class Handler(BaseHTTPRequestHandler):
             with m.lock:
                 return self.reply(200, s)
         if route == ("POST", "/v1/agent/takeover"):
-            s["agent"]["state"] = "paused"
+            s["agent"]["state"], s["agent"]["phase"] = "paused", None
             return ok()
         if route == ("POST", "/v1/agent/resume"):
-            s["agent"]["state"] = "driving"
+            s["agent"]["state"], s["agent"]["phase"] = "driving", "thinking"
             return ok()
         if route == ("POST", "/v1/session/ask"):
-            on = need_bool()
-            if on is None:
-                return
-            s["session"]["ask"] = on
+            mode, seconds = body.get("mode"), body.get("seconds")
+            if mode is None and seconds is None and isinstance(body.get("on"), bool):
+                mode = "ask" if body["on"] else "auto"  # the old toggle's form
+            if mode not in (None, "auto", "countdown", "ask") or \
+                    (seconds is not None and not (isinstance(seconds, int) and 5 <= seconds <= 30)) or \
+                    (mode is None and seconds is None):
+                return self.error(400, "Send a mode (auto, countdown, ask) or seconds (5 to 30).", logged)
+            if mode:
+                s["session"]["mode"], s["session"]["ask"] = mode, mode != "auto"
+            if seconds:
+                s["session"]["seconds"] = seconds
             return ok()
         if route == ("POST", "/v1/session/answer"):
             pending = s["session"]["pending"]
@@ -178,12 +188,16 @@ class Handler(BaseHTTPRequestHandler):
         if route == ("POST", "/v1/keyboard"):
             m.keyboard_shown = not m.keyboard_shown
             return ok("keyboard " + ("shown" if m.keyboard_shown else "hidden"))
+        if route == ("GET", "/v1/cursor"):
+            time.sleep(min(m.cursor_delay, 1))
+            return self.reply(200, {"pointer": getattr(m, "pointer", "off")})
         if route == ("POST", "/v1/cursor"):
             on = need_bool()
             if on is None:
                 return
             time.sleep(m.cursor_delay)
-            return ok("pointer " + ("on" if on else "off"))
+            m.pointer = "on" if on else "off"
+            return ok("pointer " + m.pointer)
         if route == ("POST", "/v1/bridge/use"):
             on = need_bool()
             if on is None:

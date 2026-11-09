@@ -48,8 +48,13 @@ struct PCState: Decodable, Equatable {
         var use: Bool
         var online: Bool
         var rttMs: Double?
-        enum CodingKeys: String, CodingKey { case saved, id, ip, ssid, use, online, rttMs = "rtt_ms" }
+        /// "good", "fair" or "weak", or nil when unknown: the bridge's Wi-Fi, and its link to the phone.
+        var signal: Signal?
+        var warning: Warning?
+        enum CodingKeys: String, CodingKey { case saved, id, ip, ssid, use, online, signal, warning, rttMs = "rtt_ms" }
     }
+    struct Signal: Decodable, Equatable { var wifi: String?; var phone: String? }
+    struct Warning: Decodable, Equatable { var title: String; var detail: String? }
 
     var pc: PC
     var mirroring: Bool

@@ -22,11 +22,11 @@
 		957F742942E56EAC59E1A6E6 /* CompanionCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0E5981525F6136B8126827 /* CompanionCrypto.swift */; };
 		A1ACAD74CC7D0684F9C81E90 /* AgentLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48B4CA3BF3F1C0C4322874A5 /* AgentLiveActivity.swift */; };
 		ABFD6DD9A1537CA34CA7581A /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE125BEF83809A7A3AAFD4FE /* AppModel.swift */; };
+		AC9562814ABC8703F71C1268 /* LiveActivityLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9DF6BE95D65505CCC4A3A6 /* LiveActivityLayoutUITests.swift */; };
 		AE63A531A8BDDD39302D47AA /* RealPCUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A8B93AD27F070C1C7A9AA5 /* RealPCUITests.swift */; };
 		BBCBBBB49D5679FEDA066BB0 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F02074B048620193B3B9E23 /* Pairing.swift */; };
 		D1A24F1294BE1B45AB6CAAF8 /* SettingsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E202887850995274A649144 /* SettingsUITests.swift */; };
 		E20762EE8C9B49CEFCDB75FE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF6503FBA88C4C609778B5EB /* Assets.xcassets */; };
-		E7B0A1B8EF9FEC4806683E71 /* AskingLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F2D3E1030EEAF3B1A690DF2 /* AskingLayoutUITests.swift */; };
 		EF510DABF80DFC3E9DA6BA5E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EDD5C1D42C5084700766D23 /* ContentView.swift */; };
 		F33AF0BF92ED29908127339F /* Robot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7F69CB00BCF929B6820427 /* Robot.swift */; };
 		FABAADBB9E65BD54B2DEE5D1 /* AgentActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 992E0EB26E0506F60C17C190 /* AgentActivity.swift */; };
@@ -71,6 +71,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1C9DF6BE95D65505CCC4A3A6 /* LiveActivityLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityLayoutUITests.swift; sourceTree = "<group>"; };
 		21CB2894AC2FE090100445FB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		27C9BF14BBA1D93B1F0B7F5E /* AppLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLog.swift; sourceTree = "<group>"; };
 		2EDD5C1D42C5084700766D23 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -81,7 +82,6 @@
 		4F02074B048620193B3B9E23 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		67E207141EF63DC24D4C6176 /* PhoneUseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneUseApp.swift; sourceTree = "<group>"; };
 		7E67D7D720A78ABB19E838A3 /* PhoneUse.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhoneUse.entitlements; sourceTree = "<group>"; };
-		7F2D3E1030EEAF3B1A690DF2 /* AskingLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskingLayoutUITests.swift; sourceTree = "<group>"; };
 		8B7F69CB00BCF929B6820427 /* Robot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Robot.swift; sourceTree = "<group>"; };
 		8E0E5981525F6136B8126827 /* CompanionCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionCrypto.swift; sourceTree = "<group>"; };
 		8E202887850995274A649144 /* SettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsUITests.swift; sourceTree = "<group>"; };
@@ -160,7 +160,7 @@
 		EC80B1B90B5D9B2E0E27A3E3 /* UITests */ = {
 			isa = PBXGroup;
 			children = (
-				7F2D3E1030EEAF3B1A690DF2 /* AskingLayoutUITests.swift */,
+				1C9DF6BE95D65505CCC4A3A6 /* LiveActivityLayoutUITests.swift */,
 				A8A8B93AD27F070C1C7A9AA5 /* RealPCUITests.swift */,
 				8E202887850995274A649144 /* SettingsUITests.swift */,
 			);
@@ -326,7 +326,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E7B0A1B8EF9FEC4806683E71 /* AskingLayoutUITests.swift in Sources */,
+				AC9562814ABC8703F71C1268 /* LiveActivityLayoutUITests.swift in Sources */,
 				AE63A531A8BDDD39302D47AA /* RealPCUITests.swift in Sources */,
 				D1A24F1294BE1B45AB6CAAF8 /* SettingsUITests.swift in Sources */,
 			);

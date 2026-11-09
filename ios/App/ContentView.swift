@@ -52,6 +52,7 @@ struct SettingsView: View {
     @State private var passcodeSheet = false
     @State private var confirmForget = false
     @State private var confirmUnpair = false
+    @State private var pointerSheet = false
 
     private var s: PCState? { model.state }
     private var offline: Bool { !model.reachable || s == nil }
@@ -104,6 +105,7 @@ struct SettingsView: View {
             }
             pcSection
         }
+        .sheet(isPresented: $pointerSheet) { PointerSheet().presentationDetents([.medium]) }
         .navigationTitle("Phone Use")
         .refreshable { await model.refresh() }
         .sheet(isPresented: $passcodeSheet) { PasscodeSheet() }
@@ -258,31 +260,43 @@ struct SettingsView: View {
         }
     }
 
+    /// The pointer is an action, not a setting: the row shows the last known state and opens a sheet to change it.
     private var pointerRow: some View {
-        HStack {
-            Label("Pointer", systemImage: "cursorarrow")
-            Spacer()
-            if model.busy.contains("pointer") {
-                ProgressView()
-            } else {
-                Picker("Pointer", selection: Binding(
-                    get: { model.pointerOn },
-                    set: { on in if let on { Task { await model.setPointer(on) } } }
-                )) {
-                    Text("On").tag(Bool?.some(true))
-                    Text("Off").tag(Bool?.some(false))
+        Button {
+            if model.pointer == nil { Task { await model.checkPointer() } } else { pointerSheet = true }
+        } label: {
+            LabeledContent {
+                if model.busy.contains("pointer") && !pointerSheet {
+                    ProgressView()
+                } else {
+                    Text(model.pointer == "on" ? "On" : model.pointer == "off" ? "Off" : "Check")
+                        .foregroundStyle(model.pointer == nil ? Color.accentColor : Color.secondary)
                 }
-                .pickerStyle(.segmented)
-                .fixedSize()
-                .accessibilityIdentifier("pointer")
+            } label: {
+                Label("Pointer", systemImage: "cursorarrow")
             }
         }
+        .tint(.primary)
+        .accessibilityIdentifier("pointer")
     }
 
     @ViewBuilder
     private func bridgeSection(_ s: PCState) -> some View {
         Section("Bridge") {
             if let b = s.bridge {
+                if let w = b.warning {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(w.title).font(.headline)
+                            if let d = w.detail { Text(d).font(.subheadline).foregroundStyle(.secondary) }
+                        }
+                    } icon: {
+                        Image(systemName: "person.crop.circle.badge.exclamationmark.fill")
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("bridgeWarning")
+                }
                 LabeledContent {
                     Text(b.online ? (b.rttMs.map { "Online, \(Int($0)) ms" } ?? "Online") : "Offline")
                         .foregroundStyle(b.online ? Color.secondary : Color.orange)
@@ -290,6 +304,8 @@ struct SettingsView: View {
                     Label(b.ssid ?? "Bridge", systemImage: "cpu")
                 }
                 .accessibilityIdentifier("bridgeStatus")
+                if let phone = b.signal?.phone { signalRow("Bridge to iPhone", "cellularbars", phone) }
+                if let wifi = b.signal?.wifi { signalRow("Bridge Wi-Fi", "wifi", wifi) }
                 Toggle(isOn: binding(b.use) { on in await model.setBridge(on) }) {
                     row("Input Through Bridge", "arrow.triangle.branch", busy: "bridge")
                 }
@@ -303,6 +319,16 @@ struct SettingsView: View {
             } else {
                 Label("No bridge", systemImage: "cpu").foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// A signal row: the symbol filled to the quality, and the word on the right.
+    private func signalRow(_ title: String, _ symbol: String, _ quality: String) -> some View {
+        let level: Double = quality == "good" ? 1 : quality == "fair" ? 0.66 : 0.33
+        return LabeledContent {
+            Text(quality.capitalized).foregroundStyle(.secondary)
+        } label: {
+            Label { Text(title) } icon: { Image(systemName: symbol, variableValue: level) }
         }
     }
 
@@ -550,5 +576,53 @@ struct StartModeRow: View {
             .pickerStyle(.menu)
             .accessibilityIdentifier("sessionSeconds")
         }
+    }
+}
+
+/// Turning the pointer on or off: the PC asks Siri out loud, so the phone has to be unlocked and in earshot.
+struct PointerSheet: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var running = false
+    @State private var result: String?
+
+    var body: some View {
+        let turnOn = model.pointer != "on"
+        VStack(spacing: 18) {
+            Image(systemName: "cursorarrow").font(.system(size: 40, weight: .semibold)).foregroundStyle(.tint)
+            if running {
+                ProgressView()
+                Text("Asking Siri…").font(.headline)
+            } else if let result {
+                Text(result).font(.headline).multilineTextAlignment(.center)
+                Button { dismiss() } label: { Text("Done").frame(maxWidth: .infinity, minHeight: 44) }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("pointerDone")
+            } else {
+                VStack(spacing: 6) {
+                    Text(turnOn ? "Turn on the pointer?" : "Turn off the pointer?").font(.title3.bold())
+                    Text("Phone Use asks Siri through your PC's speakers. Keep this iPhone unlocked and near the PC.")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                VStack(spacing: 10) {
+                    Button {
+                        Task {
+                            running = true
+                            let failure = await model.setPointer(turnOn)
+                            running = false
+                            result = failure ?? (model.pointer == "on" ? "The pointer is on." :
+                                                 model.pointer == "off" ? "The pointer is off." : "Done.")
+                        }
+                    } label: {
+                        Text(turnOn ? "Turn On" : "Turn Off").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("pointerConfirm")
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .padding(24)
+        .interactiveDismissDisabled(running)
     }
 }
