@@ -671,18 +671,39 @@ class Companion:
 
     # ---- Bonjour ----
     async def advertise(self):
-        """Keep `_phoneuse._tcp` published through Avahi."""
+        """Keep `_phoneuse._tcp` published through Avahi's D-Bus API (works inside the Flatpak,
+        which has no avahi-utils). Checks every 30 s and publishes again if Avahi restarted."""
+        group = [None]
+
+        def publish():
+            from gi.repository import Gio, GLib
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+
+            def call(path, iface, method, args=None, rtype=None):
+                r = bus.call_sync("org.freedesktop.Avahi", path, iface, method, args,
+                                  GLib.VariantType(rtype) if rtype else None, Gio.DBusCallFlags.NONE, 5000, None)
+                return r.unpack() if rtype else None
+            if group[0]:
+                try:
+                    if call(group[0], "org.freedesktop.Avahi.EntryGroup", "GetState", None, "(i)")[0] == 2:
+                        return False  # still published (2: established)
+                except GLib.Error:
+                    pass
+            group[0] = call("/", "org.freedesktop.Avahi.Server", "EntryGroupNew", None, "(o)")[0]
+            txt = [f"id={load()['pc_id']}".encode(), f"name={pc_name()}".encode()]
+            call(group[0], "org.freedesktop.Avahi.EntryGroup", "AddService",
+                 GLib.Variant("(iiussssqaay)", (-1, -1, 0, f"PhoneUse on {pc_name()}", "_phoneuse._tcp", "", "",
+                                                 PORT, txt)))
+            call(group[0], "org.freedesktop.Avahi.EntryGroup", "Commit")
+            return True
         while True:
             try:
-                p = await asyncio.create_subprocess_exec(
-                    "avahi-publish-service", f"PhoneUse on {pc_name()}", "_phoneuse._tcp", str(PORT),
-                    f"id={load()['pc_id']}", f"name={pc_name()}",
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-                await p.wait()
-            except OSError as e:
+                if await self.run(publish):
+                    log("published over Bonjour as", f"PhoneUse on {pc_name()}")
+            except Exception as e:
+                group[0] = None
                 log("can't publish over Bonjour:", e)
-                return
-            await asyncio.sleep(5)
+            await asyncio.sleep(30)
 
     def app(self):
         a = web.Application(middlewares=[self.auth], client_max_size=64 * 1024)

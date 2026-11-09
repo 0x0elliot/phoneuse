@@ -70,14 +70,14 @@ import urllib.error
 import urllib.request
 
 from . import calibrate, phones, screen, touch
-from .config import CFG, HID_SOCKET, NAME, SCREEN_PT, VISION_SOCKET
+from .config import CFG, HID_SOCKET, NAME, RUNTIME_DIR, SCREEN_PT, VISION_SOCKET
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(PKG)  # the repository checkout
 
 PT = SCREEN_PT
-LAST_ACTION = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-last-action")
+LAST_ACTION = os.path.join(RUNTIME_DIR, "phoneuse-last-action")
 # UxPlay receives AirPlay and passes the phone's H.264 stream on as RTP to the
 # video hub (hub.py), which serves the mirror window and the browser mirror.
 MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-nh",  # -nh: no "@hostname" after the name
@@ -91,7 +91,7 @@ MIRROR_ARGS = ["uxplay", "-p", "-n", NAME, "-nh",  # -nh: no "@hostname" after t
 
 # UxPlay buffers its output when it goes to a pipe; stdbuf makes it line-buffered.
 UNBUFFERED = ["stdbuf", "-oL", "-eL"] if shutil.which("stdbuf") else []
-UXPLAY_LOG = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-uxplay.log")
+UXPLAY_LOG = os.path.join(RUNTIME_DIR, "phoneuse-uxplay.log")
 SENDER = re.compile(r"connection request from (.+) \((.*)\) with deviceID = (\S+)")
 
 
@@ -378,7 +378,7 @@ def react_wait():
     an action's change shows that much later, and "no change" would be wrong."""
     lag = mirror_lag()
     return REACT_WAIT + (lag if lag > 1 else 0.0)
-REACTIONS = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-reactions")
+REACTIONS = os.path.join(RUNTIME_DIR, "phoneuse-reactions")
 SLOW = 0.8  # s: a median reaction above this means the mirror is slow (a recording, a busy phone)
 
 
@@ -719,7 +719,7 @@ def type_text(h, text):
 
 # ---------- screen ----------
 
-LOOK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-look.npy")
+LOOK = os.path.join(RUNTIME_DIR, "phoneuse-look.npy")
 
 
 def _small(rgb):
@@ -835,7 +835,7 @@ def vision(req, timeout=90):
     py = vision_python()
     if not py:
         die(f"Vision models aren't installed. Run: {ROOT}/scripts/setup-vision.sh")
-    logf = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-vision.log"), "a")
+    logf = open(os.path.join(RUNTIME_DIR, "phoneuse-vision.log"), "a")
     subprocess.Popen([py, "-m", "phoneuse.vision"], cwd=ROOT, stdout=logf, stderr=logf, start_new_session=True)
     for _ in range(120):
         time.sleep(0.5)
@@ -843,12 +843,12 @@ def vision(req, timeout=90):
             return ask()
         except (FileNotFoundError, ConnectionRefusedError):
             continue
-    die("vision service didn't start; see $XDG_RUNTIME_DIR/phoneuse-vision.log")
+    die(f"vision service didn't start; see {RUNTIME_DIR}/phoneuse-vision.log")
 
 
 def fresh_screenshot():
     """A screenshot for reading, once the screen has settled (see settle)."""
-    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), f"phoneuse-shot-{os.getpid()}.png")
+    path = os.path.join(RUNTIME_DIR, f"phoneuse-shot-{os.getpid()}.png")
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         screenshot(path)
@@ -1030,10 +1030,12 @@ def up(headless=False):
             # through the bridge. Restarts on code changes; clients reconnect by themselves.
             supervise("hid_daemon", "input service", ["hid_daemon.py", "bridge.py", "config.py"])
         threading.Thread(target=keep_hid, daemon=True).start()
-        for _ in range(50):  # until its socket answers
-            if os.path.exists(HID_SOCKET):
+        for _ in range(100):  # until it answers (a socket file can be left from the last run)
+            try:
+                Hid().sock.close()
                 break
-            time.sleep(0.1)
+            except OSError:
+                time.sleep(0.1)
 
     def keep_hub():
         # The video hub (hub.py): decodes the phone's stream and serves it to the
@@ -1088,7 +1090,7 @@ def up(headless=False):
             out = subprocess.DEVNULL
             if os.environ.get("PHONEUSE_TRACE"):  # per-element GStreamer latency, for tuning
                 env.update(GST_TRACERS="latency(flags=pipeline+element)", GST_DEBUG="GST_TRACER:7")
-                out = open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-gst-trace.log"), "w")
+                out = open(os.path.join(RUNTIME_DIR, "phoneuse-gst-trace.log"), "w")
             if out is subprocess.DEVNULL:  # read UxPlay's output for the sender's name
                 procs["mirror"] = subprocess.Popen(UNBUFFERED + args, stdout=subprocess.PIPE,
                                                    stderr=subprocess.STDOUT, env=env, text=True, errors="replace")
@@ -1143,14 +1145,17 @@ def up(headless=False):
             signal.signal(signal.SIGTERM, signal.SIG_IGN)  # a second SIGTERM mustn't cut the cleanup short
         if procs.get("clicker") and procs["clicker"].poll() is None:
             procs["clicker"].terminate()
-        for name in ("mirror", "window", "web", "frames", "hub", "hid_daemon"):
-            p = procs.get(name)
-            if p and p.poll() is None:
-                p.terminate()
-                try:
-                    p.wait(3)
-                except subprocess.TimeoutExpired:
-                    p.kill()
+        # twice: a supervisor that was between two runs may start one more before it sees stop
+        for _ in range(2):
+            for name in ("mirror", "window", "web", "frames", "hub", "hid_daemon"):
+                p = procs.get(name)
+                if p and p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(3)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+            time.sleep(1.2)
 
 
 def status():
@@ -1289,7 +1294,7 @@ def main():
         return text_cmd(args)
     if cmd == "screenshot":
         paths = [x for x in args if not x.startswith("--")]  # (--keep-pointer: now always)
-        return screenshot(paths[0] if paths else os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse.png"))
+        return screenshot(paths[0] if paths else os.path.join(RUNTIME_DIR, "phoneuse.png"))
     force = "--force" in args
     args = [a for a in args if a != "--force"]
     if cmd in ("tap", "longpress", "swipe") and not force and len(args) >= 2:

@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 
-SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-vision.sock")
+from .config import VISION_SOCKET as SOCK  # noqa: E402  (shared with the CLI)
 
 
 def log(*a):

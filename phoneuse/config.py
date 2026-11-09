@@ -26,6 +26,10 @@ DEFAULTS = {
 }
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+if os.environ.get("FLATPAK_ID"):
+    # Each `flatpak run` gets its own private runtime directory; only app/<id> is shared between
+    # instances, so the service's sockets go there for agents' `phoneuse` commands to reach.
+    RUNTIME_DIR = os.path.join(RUNTIME_DIR, "app", os.environ["FLATPAK_ID"])
 VISION_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-vision.sock")
 HUB_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-hub.sock")
 FRAMES_SOCKET = os.path.join(RUNTIME_DIR, "phoneuse-frames.sock")
