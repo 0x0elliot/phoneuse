@@ -49,12 +49,18 @@ Two things on the LAN must reach the PC: the iPhone's AirPlay connection (TCP 70
 openSUSE, and any machine where someone turned on firewalld or ufw, block them; this PC is one, where the ports
 were opened by hand.
 
-The app checks this itself. When firewalld runs, it reads the active zone of the LAN interface over D-Bus, and
-if the ports are closed, the setup step shows one button, **Allow on this network**. The button asks firewalld,
-again over D-Bus, to open exactly these ports in that zone, now and permanently; polkit asks for the
-administrator password, and nothing else changes. For ufw, which has no D-Bus API, the same button runs
-`pkexec ufw allow` on the host. When the app can't tell (a hand-written nftables ruleset), it watches for the
-iPhone's AirPlay connection instead and, if none arrives, shows the ports to open.
+Reading a firewalld zone's ports needs administrator rights on most systems (polkit's
+`org.fedoraproject.FirewallD1.config.info` is `auth_admin_keep`; on Arch, asking without them opens a password
+dialog), so the app never inspects the firewall on its own. It only learns whether one runs: firewalld's name
+on the system bus, or ufw's `ENABLED=yes`, both readable without rights. Whether the ports are open shows in what
+happens: the iPhone's AirPlay connection reaches UxPlay, and the companion app reaches its API.
+
+When a firewall runs, setup has a step **Allow on this network** with one button. The button asks for the
+administrator password once (polkit keeps the answer for a few minutes), reads the zone of the LAN interface,
+and opens exactly these ports in it, now and permanently, over firewalld's D-Bus API; nothing else changes. For
+ufw, which has no D-Bus API, the button runs `pkexec ufw allow` for the same ports on the host. When the iPhone
+picks the receiver and no AirPlay connection arrives, the status page points back to that step, and for any
+other firewall it lists the ports to open.
 
 ## The app
 
