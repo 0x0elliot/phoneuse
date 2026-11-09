@@ -59,7 +59,7 @@ def pipeline_desc(dec):
     caps = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
     # sync=false: show each frame the moment it is decoded (the phone's timestamps
     # would add a buffer). glsinkbin keeps NVDEC output on the GPU.
-    return (f'udpsrc address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{caps}" '
+    return (f'udpsrc reuse=false address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{caps}" '
             f"! rtph264depay ! h264parse ! {dec} "
             "! glsinkbin sink=\"gtk4paintablesink name=sink sync=false\"")
 

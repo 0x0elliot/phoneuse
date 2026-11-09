@@ -57,7 +57,7 @@ class Stream:
         self.on_frame = on_frame  # (bytes, is_keyframe), called from a GStreamer thread
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
         self.pipe = Gst.parse_launch(
-            f'udpsrc address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{rtp}" '
+            f'udpsrc reuse=false address=127.0.0.1 port={RTP_PORT} buffer-size=8388608 caps="{rtp}" '
             "! rtph264depay ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au "
             "! appsink name=enc sync=false async=false emit-signals=true")
         self.pipe.get_by_name("enc").connect("new-sample", self._frame)

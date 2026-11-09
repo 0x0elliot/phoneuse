@@ -74,7 +74,7 @@ class Frames:
         download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
         w, h = SCREEN_PT[0] * 2, SCREEN_PT[1] * 2
         self.pipe = Gst.parse_launch(
-            f'udpsrc address=127.0.0.1 port={screen.FRAMES_RTP_PORT} buffer-size=8388608 caps="{rtp}" '
+            f'udpsrc reuse=false address=127.0.0.1 port={screen.FRAMES_RTP_PORT} buffer-size=8388608 caps="{rtp}" '
             f"! rtph264depay ! h264parse ! {dec} ! {download}appsink name=raw sync=false async=false emit-signals=true "
             f"appsrc name=shot format=time do-timestamp=true ! videoconvert ! videoscale "
             f"! video/x-raw,format=RGB,width={w},height={h} ! pngenc compression-level=1 "

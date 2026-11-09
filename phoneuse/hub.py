@@ -63,7 +63,7 @@ class Hub:
         download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
         # One pipeline for decode and encode, so they share a GPU context.
         self.pipe = Gst.parse_launch(
-            f'udpsrc address=127.0.0.1 port={screen.HUB_RTP_PORT} buffer-size=8388608 caps="{rtp}" '
+            f'udpsrc reuse=false address=127.0.0.1 port={screen.HUB_RTP_PORT} buffer-size=8388608 caps="{rtp}" '
             f"! rtph264depay ! h264parse ! {dec} ! {download}appsink name=raw sync=false async=false emit-signals=true "
             f"appsrc name=src is-live=true format=time do-timestamp=true ! {encoder(dec)} "
             f"! h264parse ! rtph264pay pt=96 mtu=60000 config-interval=-1 "
