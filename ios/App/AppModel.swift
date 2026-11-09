@@ -199,9 +199,8 @@ final class AppModel: ObservableObject {
     }
 
     /// The activity stays up while the phone mirrors to the PC, showing idle, asking, driving or paused. When the
-    /// app becomes active: with no mirroring, it ends any activity; with mirroring, it keeps exactly one, the one whose
-    /// token the PC has if there are several, and starts one in the PC's current state if there is none (the app was
-    /// ended, or iOS removed it).
+    /// app becomes active while the PC mirrors, it keeps exactly one, the one whose token the PC has if there are
+    /// several, and starts one in the PC's current state if there is none (the app was ended, or iOS removed it).
     func checkNotifications() async {
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         notificationsOff = !(status == .authorized || status == .provisional || status == .ephemeral)
@@ -224,13 +223,9 @@ final class AppModel: ObservableObject {
         guard reachable, let s = state else { return }
         let live = Self.live()
         for a in live { AppLog.write("activity \(a.id) \(a.activityState) shows \(a.content.state.state)/\(a.content.state.phase ?? "-")") }
-        guard s.mirroring else {
-            for a in live {
-                AppLog.write("not mirroring; ending activity \(a.id)")
-                await a.end(nil, dismissalPolicy: .immediate)
-            }
-            return
-        }
+        // The PC ends the activity once mirroring has been off for 90 s; a short drop must not end it here, since
+        // the PC doesn't start it again in the same mirroring session.
+        guard s.mirroring else { return }
         if live.count > 1 {
             let known = await PushRegistrar.shared.lastActivityId
             await keepOnly((live.first { $0.id == known } ?? live.last!).id)
