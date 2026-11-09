@@ -88,22 +88,19 @@ def detect():
 
 
 def lan_interface():
-    """The interface this PC reaches the local network on (the default route's)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """The interface this PC reaches the local network on: the default route's, read from
+    /proc/net/route (no `ip` command needed, which the Flatpak doesn't have)."""
+    best = None
     try:
-        s.connect(("192.0.2.1", 9))  # no packet is sent; picks the outgoing interface
-        ip = s.getsockname()[0]
-    finally:
-        s.close()
-    for name in os.listdir("/sys/class/net"):
-        try:
-            out = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", name], capture_output=True,
-                                 text=True, timeout=2).stdout
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if f" {ip}/" in out:
-            return name
-    return None
+        with open("/proc/net/route") as f:
+            for line in f.readlines()[1:]:
+                p = line.split()
+                if len(p) > 6 and p[1] == "00000000" and int(p[3], 16) & 2:  # default route, gateway flag
+                    if best is None or int(p[6]) < best[1]:
+                        best = (p[0], int(p[6]))
+    except OSError:
+        pass
+    return best[0] if best else None
 
 
 def _host(cmd):
@@ -145,7 +142,7 @@ def _allow_firewalld():
     root, zone_if = "/org/fedoraproject/FirewallD1", FIREWALLD + ".zone"
     try:
         iface = lan_interface()
-        zone = call(root, zone_if, "getZoneOfInterface", GLib.Variant("(s)", (iface or "",)), "(s)")[0]
+        zone = call(root, zone_if, "getZoneOfInterface", GLib.Variant("(s)", (iface,)), "(s)")[0] if iface else ""
         if not zone:
             zone = call(root, zone_if, "getDefaultZone", None, "(s)")[0]
         cfg_path = call(root + "/config", FIREWALLD + ".config", "getZoneByName", GLib.Variant("(s)", (zone,)), "(o)")[0]
@@ -158,7 +155,8 @@ def _allow_firewalld():
     except GLib.Error as e:
         if "NotAuthorized" in str(e) or "AccessDenied" in str(e) or "Timeout" in str(e):
             raise RuntimeError("cancelled") from e
-        raise RuntimeError(e.message) from e
+        Gio.DBusError.strip_remote_error(e)  # "GDBus.Error:org.fedoraproject...: X" -> "X"
+        raise RuntimeError(f"firewalld said {e.message}") from e
     remember(allowed=True)
     return f"The firewall now lets the iPhone reach Phone Use (zone {zone}, interface {iface})."
 
